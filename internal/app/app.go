@@ -13,6 +13,7 @@ type App struct {
 	DataDir        string
 	WorkspaceSvc   *workspace.WorkspaceService
 	EnvironmentSvc *workspace.EnvironmentService
+	Interpolator   *workspace.Interpolator
 }
 
 // Bootstrap initializes the application services.
@@ -20,12 +21,14 @@ func Bootstrap(dataDir string) (*App, error) {
 	mux := http.NewServeMux()
 	wsSvc := workspace.NewWorkspaceService()
 	envSvc := workspace.NewEnvironmentService()
+	interpolator := workspace.NewInterpolator()
 
 	a := &App{
 		Mux:            mux,
 		DataDir:        dataDir,
 		WorkspaceSvc:   wsSvc,
 		EnvironmentSvc: envSvc,
+		Interpolator:   interpolator,
 	}
 
 	a.registerRoutes()
@@ -49,6 +52,6 @@ func (a *App) registerRoutes() {
 	})
 
 	// Workspace & Collection endpoints
-	wsHandler := workspace.NewHandler(a.WorkspaceSvc, a.EnvironmentSvc)
+	wsHandler := workspace.NewHandler(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
 	wsHandler.RegisterRoutes(a.Mux)
 }

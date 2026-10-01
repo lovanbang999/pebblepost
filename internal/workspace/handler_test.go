@@ -16,6 +16,7 @@ func TestHandler_APIEndpoints(t *testing.T) {
 	tempDir := t.TempDir()
 	wsSvc := NewWorkspaceService()
 	envSvc := NewEnvironmentService()
+	interpolator := NewInterpolator()
 
 	// 1. Initialize workspace via Service
 	_, err := wsSvc.Init(tempDir, "Test API")
@@ -23,7 +24,7 @@ func TestHandler_APIEndpoints(t *testing.T) {
 		t.Fatalf("failed to init workspace: %v", err)
 	}
 
-	handler := NewHandler(wsSvc, envSvc)
+	handler := NewHandler(wsSvc, envSvc, interpolator)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -127,6 +128,42 @@ func TestHandler_APIEndpoints(t *testing.T) {
 		_ = json.NewDecoder(listEnvRR.Body).Decode(&envs)
 		if len(envs) < 2 { // 'dev' + 'production'
 			t.Errorf("expected at least 2 envs, got %d", len(envs))
+		}
+	})
+
+	// 5. Test POST /api/request/interpolate
+	t.Run("Interpolate Request API", func(t *testing.T) {
+		interpPayload, _ := json.Marshal(map[string]any{
+			"workspacePath":   tempDir,
+			"environmentName": "dev",
+			"request": types.RequestDefinition{
+				Name:   "Login to {{BASE_URL}}",
+				Method: "POST",
+				URL:    "{{BASE_URL}}/api/v1/auth",
+			},
+			"overrides": map[string]string{
+				"BASE_URL": "http://override.io",
+			},
+		})
+
+		interpReq := httptest.NewRequest(http.MethodPost, "/api/request/interpolate", bytes.NewReader(interpPayload))
+		interpRR := httptest.NewRecorder()
+		mux.ServeHTTP(interpRR, interpReq)
+
+		if interpRR.Code != http.StatusOK {
+			t.Fatalf("interpolate API failed: %d - %s", interpRR.Code, interpRR.Body.String())
+		}
+
+		var interpResp struct {
+			InterpolatedRequest types.RequestDefinition `json:"interpolatedRequest"`
+			Variables           map[string]string       `json:"variables"`
+		}
+		if err := json.NewDecoder(interpRR.Body).Decode(&interpResp); err != nil {
+			t.Fatalf("failed to decode interpolate response: %v", err)
+		}
+
+		if interpResp.InterpolatedRequest.URL != "http://override.io/api/v1/auth" {
+			t.Errorf("expected URL 'http://override.io/api/v1/auth', got '%s'", interpResp.InterpolatedRequest.URL)
 		}
 	})
 }

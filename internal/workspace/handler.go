@@ -11,13 +11,15 @@ import (
 type Handler struct {
 	workspaceSvc   *WorkspaceService
 	environmentSvc *EnvironmentService
+	interpolator   *Interpolator
 }
 
 // NewHandler creates a new Handler instance.
-func NewHandler(ws *WorkspaceService, env *EnvironmentService) *Handler {
+func NewHandler(ws *WorkspaceService, env *EnvironmentService, in *Interpolator) *Handler {
 	return &Handler{
 		workspaceSvc:   ws,
 		environmentSvc: env,
+		interpolator:   in,
 	}
 }
 
@@ -31,6 +33,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/request", h.handleGetRequest)
 	mux.HandleFunc("/api/request/save", h.handleSaveRequest)
 	mux.HandleFunc("/api/request/delete", h.handleDeleteRequest)
+	mux.HandleFunc("/api/request/interpolate", h.handleInterpolate)
 	mux.HandleFunc("/api/environments", h.handleEnvironments)
 	mux.HandleFunc("/api/environments/save", h.handleSaveEnvironment)
 }
@@ -297,6 +300,42 @@ func (h *Handler) handleSaveEnvironment(w http.ResponseWriter, r *http.Request) 
 
 	h.jsonResponse(w, map[string]any{
 		"success": true,
+	})
+}
+
+func (h *Handler) handleInterpolate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath   string                   `json:"workspacePath"`
+		EnvironmentName string                   `json:"environmentName"`
+		Request         *types.RequestDefinition `json:"request"`
+		Overrides       map[string]string        `json:"overrides"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Request == nil {
+		h.jsonError(w, "Request definition is required", http.StatusBadRequest)
+		return
+	}
+
+	var env *types.EnvironmentDefinition
+	if payload.WorkspacePath != "" && payload.EnvironmentName != "" {
+		env, _ = h.environmentSvc.GetEnvironment(payload.WorkspacePath, payload.EnvironmentName)
+	}
+
+	varMap := h.interpolator.BuildVariableMap(env, payload.Overrides)
+	interpolatedReq := h.interpolator.InterpolateRequest(payload.Request, varMap)
+
+	h.jsonResponse(w, map[string]any{
+		"interpolatedRequest": interpolatedReq,
+		"variables":           varMap,
 	})
 }
 
