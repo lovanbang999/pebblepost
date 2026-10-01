@@ -1,0 +1,31 @@
+# Binaries & build artifacts
+build/bin/
+build/deb_pkg/
+pebblepost
+pebblepost.exe
+*.deb
+*.zip
+*.tar.gz
+
+# Frontend build & dependencies
+web/dist/
+web/node_modules/
+web/.eslintcache
+
+# Local secret data & environments
+data/
+*.secret.env.json
+*.secret.json
+.env
+.env.local
+
+# Operating System & IDEs
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Go cache
+*.out
+*.test

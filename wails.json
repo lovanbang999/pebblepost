@@ -1,0 +1,27 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "pebblepost",
+  "outputfilename": "pebblepost",
+  "projectdir": "./cmd/desktop",
+  "frontend:dir": "../../web",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "build:tags": "webkit2_41",
+  "postBuildHooks": {
+    "linux/*": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/build/bin\" && find \"$ROOT/cmd/desktop\" -name pebblepost -type f -exec cp -f {} \"$ROOT/build/bin/pebblepost\" \\; && rm -rf \"$ROOT/cmd/desktop/cmd\" \"$ROOT/cmd/desktop/web\"'",
+    "windows/*": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/build/bin\" && find \"$ROOT/cmd/desktop\" -name \"pebblepost*.exe\" -type f -exec cp -f {} \"$ROOT/build/bin/\" \\;'"
+  },
+  "author": {
+    "name": "PebblePost Team",
+    "email": "lovanbangbox9@gmail.com"
+  },
+  "info": {
+    "companyName": "PebblePost",
+    "productName": "PebblePost Studio",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright 2026",
+    "comments": "Modern lightweight Git-friendly API Client"
+  }
+}
