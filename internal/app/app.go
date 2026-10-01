@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"pebblepost/internal/httpclient"
 	"pebblepost/internal/workspace"
 )
 
@@ -14,6 +15,7 @@ type App struct {
 	WorkspaceSvc   *workspace.WorkspaceService
 	EnvironmentSvc *workspace.EnvironmentService
 	Interpolator   *workspace.Interpolator
+	HttpClient     httpclient.Client
 }
 
 // Bootstrap initializes the application services.
@@ -22,6 +24,7 @@ func Bootstrap(dataDir string) (*App, error) {
 	wsSvc := workspace.NewWorkspaceService()
 	envSvc := workspace.NewEnvironmentService()
 	interpolator := workspace.NewInterpolator()
+	client := httpclient.NewClient()
 
 	a := &App{
 		Mux:            mux,
@@ -29,6 +32,7 @@ func Bootstrap(dataDir string) (*App, error) {
 		WorkspaceSvc:   wsSvc,
 		EnvironmentSvc: envSvc,
 		Interpolator:   interpolator,
+		HttpClient:     client,
 	}
 
 	a.registerRoutes()
@@ -54,4 +58,9 @@ func (a *App) registerRoutes() {
 	// Workspace & Collection endpoints
 	wsHandler := workspace.NewHandler(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
 	wsHandler.RegisterRoutes(a.Mux)
+
+	// HTTP Execution endpoints
+	httpHandler := httpclient.NewHandler(a.HttpClient, a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
+	httpHandler.RegisterRoutes(a.Mux)
 }
+
