@@ -11,6 +11,7 @@ pebblepost.exe
 web/dist/
 web/node_modules/
 web/.eslintcache
+*.tsbuildinfo
 
 # Local secret data & environments
 data/
