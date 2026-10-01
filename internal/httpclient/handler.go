@@ -4,16 +4,18 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"pebblepost/internal/scripting"
 	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
 )
 
-// Handler exposes HTTP API endpoints for executing HTTP requests.
+// Handler exposes HTTP API endpoints for executing HTTP requests with scripting support.
 type Handler struct {
 	client         Client
 	workspaceSvc   *workspace.WorkspaceService
 	environmentSvc *workspace.EnvironmentService
 	interpolator   *workspace.Interpolator
+	scriptEngine   *scripting.Engine
 }
 
 // NewHandler creates a new HTTP Client API Handler.
@@ -22,12 +24,14 @@ func NewHandler(
 	wsSvc *workspace.WorkspaceService,
 	envSvc *workspace.EnvironmentService,
 	in *workspace.Interpolator,
+	scriptEngine *scripting.Engine,
 ) *Handler {
 	return &Handler{
 		client:         client,
 		workspaceSvc:   wsSvc,
 		environmentSvc: envSvc,
 		interpolator:   in,
+		scriptEngine:   scriptEngine,
 	}
 }
 
@@ -62,23 +66,64 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reqToExecute := payload.Request
+	varMap := make(map[string]string)
 
-	// If environment or overrides are supplied, run interpolation
+	// 1. Build variable map and run initial interpolation
 	if h.interpolator != nil {
 		var env *types.EnvironmentDefinition
 		if h.environmentSvc != nil && payload.WorkspacePath != "" && payload.EnvironmentName != "" {
 			env, _ = h.environmentSvc.GetEnvironment(payload.WorkspacePath, payload.EnvironmentName)
 		}
 
-		varMap := h.interpolator.BuildVariableMap(env, payload.Overrides)
+		varMap = h.interpolator.BuildVariableMap(env, payload.Overrides)
 		reqToExecute = h.interpolator.InterpolateRequest(payload.Request, varMap)
 	}
 
-	// Execute HTTP request
+	var preLogs []string
+
+	// 2. Pre-request Script Sandbox Execution
+	if h.scriptEngine != nil && reqToExecute.Scripts.PreRequest != "" {
+		preResult, preErr := h.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap)
+		if preResult != nil {
+			preLogs = preResult.Logs
+			for k, v := range preResult.ExtractedEnvVars {
+				varMap[k] = v
+			}
+			reqToExecute = preResult.Request
+		}
+		if preErr != nil {
+			// Return execution result with pre-request error
+			h.jsonResponse(w, &types.ExecutionResult{
+				Error: preErr.Error(),
+				Logs:  preLogs,
+				Tests: []types.TestAssertionResult{},
+			})
+			return
+		}
+	}
+
+	// 3. Execute HTTP request
 	result, err := h.client.Execute(r.Context(), reqToExecute)
 	if err != nil && result == nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if result.Logs == nil {
+		result.Logs = make([]string, 0)
+	}
+	if len(preLogs) > 0 {
+		result.Logs = append(preLogs, result.Logs...)
+	}
+
+	// 4. Post-response / Test Script Sandbox Execution
+	if h.scriptEngine != nil && reqToExecute.Scripts.PostResponse != "" {
+		postResult, _ := h.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, result, varMap)
+		if postResult != nil {
+			result.Tests = postResult.Tests
+			result.Logs = append(result.Logs, postResult.Logs...)
+			result.ExtractedEnvVars = postResult.ExtractedEnvVars
+		}
 	}
 
 	h.jsonResponse(w, result)
