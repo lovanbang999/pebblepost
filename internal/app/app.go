@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"pebblepost/internal/httpclient"
+	"pebblepost/internal/scripting"
 	"pebblepost/internal/workspace"
 )
 
@@ -16,6 +17,7 @@ type App struct {
 	EnvironmentSvc *workspace.EnvironmentService
 	Interpolator   *workspace.Interpolator
 	HttpClient     httpclient.Client
+	ScriptEngine   *scripting.Engine
 }
 
 // Bootstrap initializes the application services.
@@ -25,6 +27,7 @@ func Bootstrap(dataDir string) (*App, error) {
 	envSvc := workspace.NewEnvironmentService()
 	interpolator := workspace.NewInterpolator()
 	client := httpclient.NewClient()
+	scriptEngine := scripting.NewEngine()
 
 	a := &App{
 		Mux:            mux,
@@ -33,6 +36,7 @@ func Bootstrap(dataDir string) (*App, error) {
 		EnvironmentSvc: envSvc,
 		Interpolator:   interpolator,
 		HttpClient:     client,
+		ScriptEngine:   scriptEngine,
 	}
 
 	a.registerRoutes()
@@ -59,8 +63,9 @@ func (a *App) registerRoutes() {
 	wsHandler := workspace.NewHandler(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
 	wsHandler.RegisterRoutes(a.Mux)
 
-	// HTTP Execution endpoints
-	httpHandler := httpclient.NewHandler(a.HttpClient, a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
+	// HTTP Execution endpoints with Scripting sandbox
+	httpHandler := httpclient.NewHandler(a.HttpClient, a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator, a.ScriptEngine)
 	httpHandler.RegisterRoutes(a.Mux)
 }
+
 

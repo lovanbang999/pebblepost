@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"pebblepost/internal/scripting"
 	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
 )
@@ -19,11 +20,17 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 			return
 		}
 
+		if r.Header.Get("X-Dynamic-Header") != "DynamicVal" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "success",
 			"query":  r.URL.Query().Get("q"),
+			"code":   200,
 		})
 	}))
 	defer targetServer.Close()
@@ -33,6 +40,7 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 	wsSvc := workspace.NewWorkspaceService()
 	envSvc := workspace.NewEnvironmentService()
 	in := workspace.NewInterpolator()
+	scriptEngine := scripting.NewEngine()
 
 	// Save environment
 	envData := types.EnvironmentDefinition{
@@ -45,12 +53,12 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 	_ = envSvc.SaveEnvironment(tempDir, envData, false)
 
 	client := NewClient()
-	handler := NewHandler(client, wsSvc, envSvc, in)
+	handler := NewHandler(client, wsSvc, envSvc, in, scriptEngine)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	// Prepare payload for /api/request/execute
+	// Prepare payload for /api/request/execute with Pre-request script and Test script
 	execPayload := ExecutePayload{
 		WorkspacePath:   tempDir,
 		EnvironmentName: "production",
@@ -63,6 +71,22 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 			Auth: types.AuthDefinition{
 				Type:  "bearer",
 				Token: "{{JWT_TOKEN}}",
+			},
+			Scripts: types.ScriptDefinition{
+				PreRequest: `
+					pb.request.headers.add("X-Dynamic-Header", "DynamicVal");
+					console.log("Pre-request added dynamic header");
+				`,
+				PostResponse: `
+					pb.test("Response status is 200", function() {
+						pb.expect(pb.response.status).to.equal(200);
+					});
+					pb.test("Response is success", function() {
+						const json = pb.response.json();
+						pb.expect(json.status).to.equal("success");
+						pb.environment.set("SAVED_STATUS", json.status);
+					});
+				`,
 			},
 		},
 	}
@@ -85,14 +109,20 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 	if result.StatusCode != http.StatusOK {
 		t.Errorf("expected executed status 200, got %d", result.StatusCode)
 	}
-	if result.Body == "" {
-		t.Errorf("expected non-empty response body")
+	if len(result.Tests) != 2 {
+		t.Fatalf("expected 2 tests passed, got %d", len(result.Tests))
+	}
+	if !result.Tests[0].Passed || !result.Tests[1].Passed {
+		t.Errorf("expected all tests to pass: %v", result.Tests)
+	}
+	if result.ExtractedEnvVars["SAVED_STATUS"] != "success" {
+		t.Errorf("expected SAVED_STATUS env var to be 'success', got '%s'", result.ExtractedEnvVars["SAVED_STATUS"])
 	}
 }
 
 func TestHandler_ExecuteEndpoint_InvalidPayload(t *testing.T) {
 	client := NewClient()
-	handler := NewHandler(client, nil, nil, nil)
+	handler := NewHandler(client, nil, nil, nil, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
