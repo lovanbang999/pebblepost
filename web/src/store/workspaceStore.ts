@@ -9,6 +9,7 @@ interface WorkspaceState {
   activeRequest: RequestDefinition | null
   activeFilePath: string | null
   isExecuting: boolean
+  isLoadingWorkspace: boolean
   lastResult: ExecutionResult | null
   activeTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings'
 
@@ -21,6 +22,12 @@ interface WorkspaceState {
   setLastResult: (result: ExecutionResult | null) => void
   setActiveTab: (tab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings') => void
   updateActiveRequest: (updater: (prev: RequestDefinition) => RequestDefinition) => void
+
+  // Backend integration actions
+  loadWorkspace: (path: string) => Promise<void>
+  loadRequest: (filePath: string) => Promise<void>
+  saveCurrentRequest: () => Promise<boolean>
+  createNewRequest: (folderPath?: string, name?: string) => Promise<string | null>
 }
 
 const defaultRequest: RequestDefinition = {
@@ -44,7 +51,7 @@ const defaultRequest: RequestDefinition = {
   },
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspacePath: null,
   activeEnv: 'dev',
   environments: [
@@ -59,10 +66,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activeRequest: defaultRequest,
   activeFilePath: null,
   isExecuting: false,
+  isLoadingWorkspace: false,
   lastResult: null,
   activeTab: 'params',
 
-  setWorkspacePath: (path) => set({ workspacePath: path }),
+  setWorkspacePath: (path) => {
+    set({ workspacePath: path })
+    if (path) {
+      get().loadWorkspace(path)
+    }
+  },
   setActiveEnv: (env) => set({ activeEnv: env }),
   setEnvironments: (environments) => set({ environments }),
   setTree: (tree) => set({ tree }),
@@ -75,4 +88,101 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((state) => ({
       activeRequest: state.activeRequest ? updater(state.activeRequest) : null,
     })),
+
+  loadWorkspace: async (path: string) => {
+    set({ isLoadingWorkspace: true })
+    try {
+      const res = await fetch(`/api/workspace/scan?path=${encodeURIComponent(path)}`)
+      if (res.ok) {
+        const data = await res.json()
+        set({
+          tree: data.tree || [],
+          environments: data.environments?.length ? data.environments : get().environments,
+        })
+      }
+    } catch (err) {
+      console.warn('Could not scan workspace via API (running offline or standalone mode):', err)
+    } finally {
+      set({ isLoadingWorkspace: false })
+    }
+  },
+
+  loadRequest: async (filePath: string) => {
+    try {
+      const res = await fetch(`/api/request?path=${encodeURIComponent(filePath)}`)
+      if (res.ok) {
+        const reqData: RequestDefinition = await res.json()
+        set({ activeRequest: reqData, activeFilePath: filePath, lastResult: null })
+      }
+    } catch (err) {
+      console.error('Failed to load request:', err)
+    }
+  },
+
+  saveCurrentRequest: async () => {
+    const { activeFilePath, activeRequest } = get()
+    if (!activeFilePath || !activeRequest) return false
+
+    try {
+      const res = await fetch('/api/request/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: activeFilePath,
+          request: activeRequest,
+        }),
+      })
+      if (res.ok) {
+        // Refresh tree to update method and name badges
+        const { workspacePath, loadWorkspace } = get()
+        if (workspacePath) {
+          loadWorkspace(workspacePath)
+        }
+        return true
+      }
+      return false
+    } catch (err) {
+      console.error('Failed to save request:', err)
+      return false
+    }
+  },
+
+  createNewRequest: async (folderPath?: string, name = 'new-request') => {
+    const { workspacePath, loadWorkspace } = get()
+    const targetDir = folderPath || (workspacePath ? `${workspacePath}/collections` : './collections')
+    const fileName = name.endsWith('.pebble.json') ? name : `${name}.pebble.json`
+    const fullPath = `${targetDir}/${fileName}`
+
+    const newReq: RequestDefinition = {
+      $schema: 'https://pebblepost.dev/schemas/v1/request.json',
+      version: '1.0',
+      name: name.replace('.pebble.json', ''),
+      method: 'GET',
+      url: '{{BASE_URL}}/api/v1/endpoint',
+      headers: [{ key: 'Accept', value: 'application/json', enabled: true }],
+      params: [],
+      auth: { type: 'none' },
+      body: { type: 'none' },
+      scripts: { preRequest: '', postResponse: '' },
+      settings: { followRedirects: true, verifySSL: true, timeoutMs: 30000 },
+    }
+
+    try {
+      const res = await fetch('/api/request/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: fullPath, request: newReq }),
+      })
+      if (res.ok) {
+        if (workspacePath) {
+          await loadWorkspace(workspacePath)
+        }
+        set({ activeRequest: newReq, activeFilePath: fullPath })
+        return fullPath
+      }
+    } catch (err) {
+      console.error('Failed to create new request file:', err)
+    }
+    return null
+  },
 }))

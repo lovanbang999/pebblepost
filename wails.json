@@ -10,8 +10,8 @@
   "frontend:dev:serverUrl": "auto",
   "build:tags": "webkit2_41",
   "postBuildHooks": {
-    "linux/*": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/build/bin\" && find \"$ROOT/cmd/desktop\" -name pebblepost -type f -exec cp -f {} \"$ROOT/build/bin/pebblepost\" \\; && rm -rf \"$ROOT/cmd/desktop/cmd\" \"$ROOT/cmd/desktop/web\"'",
-    "windows/*": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/build/bin\" && find \"$ROOT/cmd/desktop\" -name \"pebblepost*.exe\" -type f -exec cp -f {} \"$ROOT/build/bin/\" \\;'"
+    "linux/*": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/build/bin\" \"$ROOT/cmd/desktop/build/bin\" && find \"$ROOT/cmd/desktop\" -name \"pebblepost*\" -type f -exec cp -f {} \"$ROOT/cmd/desktop/build/bin/\" \\; && find \"$ROOT/cmd/desktop\" -name \"pebblepost*\" -type f -exec cp -f {} \"$ROOT/build/bin/\" \\; && rm -rf \"$ROOT/cmd/desktop/cmd\" \"$ROOT/cmd/desktop/web\"'",
+    "windows/*": "sh -c 'ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/build/bin\" \"$ROOT/cmd/desktop/build/bin\" && find \"$ROOT/cmd/desktop\" -name \"pebblepost*.exe\" -type f -exec cp -f {} \"$ROOT/cmd/desktop/build/bin/\" \\; && find \"$ROOT/cmd/desktop\" -name \"pebblepost*.exe\" -type f -exec cp -f {} \"$ROOT/build/bin/\" \\; && rm -rf \"$ROOT/cmd/desktop/cmd\" \"$ROOT/cmd/desktop/web\"'"
   },
   "author": {
     "name": "PebblePost Team",

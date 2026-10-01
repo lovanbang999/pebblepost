@@ -8,16 +8,29 @@ import {
   Plus,
   FolderPlus,
   RefreshCw,
+  Loader2,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
-import type { TreeNode, RequestDefinition } from '../../types'
+import type { TreeNode } from '../../types'
 import { getMethodColor } from '../../lib/utils'
+import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 
 export const CollectionTree: React.FC = () => {
-  const { tree, activeFilePath, setActiveRequest } = useWorkspaceStore()
+  const {
+    tree,
+    workspacePath,
+    activeFilePath,
+    isLoadingWorkspace,
+    loadRequest,
+    loadWorkspace,
+    createNewRequest,
+  } = useWorkspaceStore()
+
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
-    'collections': true,
+    collections: true,
     'collections/auth': true,
+    'collections/example': true,
   })
 
   const toggleFolder = (path: string) => {
@@ -25,32 +38,39 @@ export const CollectionTree: React.FC = () => {
   }
 
   const handleSelectRequest = (node: TreeNode) => {
-    // If request node is selected, create or load sample representation
-    const sampleReq: RequestDefinition = {
-      name: node.name.replace('.pebble.json', ''),
-      method: (node.method as any) || 'GET',
-      url: '{{BASE_URL}}/api/v1/' + (node.name.includes('login') ? 'auth/login' : 'health'),
-      headers: [
-        { key: 'Accept', value: 'application/json', enabled: true },
-        { key: 'Content-Type', value: 'application/json', enabled: true },
-      ],
-      params: [],
-      auth: { type: 'none' },
-      body: node.method === 'POST' ? {
-        type: 'json',
-        raw: JSON.stringify({ email: 'developer@pebble.io', password: '{{ADMIN_PASSWORD}}' }, null, 2),
-      } : { type: 'none' },
-      scripts: {
-        preRequest: '// Pre-request scripts\npb.request.headers.set("X-Timestamp", Date.now().toString());',
-        postResponse: 'pb.test("Response status is 200", () => {\n  pb.expect(pb.response.status).to.eql(200);\n});',
-      },
-      settings: {
-        followRedirects: true,
-        verifySSL: true,
-        timeoutMs: 30000,
-      },
+    loadRequest(node.path)
+  }
+
+  const handleNewRequest = async () => {
+    const name = prompt('Enter request name (e.g. get-user-profile):', 'new-request')
+    if (name) {
+      await createNewRequest(undefined, name)
     }
-    setActiveRequest(sampleReq, node.path)
+  }
+
+  const handleNewFolder = async () => {
+    const folderName = prompt('Enter folder name (e.g. users):', 'new-folder')
+    if (folderName && workspacePath) {
+      const folderPath = `${workspacePath}/collections/${folderName}`
+      try {
+        const res = await fetch('/api/workspace/folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: folderPath }),
+        })
+        if (res.ok) {
+          loadWorkspace(workspacePath)
+        }
+      } catch (err) {
+        console.error('Failed to create folder:', err)
+      }
+    }
+  }
+
+  const handleRefresh = () => {
+    if (workspacePath) {
+      loadWorkspace(workspacePath)
+    }
   }
 
   // Fallback default sample nodes when workspace is not yet loaded from backend
@@ -100,7 +120,7 @@ export const CollectionTree: React.FC = () => {
   ]
 
   const renderNode = (node: TreeNode, depth = 0) => {
-    const isExpanded = expandedFolders[node.path] ?? false
+    const isExpanded = expandedFolders[node.path] ?? true
     const isSelected = activeFilePath === node.path
 
     if (node.isDir) {
@@ -109,7 +129,7 @@ export const CollectionTree: React.FC = () => {
           <button
             onClick={() => toggleFolder(node.path)}
             style={{ paddingLeft: `${depth * 12 + 8}px` }}
-            className="w-full flex items-center gap-1.5 py-1 text-xs text-zinc-300 hover:text-white hover:bg-zinc-900/60 rounded group transition-colors"
+            className="w-full flex items-center gap-1.5 py-1 text-xs text-zinc-300 hover:text-white hover:bg-zinc-900/60 rounded group transition-colors cursor-pointer"
           >
             {isExpanded ? (
               <ChevronDown className="w-3.5 h-3.5 text-zinc-500" />
@@ -138,9 +158,9 @@ export const CollectionTree: React.FC = () => {
         key={node.path}
         onClick={() => handleSelectRequest(node)}
         style={{ paddingLeft: `${depth * 12 + 12}px` }}
-        className={`w-full flex items-center gap-2 py-1 text-xs rounded transition-colors group text-left ${
+        className={`w-full flex items-center gap-2 py-1 text-xs rounded transition-colors group text-left cursor-pointer ${
           isSelected
-            ? 'bg-blue-600/15 text-blue-200 border-l-2 border-blue-500'
+            ? 'bg-blue-600/15 text-blue-200 border-l-2 border-blue-500 font-medium'
             : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50'
         }`}
       >
@@ -166,25 +186,41 @@ export const CollectionTree: React.FC = () => {
           <FileCode className="w-3.5 h-3.5 text-blue-400" />
           Collections
         </span>
-        <div className="flex items-center gap-1">
-          <button
-            className="p-1 hover:text-zinc-200 hover:bg-zinc-900 rounded transition-colors"
-            title="New Request"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-          <button
-            className="p-1 hover:text-zinc-200 hover:bg-zinc-900 rounded transition-colors"
-            title="New Folder"
-          >
-            <FolderPlus className="w-3.5 h-3.5" />
-          </button>
-          <button
-            className="p-1 hover:text-zinc-200 hover:bg-zinc-900 rounded transition-colors"
-            title="Refresh Files"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
+        <div className="flex items-center gap-0.5">
+          <Tooltip content="New Request (*.pebble.json)">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleNewRequest}
+              className="h-6 w-6 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip content="New Collection Folder">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleNewFolder}
+              className="h-6 w-6 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip content="Refresh Files from Disk">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              className="h-6 w-6 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+            >
+              {isLoadingWorkspace ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5" />
+              )}
+            </Button>
+          </Tooltip>
         </div>
       </div>
 

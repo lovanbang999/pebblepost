@@ -1,6 +1,8 @@
 # Binaries & build artifacts
 build/bin/
 build/deb_pkg/
+cmd/desktop/build/
+cmd/desktop/build
 pebblepost
 pebblepost.exe
 *.deb
@@ -11,6 +13,8 @@ pebblepost.exe
 web/dist/
 web/node_modules/
 web/.eslintcache
+web/package.json.md5
+web/wailsjs/
 *.tsbuildinfo
 
 # Local secret data & environments
