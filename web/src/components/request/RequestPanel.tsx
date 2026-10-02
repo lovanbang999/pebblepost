@@ -6,7 +6,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { getMethodColor } from "../../lib/utils";
+import { getMethodColor, cn } from "../../lib/utils";
 import type { KeyValue } from "../../types";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "../ui/select";
 import { Checkbox } from "../ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 
 export function RequestPanel() {
   const {
@@ -407,29 +408,46 @@ export function RequestPanel() {
 
           <TabsContent value="body">
             <div className="h-full flex flex-col space-y-2">
-              <div className="flex items-center gap-4 text-xs text-zinc-400 border-b border-zinc-800 pb-2">
-                {(["none", "json", "formData", "raw", "graphql"] as const).map(
-                  (type) => (
-                    <label
-                      key={type}
-                      className="flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <input
-                        type="radio"
-                        name="bodyType"
-                        checked={activeRequest.body?.type === type}
-                        onChange={() =>
-                          updateActiveRequest((prev) => ({
-                            ...prev,
-                            body: { ...prev.body, type },
-                          }))
-                        }
-                        className="text-blue-600"
-                      />
-                      <span className="capitalize">{type}</span>
-                    </label>
-                  ),
-                )}
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2 mb-1">
+                <RadioGroup
+                  value={activeRequest.body?.type || "none"}
+                  onValueChange={(val) =>
+                    updateActiveRequest((prev) => ({
+                      ...prev,
+                      body: { ...prev.body, type: val as any },
+                    }))
+                  }
+                  className="flex items-center gap-4 text-xs"
+                >
+                  {(
+                    [
+                      { id: "none", label: "None" },
+                      { id: "json", label: "JSON" },
+                      { id: "formData", label: "Form Data" },
+                      { id: "raw", label: "Raw" },
+                      { id: "graphql", label: "GraphQL" },
+                    ] as const
+                  ).map(({ id, label }) => {
+                    const isSelected =
+                      (activeRequest.body?.type || "none") === id;
+                    return (
+                      <label
+                        key={id}
+                        htmlFor={`body-type-${id}`}
+                        className={cn(
+                          "flex items-center gap-2 cursor-pointer select-none py-1 px-1.5 rounded-md transition-colors",
+                          "hover:text-zinc-900 dark:hover:text-zinc-100",
+                          isSelected
+                            ? "text-zinc-900 dark:text-zinc-100 font-medium"
+                            : "text-zinc-500 dark:text-zinc-400",
+                        )}
+                      >
+                        <RadioGroupItem value={id} id={`body-type-${id}`} />
+                        <span className="text-xs leading-none">{label}</span>
+                      </label>
+                    );
+                  })}
+                </RadioGroup>
               </div>
 
               <div className="flex-1 min-h-55 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
@@ -763,40 +781,63 @@ export function RequestPanel() {
           </TabsContent>
 
           <TabsContent value="settings">
-            <div className="text-xs text-zinc-600 dark:text-zinc-400 p-4 border border-zinc-200 dark:border-zinc-800 rounded-md space-y-3 bg-zinc-50 dark:bg-zinc-900/30">
-              <label className="flex items-center gap-2 cursor-pointer text-zinc-700 dark:text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={activeRequest.settings.followRedirects}
-                  onChange={(e) =>
-                    updateActiveRequest((prev) => ({
-                      ...prev,
-                      settings: {
-                        ...prev.settings,
-                        followRedirects: e.target.checked,
-                      },
-                    }))
-                  }
-                  className="rounded text-blue-600 bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"
-                />
-                <span>Follow HTTP Redirects</span>
+            <div className="p-4 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50/50 dark:bg-zinc-900/30 divide-y divide-zinc-200/80 dark:divide-zinc-800/80 max-w-2xl">
+              <label
+                htmlFor="setting-follow-redirects"
+                className="flex items-start gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer group select-none"
+              >
+                <div className="pt-0.5">
+                  <Checkbox
+                    id="setting-follow-redirects"
+                    checked={activeRequest.settings.followRedirects}
+                    onCheckedChange={(checked) =>
+                      updateActiveRequest((prev) => ({
+                        ...prev,
+                        settings: {
+                          ...prev.settings,
+                          followRedirects: !!checked,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                    Follow HTTP Redirects
+                  </span>
+                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Automatically follow 3xx redirect status codes returned by the server.
+                  </span>
+                </div>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer text-zinc-700 dark:text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={activeRequest.settings.verifySSL}
-                  onChange={(e) =>
-                    updateActiveRequest((prev) => ({
-                      ...prev,
-                      settings: {
-                        ...prev.settings,
-                        verifySSL: e.target.checked,
-                      },
-                    }))
-                  }
-                  className="rounded text-blue-600 bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"
-                />
-                <span>Verify SSL/TLS Certificates</span>
+
+              <label
+                htmlFor="setting-verify-ssl"
+                className="flex items-start gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer group select-none"
+              >
+                <div className="pt-0.5">
+                  <Checkbox
+                    id="setting-verify-ssl"
+                    checked={activeRequest.settings.verifySSL}
+                    onCheckedChange={(checked) =>
+                      updateActiveRequest((prev) => ({
+                        ...prev,
+                        settings: {
+                          ...prev.settings,
+                          verifySSL: !!checked,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                    Verify SSL/TLS Certificates
+                  </span>
+                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Validate SSL/TLS certificates when sending HTTPS requests. Disable only when testing with self-signed development certificates.
+                  </span>
+                </div>
               </label>
             </div>
           </TabsContent>
