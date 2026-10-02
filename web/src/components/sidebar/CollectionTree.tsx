@@ -9,13 +9,13 @@ import {
   FolderPlus,
   RefreshCw,
   ChevronsDownUp,
-  Loader2,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import type { TreeNode, RequestDefinition } from '../../types'
 import { getMethodColor, cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
+import { Skeleton } from '../ui/skeleton'
 
 const VALID_METHODS: RequestDefinition['method'][] = [
   'GET',
@@ -54,6 +54,76 @@ interface InlineCreationState {
   parentPath: string
 }
 
+function CollectionTreeSkeleton() {
+  return (
+    <div className="p-1 space-y-1 animate-in fade-in-50 duration-200">
+      {/* Folder 1: 01-auth */}
+      <div className="h-7 px-1.5 flex items-center gap-2">
+        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="h-3.5 w-20 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-9 rounded-xs shrink-0 bg-blue-500/20 dark:bg-blue-500/15" />
+        <Skeleton className="h-3 w-20 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-32 rounded-xs" />
+      </div>
+
+      {/* Folder 2: 02-users */}
+      <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
+        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="h-3.5 w-22 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-24 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-20 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-9 rounded-xs shrink-0 bg-blue-500/20 dark:bg-blue-500/15" />
+        <Skeleton className="h-3 w-28 rounded-xs" />
+      </div>
+
+      {/* Folder 3: 03-products */}
+      <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
+        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="h-3.5 w-24 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-36 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-24 rounded-xs" />
+      </div>
+
+      {/* Folder 4: 04-httpbin-advanced */}
+      <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
+        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="h-3.5 w-32 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-32 rounded-xs" />
+      </div>
+      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
+        <Skeleton className="h-4.5 w-9 rounded-xs shrink-0 bg-blue-500/20 dark:bg-blue-500/15" />
+        <Skeleton className="h-3 w-24 rounded-xs" />
+      </div>
+    </div>
+  )
+}
+
 export function CollectionTree() {
   const {
     tree,
@@ -79,16 +149,24 @@ export function CollectionTree() {
   const inlineInputRef = useRef<HTMLInputElement>(null)
   const isCommittingRef = useRef(false)
 
-  // Auto-expand loaded folders on mount
+  // Auto-expand loaded folders on mount & updates
   useEffect(() => {
     if (tree.length > 0) {
       setExpandedFolders((prev) => {
         const next = { ...prev }
-        tree.forEach((node) => {
-          if (node.isDir && next[node.path] === undefined) {
-            next[node.path] = true
-          }
-        })
+        const expandRecursive = (nodes: TreeNode[]) => {
+          nodes.forEach((node) => {
+            if (node.isDir) {
+              if (next[node.path] === undefined) {
+                next[node.path] = true
+              }
+              if (node.children && node.children.length > 0) {
+                expandRecursive(node.children)
+              }
+            }
+          })
+        }
+        expandRecursive(tree)
         return next
       })
     }
@@ -114,8 +192,17 @@ export function CollectionTree() {
     loadRequest(node.path)
   }
 
-  const handleRefresh = () => {
-    loadWorkspace(workspacePath || '.')
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      await loadWorkspace(workspacePath || '.')
+    } finally {
+      setTimeout(() => {
+        setIsRefreshing(false)
+      }, 500)
+    }
   }
 
   const handleCollapseAll = () => {
@@ -404,13 +491,15 @@ export function CollectionTree() {
               variant="ghost"
               size="icon"
               onClick={handleRefresh}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900"
+              disabled={isRefreshing || isLoadingWorkspace}
+              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900 disabled:opacity-70"
             >
-              {isLoadingWorkspace ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 dark:text-blue-400" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5" />
-              )}
+              <RefreshCw
+                className={cn(
+                  "w-3.5 h-3.5 transition-all duration-300",
+                  (isRefreshing || isLoadingWorkspace) && "animate-spin text-blue-500 dark:text-blue-400"
+                )}
+              />
             </Button>
           </Tooltip>
           <Tooltip content="Collapse All Folders">
@@ -428,19 +517,25 @@ export function CollectionTree() {
 
       {/* Tree Content */}
       <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-        {/* Render at root if target is not inside any rendered directory */}
-        {creatingNode &&
-          !tree.some((n) => isPathDir([n], creatingNode.parentPath)) &&
-          renderInlineInput(0)}
-
-        {tree.length === 0 && !isLoadingWorkspace && !creatingNode ? (
-          <div className="p-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            No requests in workspace.
-            <br />
-            Click <strong className="text-zinc-700 dark:text-zinc-300">+</strong> above to create one.
-          </div>
+        {isRefreshing || isLoadingWorkspace ? (
+          <CollectionTreeSkeleton />
         ) : (
-          tree.map((node) => renderNode(node))
+          <>
+            {/* Render at root if target is not inside any rendered directory */}
+            {creatingNode &&
+              !tree.some((n) => isPathDir([n], creatingNode.parentPath)) &&
+              renderInlineInput(0)}
+
+            {tree.length === 0 && !creatingNode ? (
+              <div className="p-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
+                No requests in workspace.
+                <br />
+                Click <strong className="text-zinc-700 dark:text-zinc-300">+</strong> above to create one.
+              </div>
+            ) : (
+              tree.map((node) => renderNode(node))
+            )}
+          </>
         )}
       </div>
 

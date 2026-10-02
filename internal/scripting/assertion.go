@@ -237,6 +237,29 @@ const AssertionLibraryJS = `
             }
             return this;
         }
+
+        oneOf(list) {
+            const pass = Array.isArray(list) && list.some(item => this.actual === item || deepEqual(this.actual, item));
+            const condition = this.isNegated ? !pass : pass;
+            if (!condition) {
+                throw new Error("expected " + formatValue(this.actual) + (this.isNegated ? " not to be one of " : " to be one of ") + formatValue(list));
+            }
+            return this;
+        }
+
+        match(pattern) {
+            let pass = false;
+            if (pattern instanceof RegExp) {
+                pass = pattern.test(String(this.actual));
+            } else {
+                pass = new RegExp(String(pattern)).test(String(this.actual));
+            }
+            const condition = this.isNegated ? !pass : pass;
+            if (!condition) {
+                throw new Error("expected " + formatValue(this.actual) + (this.isNegated ? " not to match " : " to match ") + String(pattern));
+            }
+            return this;
+        }
     }
 
     global.expect = function(actual) {
