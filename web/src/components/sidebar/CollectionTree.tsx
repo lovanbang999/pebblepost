@@ -1,18 +1,18 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   Folder,
   FolderOpen,
-  FileCode,
   ChevronRight,
   ChevronDown,
   FilePlus2,
   FolderPlus,
   RefreshCw,
   ChevronsDownUp,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import type { TreeNode, RequestDefinition } from '../../types'
-import { getMethodColor, cn } from '../../lib/utils'
+import { getMethodTextColor, cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
 import { Skeleton } from '../ui/skeleton'
@@ -54,70 +54,86 @@ interface InlineCreationState {
   parentPath: string
 }
 
+function getAllFolderPaths(nodes: TreeNode[]): string[] {
+  const paths: string[] = []
+  const traverse = (items: TreeNode[]) => {
+    for (const item of items) {
+      if (item.isDir) {
+        paths.push(item.path)
+        if (item.children && item.children.length > 0) {
+          traverse(item.children)
+        }
+      }
+    }
+  }
+  traverse(nodes)
+  return paths
+}
+
 function CollectionTreeSkeleton() {
   return (
-    <div className="p-1 space-y-1 animate-in fade-in-50 duration-200">
+    <div className="p-1 space-y-0.5 animate-in fade-in-50 duration-200">
       {/* Folder 1: 01-auth */}
       <div className="h-7 px-1.5 flex items-center gap-2">
         <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
         <Skeleton className="h-3.5 w-20 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-9 rounded-xs shrink-0 bg-blue-500/20 dark:bg-blue-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-20 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-32 rounded-xs" />
       </div>
 
       {/* Folder 2: 02-users */}
       <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
         <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
         <Skeleton className="h-3.5 w-22 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-24 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-20 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-9 rounded-xs shrink-0 bg-blue-500/20 dark:bg-blue-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-28 rounded-xs" />
       </div>
 
       {/* Folder 3: 03-products */}
       <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
         <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
         <Skeleton className="h-3.5 w-24 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-36 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-24 rounded-xs" />
       </div>
 
       {/* Folder 4: 04-httpbin-advanced */}
       <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
         <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0 bg-amber-500/20 dark:bg-amber-500/10" />
+        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
         <Skeleton className="h-3.5 w-32 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-8 rounded-xs shrink-0 bg-emerald-500/20 dark:bg-emerald-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-32 rounded-xs" />
       </div>
       <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-4.5 w-9 rounded-xs shrink-0 bg-blue-500/20 dark:bg-blue-500/15" />
+        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-24 rounded-xs" />
       </div>
     </div>
@@ -183,8 +199,18 @@ export function CollectionTree() {
     }
   }, [creatingNode])
 
+  const allFolderPaths = useMemo(() => getAllFolderPaths(tree), [tree])
+
+  // Check if at least one folder is currently expanded
+  const isAnyFolderExpanded =
+    allFolderPaths.length > 0 &&
+    allFolderPaths.some((path) => (expandedFolders[path] ?? true) === true)
+
   const toggleFolder = (path: string) => {
-    setExpandedFolders((prev) => ({ ...prev, [path]: !prev[path] }))
+    setExpandedFolders((prev) => ({
+      ...prev,
+      [path]: !(prev[path] ?? true),
+    }))
   }
 
   const handleSelectRequest = (node: TreeNode) => {
@@ -205,8 +231,13 @@ export function CollectionTree() {
     }
   }
 
-  const handleCollapseAll = () => {
-    setExpandedFolders({})
+  const handleToggleExpandCollapseAll = () => {
+    const next: Record<string, boolean> = {}
+    const shouldExpand = !isAnyFolderExpanded
+    allFolderPaths.forEach((path) => {
+      next[path] = shouldExpand
+    })
+    setExpandedFolders(next)
   }
 
   // Check if a path is a directory inside the tree
@@ -326,16 +357,16 @@ export function CollectionTree() {
     return (
       <div
         key="inline-creating-input"
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
-        className="w-full flex items-center gap-1.5 py-0.5 pr-2 my-0.5 animate-in fade-in duration-100"
+        style={{ paddingLeft: `${depth * 14 + 10}px` }}
+        className="w-full flex items-center gap-2 py-0.5 pr-2 my-0.5 animate-in fade-in duration-100"
       >
         {isFolder ? (
-          <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <Folder className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
         ) : (
           <span
             className={cn(
-              'text-[9px] font-mono font-bold px-1 py-0.2 rounded border uppercase shrink-0 transition-colors',
-              getMethodColor(parsed?.method || 'GET')
+              'w-10 text-[10px] font-mono font-bold tracking-tight uppercase shrink-0 text-left transition-colors',
+              getMethodTextColor(parsed?.method || 'GET')
             )}
           >
             {parsed?.method || 'GET'}
@@ -349,7 +380,7 @@ export function CollectionTree() {
           onKeyDown={handleInlineKeyDown}
           onBlur={handleInlineBlur}
           placeholder={isFolder ? 'folder-name' : 'request-name (or: post login)'}
-          className="flex-1 h-6 px-1.5 py-0 text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-blue-500 rounded focus:outline-none ring-1 ring-blue-500 shadow-xs"
+          className="flex-1 h-6 px-1.5 py-0 text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-400 ring-1 ring-zinc-400/20 shadow-2xs"
         />
       </div>
     )
@@ -366,14 +397,16 @@ export function CollectionTree() {
           <div
             onClick={() => setSelectedPath(node.path)}
             className={cn(
-              'w-full flex items-center justify-between group py-0.5 pr-1 rounded hover:bg-zinc-200/60 dark:hover:bg-zinc-900/60 transition-colors cursor-pointer',
-              selectedPath === node.path && 'bg-zinc-150 dark:bg-zinc-900/80'
+              'w-full flex items-center justify-between group py-1 px-1.5 rounded-md transition-colors cursor-pointer',
+              selectedPath === node.path
+                ? 'bg-zinc-200/60 dark:bg-zinc-800/70 text-zinc-900 dark:text-zinc-100'
+                : 'hover:bg-zinc-100 dark:hover:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300'
             )}
-            style={{ paddingLeft: `${depth * 12 + 8}px` }}
+            style={{ paddingLeft: `${depth * 14 + 8}px` }}
           >
             <button
               onClick={() => toggleFolder(node.path)}
-              className="flex-1 flex items-center gap-1.5 py-0.5 text-xs text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white rounded truncate cursor-pointer text-left"
+              className="flex-1 flex items-center gap-1.5 py-0.5 text-xs rounded truncate cursor-pointer text-left"
             >
               {isExpanded ? (
                 <ChevronDown className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
@@ -381,11 +414,11 @@ export function CollectionTree() {
                 <ChevronRight className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
               )}
               {isExpanded ? (
-                <FolderOpen className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
+                <FolderOpen className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
               ) : (
-                <Folder className="w-3.5 h-3.5 text-amber-500/80 dark:text-amber-400/80 shrink-0" />
+                <Folder className="w-3.5 h-3.5 text-zinc-400/90 dark:text-zinc-500/90 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
               )}
-              <span className="truncate font-medium text-zinc-700 dark:text-zinc-300">
+              <span className="truncate font-medium text-xs text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">
                 {node.name}
               </span>
             </button>
@@ -399,7 +432,7 @@ export function CollectionTree() {
                     e.stopPropagation()
                     startInlineCreation('file', node.path)
                   }}
-                  className="h-5 w-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-300/50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                  className="h-5 w-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/80 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                 >
                   <FilePlus2 className="w-3.5 h-3.5" />
                 </button>
@@ -411,7 +444,7 @@ export function CollectionTree() {
                     e.stopPropagation()
                     startInlineCreation('folder', node.path)
                   }}
-                  className="h-5 w-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-300/50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                  className="h-5 w-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/80 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                 >
                   <FolderPlus className="w-3.5 h-3.5" />
                 </button>
@@ -436,17 +469,19 @@ export function CollectionTree() {
       <button
         key={node.path}
         onClick={() => handleSelectRequest(node)}
-        style={{ paddingLeft: `${depth * 12 + 12}px` }}
-        className={`w-full flex items-center gap-2 py-1 text-xs rounded transition-colors group text-left cursor-pointer ${
+        style={{ paddingLeft: `${depth * 14 + 10}px` }}
+        className={cn(
+          'w-full flex items-center gap-2 py-1 px-1.5 text-xs rounded-md transition-all group text-left cursor-pointer select-none',
           isSelected
-            ? 'bg-blue-50 dark:bg-blue-600/15 text-blue-700 dark:text-blue-200 border-l-2 border-blue-600 dark:border-blue-500 font-medium'
-            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-200/50 dark:hover:bg-zinc-900/50'
-        }`}
+            ? 'bg-zinc-200/70 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 font-medium shadow-2xs'
+            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900/60'
+        )}
       >
         <span
-          className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded border uppercase shrink-0 ${getMethodColor(
-            node.method || 'GET'
-          )}`}
+          className={cn(
+            'w-10 text-[10px] font-mono font-bold tracking-tight uppercase shrink-0 text-left transition-colors',
+            getMethodTextColor(node.method || 'GET')
+          )}
         >
           {node.method || 'GET'}
         </span>
@@ -459,10 +494,9 @@ export function CollectionTree() {
 
   return (
     <aside className="w-64 bg-white dark:bg-zinc-950 border-r border-zinc-200 dark:border-zinc-800 flex flex-col shrink-0 select-none transition-colors duration-150">
-      {/* Sidebar Header (VS Code Explorer Actions) */}
-      <div className="h-10 px-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-        <span className="font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 uppercase text-[11px] tracking-wider">
-          <FileCode className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
+      {/* Sidebar Header (Developer Tool Actions) */}
+      <div className="h-9 px-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+        <span className="font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider uppercase text-[10.5px]">
           Collections
         </span>
         <div className="flex items-center gap-0.5">
@@ -471,7 +505,7 @@ export function CollectionTree() {
               variant="ghost"
               size="icon"
               onClick={() => startInlineCreation('file')}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900"
+              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             >
               <FilePlus2 className="w-3.5 h-3.5" />
             </Button>
@@ -481,7 +515,7 @@ export function CollectionTree() {
               variant="ghost"
               size="icon"
               onClick={() => startInlineCreation('folder')}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900"
+              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             >
               <FolderPlus className="w-3.5 h-3.5" />
             </Button>
@@ -492,24 +526,28 @@ export function CollectionTree() {
               size="icon"
               onClick={handleRefresh}
               disabled={isRefreshing || isLoadingWorkspace}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900 disabled:opacity-70"
+              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 disabled:opacity-70"
             >
               <RefreshCw
                 className={cn(
                   "w-3.5 h-3.5 transition-all duration-300",
-                  (isRefreshing || isLoadingWorkspace) && "animate-spin text-blue-500 dark:text-blue-400"
+                  (isRefreshing || isLoadingWorkspace) && "animate-spin text-zinc-700 dark:text-zinc-300"
                 )}
               />
             </Button>
           </Tooltip>
-          <Tooltip content="Collapse All Folders">
+          <Tooltip content={isAnyFolderExpanded ? 'Collapse All Folders' : 'Expand All Folders'}>
             <Button
               variant="ghost"
               size="icon"
-              onClick={handleCollapseAll}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900"
+              onClick={handleToggleExpandCollapseAll}
+              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
             >
-              <ChevronsDownUp className="w-3.5 h-3.5" />
+              {isAnyFolderExpanded ? (
+                <ChevronsDownUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronsUpDown className="w-3.5 h-3.5" />
+              )}
             </Button>
           </Tooltip>
         </div>
