@@ -340,6 +340,7 @@ func (e *Engine) setupResponseBridge(vm *goja.Runtime, resp *types.ExecutionResu
 	_ = respObj.Set("statusText", resp.StatusText)
 	_ = respObj.Set("responseTime", resp.Timing.TotalDurationMs)
 	_ = respObj.Set("time", resp.Timing.TotalDurationMs)
+	_ = respObj.Set("duration", resp.Timing.TotalDurationMs)
 	_ = respObj.Set("body", resp.Body)
 
 	_ = respObj.Set("text", func() string {

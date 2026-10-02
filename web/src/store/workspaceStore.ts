@@ -143,6 +143,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           tree: data.tree || [],
           environments: data.environments?.length ? data.environments : get().environments,
         })
+        const currentActive = get().activeFilePath
+        if (currentActive) {
+          get().loadRequest(currentActive)
+        }
       }
     } catch (err) {
       console.warn('Could not scan workspace via API (running offline or standalone mode):', err)
