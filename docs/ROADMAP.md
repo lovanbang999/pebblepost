@@ -20,7 +20,7 @@ Rules for whoever updates this file:
 
 | # | Prompt | Phase | Status | Done |
 |---|---|---|---|---|
-| 1 | Security hardening | P0 | `[ ]` | 0/10 |
+| 1 | Security hardening | P0 | `[x]` | 10/10 |
 | 2 | Schema v1, ordering, file watcher | P0 | `[ ]` | 0/8 |
 | 3 | Multi-tab & tree management | P0 | `[ ]` | 0/9 |
 | 4 | Folder-level inheritance | P0 | `[ ]` | 0/7 |
@@ -43,16 +43,16 @@ Rules for whoever updates this file:
 # PHASE P0 – Stabilize
 
 ## Prompt 1 – Security hardening
-- [ ] 1.1 Audit report written (issues with file:line and severity) and approved
-- [ ] 1.2 Web server binds to 127.0.0.1 by default; `--host` requires a token
-- [ ] 1.3 Token auth on all REST and SSE endpoints
-- [ ] 1.4 Path traversal protection (`..`, absolute paths, symlinks, Windows names) with tests
-- [ ] 1.5 Strict CORS, body size limit, security headers
-- [ ] 1.6 Goja script timeout via `vm.Interrupt` (configurable, default 5s) with infinite-loop test
-- [ ] 1.7 Limits on call stack depth and console output size
-- [ ] 1.8 Verified scripts cannot reach filesystem/network/process outside `pb.*`
-- [ ] 1.9 `.gitignore` check/auto-add for `*.secret.env.json` (with user confirmation)
-- [ ] 1.10 Secret masking in logs/CLI/history + "trust this workspace" prompt before first script run
+- [x] 1.1 Audit report written (issues with file:line and severity) and approved
+- [x] 1.2 Web server binds to 127.0.0.1 by default; `--host` requires a token
+- [x] 1.3 Token auth on all REST and SSE endpoints
+- [x] 1.4 Path traversal protection (`..`, absolute paths, symlinks, Windows names) with tests
+- [x] 1.5 Strict CORS, body size limit, security headers
+- [x] 1.6 Goja script timeout via `vm.Interrupt` (configurable, default 5s) with infinite-loop test
+- [x] 1.7 Limits on call stack depth and console output size
+- [x] 1.8 Verified scripts cannot reach filesystem/network/process outside `pb.*`
+- [x] 1.9 `.gitignore` check/auto-add for `*.secret.env.json` (with user confirmation)
+- [x] 1.10 Secret masking in logs/CLI/history + "trust this workspace" prompt before first script run
 
 ## Prompt 2 – Schema v1, ordering, file watcher
 - [ ] 2.1 `schemaVersion: 1` added to all file types
@@ -219,3 +219,4 @@ Coverage before/after: _fill in_
 | Date | Prompt | Summary | Commits |
 |---|---|---|---|
 | 2026-10-02 | init | Placed `docs/ROADMAP.md` from roadmap template; all items start at `[ ]` | — |
+| 2026-10-02 | 1 | Security hardening: token auth, path guard, CORS/headers, sandbox timeout/caps, gitignore protection, secret masking, and workspace trust | `010e994..6d39171` |
