@@ -208,8 +208,8 @@ Execute collections inside automated workflows:
 # Run all requests in a collection
 pebblepost run ./collections -e dev --bail
 
-# Generate JUnit or JSON test reports
-pebblepost run ./collections -e staging --report junit:results.xml
+# Output JSON report for CI/CD pipeline processing
+pebblepost run ./collections -e staging --report json
 ```
 
 ---
