@@ -3,7 +3,9 @@ package workspace
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 
+	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
 
@@ -32,6 +34,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/info", h.handleInfo)
 	mux.HandleFunc("/api/workspace/folder", h.handleCreateFolder)
 	mux.HandleFunc("/api/workspace/rename", h.handleRename)
+	mux.HandleFunc("/api/workspace/gitignore/ensure", h.handleEnsureGitignore)
 	mux.HandleFunc("/api/request", h.handleGetRequest)
 	mux.HandleFunc("/api/request/save", h.handleSaveRequest)
 	mux.HandleFunc("/api/request/delete", h.handleDeleteRequest)
@@ -53,6 +56,12 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject traversal payloads in the workspace root itself.
+	if err := security.ValidateWorkspaceRoot(rootPath); err != nil {
+		h.jsonError(w, "invalid workspace path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	tree, err := h.workspaceSvc.ScanTree(rootPath)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -62,10 +71,22 @@ func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
 	wsInfo, _ := h.workspaceSvc.GetWorkspaceInfo(rootPath)
 	envs, _ := h.environmentSvc.ListEnvironments(rootPath)
 
+	gitStatus, _ := security.CheckGitignore(rootPath)
+	var gitStatusStr string
+	switch gitStatus {
+	case security.GitignoreOK:
+		gitStatusStr = "ok"
+	case security.GitignoreMissing:
+		gitStatusStr = "missing"
+	case security.GitignoreNoRule:
+		gitStatusStr = "no_rule"
+	}
+
 	h.jsonResponse(w, map[string]any{
-		"workspace":    wsInfo,
-		"tree":         tree,
-		"environments": envs,
+		"workspace":       wsInfo,
+		"tree":            tree,
+		"environments":    envs,
+		"gitignoreStatus": gitStatusStr,
 	})
 }
 
@@ -129,6 +150,17 @@ func (h *Handler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate path stays inside the declared workspace root when provided.
+	if workspacePath := r.URL.Query().Get("workspacePath"); workspacePath != "" {
+		if _, err := security.SafeAbsolute(workspacePath, filePath); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(filePath); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	reqDef, err := h.workspaceSvc.ReadRequest(filePath)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusNotFound)
@@ -145,8 +177,9 @@ func (h *Handler) handleSaveRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Path    string                   `json:"path"`
-		Request *types.RequestDefinition `json:"request"`
+		WorkspacePath string                   `json:"workspacePath"`
+		Path          string                   `json:"path"`
+		Request       *types.RequestDefinition `json:"request"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.jsonError(w, "Invalid JSON payload", http.StatusBadRequest)
@@ -155,6 +188,17 @@ func (h *Handler) handleSaveRequest(w http.ResponseWriter, r *http.Request) {
 
 	if payload.Request == nil {
 		h.jsonError(w, "Request definition cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Validate path against workspace root when available.
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -176,10 +220,31 @@ func (h *Handler) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Path string `json:"path"`
+		WorkspacePath string `json:"workspacePath"`
+		Path          string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Path == "" {
+		h.jsonError(w, "path cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Validate path against workspace root when available.
+	if payload.WorkspacePath != "" {
+		if filepath.Clean(payload.Path) == filepath.Clean(payload.WorkspacePath) {
+			h.jsonError(w, "cannot delete workspace root", http.StatusBadRequest)
+			return
+		}
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -200,10 +265,21 @@ func (h *Handler) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Path string `json:"path"`
+		WorkspacePath string `json:"workspacePath"`
+		Path          string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid folder path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid folder path: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -224,12 +300,33 @@ func (h *Handler) handleRename(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		OldPath string `json:"oldPath"`
-		NewPath string `json:"newPath"`
+		WorkspacePath string `json:"workspacePath"`
+		OldPath       string `json:"oldPath"`
+		NewPath       string `json:"newPath"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
 		return
+	}
+
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.OldPath); err != nil {
+			h.jsonError(w, "invalid old path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.NewPath); err != nil {
+			h.jsonError(w, "invalid new path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := security.RejectTraversal(payload.OldPath); err != nil {
+			h.jsonError(w, "invalid old path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := security.RejectTraversal(payload.NewPath); err != nil {
+			h.jsonError(w, "invalid new path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	if err := h.workspaceSvc.Rename(payload.OldPath, payload.NewPath); err != nil {
@@ -242,10 +339,49 @@ func (h *Handler) handleRename(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) handleEnsureGitignore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath string `json:"workspacePath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath == "" {
+		h.jsonError(w, "workspacePath is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := security.ValidateWorkspaceRoot(payload.WorkspacePath); err != nil {
+		h.jsonError(w, "invalid workspace path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := security.EnsureGitignoreEntry(payload.WorkspacePath); err != nil {
+		h.jsonError(w, "failed to update .gitignore: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"success": true,
+	})
+}
+
 func (h *Handler) handleEnvironments(w http.ResponseWriter, r *http.Request) {
 	rootPath := r.URL.Query().Get("workspacePath")
 	if rootPath == "" {
 		http.Error(w, "Query parameter 'workspacePath' is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := security.ValidateWorkspaceRoot(rootPath); err != nil {
+		h.jsonError(w, "invalid workspace path: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -262,6 +398,10 @@ func (h *Handler) handleEnvironments(w http.ResponseWriter, r *http.Request) {
 		envName := r.URL.Query().Get("name")
 		if envName == "" {
 			http.Error(w, "Query parameter 'name' is required", http.StatusBadRequest)
+			return
+		}
+		if err := security.ValidateSafeIdentifier(envName); err != nil {
+			h.jsonError(w, "invalid environment name: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := h.environmentSvc.DeleteEnvironment(rootPath, envName); err != nil {
@@ -293,6 +433,16 @@ func (h *Handler) handleSaveEnvironment(w http.ResponseWriter, r *http.Request) 
 
 	if payload.WorkspacePath == "" {
 		h.jsonError(w, "workspacePath is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := security.ValidateWorkspaceRoot(payload.WorkspacePath); err != nil {
+		h.jsonError(w, "invalid workspace path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := security.ValidateSafeIdentifier(payload.Environment.Name); err != nil {
+		h.jsonError(w, "invalid environment name: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 

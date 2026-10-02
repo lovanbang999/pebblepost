@@ -41,10 +41,11 @@ func NewApp() *App {
 	return a
 }
 
-// Mux returns the HTTP handler for Wails AssetServer.
+// Mux returns the HTTP handler for Wails AssetServer. The handler runs
+// through the full security middleware stack.
 func (a *App) Mux() http.Handler {
 	if a.inst != nil {
-		return a.inst.Mux
+		return a.inst // App implements http.Handler via ServeHTTP
 	}
 	return nil
 }
