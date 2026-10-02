@@ -21,8 +21,9 @@ export interface GraphQLDefinition {
 }
 
 export interface BodyDefinition {
-  type: 'none' | 'json' | 'raw' | 'formData' | 'urlEncoded' | 'graphql'
+  type: 'none' | 'json' | 'raw' | 'formData' | 'urlEncoded' | 'graphql' | 'file'
   raw?: string
+  filePath?: string
   formData?: KeyValue[]
   urlEncoded?: KeyValue[]
   graphql?: GraphQLDefinition
@@ -41,10 +42,12 @@ export interface SettingDefinition {
 
 export interface RequestDefinition {
   $schema?: string
+  schemaVersion?: number
   version?: string
   id?: string
   name: string
   description?: string
+  order?: number
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
   url: string
   headers?: KeyValue[]
@@ -63,8 +66,17 @@ export interface EnvironmentVariable {
 }
 
 export interface EnvironmentDefinition {
+  schemaVersion?: number
   name: string
   variables: EnvironmentVariable[]
+}
+
+export interface FolderDefinition {
+  schemaVersion?: number
+  name?: string
+  description?: string
+  order?: number
+  itemOrder?: string[]
 }
 
 export interface TimingMetrics {
@@ -99,9 +111,12 @@ export interface ExecutionResult {
 export interface TreeNode {
   id: string
   name: string
+  displayName?: string
+  order?: number
   path: string
   relPath: string
   isDir: boolean
   method?: string
   children?: TreeNode[]
 }
+
