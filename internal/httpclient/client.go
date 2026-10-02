@@ -403,11 +403,24 @@ func (c *DefaultClient) buildHTTPClient(settings types.SettingDefinition) *http.
 		Transport: transport,
 	}
 
-	// Redirect policy
-	if !settings.FollowRedirects {
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+	// Redirect policy: limit hops, and strip sensitive headers across origins
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !settings.FollowRedirects {
 			return http.ErrUseLastResponse
 		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if len(via) > 0 {
+			initial := via[0]
+			// If origin (scheme or host:port) differs, strip sensitive auth credentials
+			if initial.URL.Scheme != req.URL.Scheme || !strings.EqualFold(initial.URL.Host, req.URL.Host) {
+				req.Header.Del("Authorization")
+				req.Header.Del("Cookie")
+				req.Header.Del("Proxy-Authorization")
+			}
+		}
+		return nil
 	}
 
 	return client

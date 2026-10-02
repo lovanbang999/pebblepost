@@ -3,6 +3,7 @@ package scripting
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"pebblepost/internal/types"
 )
@@ -37,7 +38,7 @@ func TestEngine_PreRequestScript(t *testing.T) {
 		pb.request.body.setRaw("updated body payload");
 	`
 
-	res, err := engine.ExecutePreRequest(script, req, vars)
+	res, err := engine.ExecutePreRequest(script, req, vars, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,7 +125,7 @@ func TestEngine_PostResponseScriptAndAssertions(t *testing.T) {
 		});
 	`
 
-	res, err := engine.ExecutePostResponse(script, req, resp, map[string]string{})
+	res, err := engine.ExecutePostResponse(script, req, resp, map[string]string{}, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,5 +195,93 @@ func TestEngine_CryptoModule(t *testing.T) {
 	b64Decoded, err := crypto.Base64Decode(b64Encoded)
 	if err != nil || b64Decoded != "hello base64" {
 		t.Errorf("base64 roundtrip failed: %v, got '%s'", err, b64Decoded)
+	}
+}
+
+// TestEngine_InfiniteLoopIsInterrupted verifies that a script containing an
+// infinite loop is interrupted by the configurable timeout.
+func TestEngine_InfiniteLoopIsInterrupted(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	script := `while(true) {}`
+
+	start := time.Now()
+	_, err := engine.ExecutePreRequest(script, req, nil, 500*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected timeout error for infinite-loop script, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected 'timed out' in error, got: %v", err)
+	}
+	// Should finish well within 2× the configured timeout.
+	if elapsed > 2*time.Second {
+		t.Errorf("script took too long to interrupt: %s", elapsed)
+	}
+}
+
+// TestEngine_ConsoleCap verifies that console output is capped at maxConsoleLogs
+// entries and that individual long entries are truncated.
+func TestEngine_ConsoleCap(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	// Log maxConsoleLogs+50 messages; only maxConsoleLogs should survive.
+	script := `
+		for (var i = 0; i < 560; i++) {
+			console.log("line " + i);
+		}
+	`
+	res, err := engine.ExecutePreRequest(script, req, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Logs) > maxConsoleLogs {
+		t.Errorf("expected ≤%d log entries, got %d", maxConsoleLogs, len(res.Logs))
+	}
+}
+
+// TestEngine_ConsoleLongEntryTruncated verifies very long log lines are capped.
+func TestEngine_ConsoleLongEntryTruncated(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	script := `console.log("x".repeat(10000));`
+	res, err := engine.ExecutePreRequest(script, req, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Logs) == 0 {
+		t.Fatal("expected at least one log entry")
+	}
+	if len(res.Logs[0]) > maxLogEntryLen+20 { // +20 for "…[truncated]"
+		t.Errorf("log entry not truncated: length=%d", len(res.Logs[0]))
+	}
+}
+
+// TestEngine_SandboxNoRequire verifies that scripts cannot call require() or
+// access Node.js-style globals (fs, process, etc.).
+func TestEngine_SandboxNoRequire(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{"require not defined", `require('fs')`},
+		{"process not defined", `process.exit(0)`},
+		{"global fetch not defined", `fetch('http://example.com')`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := engine.ExecutePreRequest(tt.script, req, nil, 0)
+			if err == nil {
+				t.Errorf("%s: expected an error (sandbox should block access), got nil", tt.name)
+			}
+		})
 	}
 }
