@@ -1,6 +1,6 @@
 # Binaries & build artifacts
-build/bin/
-build/deb_pkg/
+build/
+
 cmd/desktop/build/
 cmd/desktop/build
 pebblepost
