@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"pebblepost/internal/security"
 	"pebblepost/internal/types"
@@ -18,11 +19,18 @@ const (
 )
 
 // EnvironmentService manages public and secret environment variables.
-type EnvironmentService struct{}
+type EnvironmentService struct {
+	watcher *Watcher
+}
 
 // NewEnvironmentService creates a new EnvironmentService instance.
 func NewEnvironmentService() *EnvironmentService {
 	return &EnvironmentService{}
+}
+
+// SetWatcher connects an active file watcher to the service for self-write suppression.
+func (s *EnvironmentService) SetWatcher(w *Watcher) {
+	s.watcher = w
 }
 
 // ListEnvironments scans .pebble/environments and returns all merged environments.
@@ -58,8 +66,9 @@ func (s *EnvironmentService) ListEnvironments(rootPath string) ([]types.Environm
 			vars, err := s.readVariables(fullPath)
 			if err == nil {
 				envMap[envName] = &types.EnvironmentDefinition{
-					Name:      envName,
-					Variables: vars,
+					SchemaVersion: CurrentSchemaVersion,
+					Name:          envName,
+					Variables:     vars,
 				}
 			}
 		}
@@ -69,8 +78,9 @@ func (s *EnvironmentService) ListEnvironments(rootPath string) ([]types.Environm
 	for secretEnvName := range secretMap {
 		if _, exists := envMap[secretEnvName]; !exists {
 			envMap[secretEnvName] = &types.EnvironmentDefinition{
-				Name:      secretEnvName,
-				Variables: []types.KeyValue{},
+				SchemaVersion: CurrentSchemaVersion,
+				Name:          secretEnvName,
+				Variables:     []types.KeyValue{},
 			}
 		}
 	}
@@ -80,8 +90,9 @@ func (s *EnvironmentService) ListEnvironments(rootPath string) ([]types.Environm
 	for envName, envDef := range envMap {
 		mergedVars := s.mergeVariables(envDef.Variables, secretMap[envName])
 		result = append(result, types.EnvironmentDefinition{
-			Name:      envName,
-			Variables: mergedVars,
+			SchemaVersion: CurrentSchemaVersion,
+			Name:          envName,
+			Variables:     mergedVars,
 		})
 	}
 
@@ -128,12 +139,14 @@ func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.Environm
 	}
 
 	filePath := filepath.Join(envDir, fileName)
-	data, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode environment to JSON: %w", err)
+
+	// Suppress watcher for internal write
+	if s.watcher != nil {
+		s.watcher.Suppress(filePath, 1000*time.Millisecond)
 	}
 
-	return os.WriteFile(filePath, data, 0644)
+	env.SchemaVersion = CurrentSchemaVersion
+	return WriteFileStable(filePath, env)
 }
 
 // DeleteEnvironment removes both public and secret files for an environment.
@@ -145,6 +158,11 @@ func (s *EnvironmentService) DeleteEnvironment(rootPath string, envName string) 
 	envDir := filepath.Join(rootPath, PebbleDir, EnvironmentsDir)
 	publicFile := filepath.Join(envDir, envName+EnvPublicSuffix)
 	secretFile := filepath.Join(envDir, envName+EnvSecretSuffix)
+
+	if s.watcher != nil {
+		s.watcher.Suppress(publicFile, 1000*time.Millisecond)
+		s.watcher.Suppress(secretFile, 1000*time.Millisecond)
+	}
 
 	_ = os.Remove(publicFile)
 	_ = os.Remove(secretFile)
@@ -163,7 +181,8 @@ func (s *EnvironmentService) readVariables(filePath string) ([]types.KeyValue, e
 		return nil, err
 	}
 
-	return env.Variables, nil
+	migrated, _ := MigrateEnvironment(&env)
+	return migrated.Variables, nil
 }
 
 func (s *EnvironmentService) mergeVariables(publicVars []types.KeyValue, secretVars []types.KeyValue) []types.KeyValue {
