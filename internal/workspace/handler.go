@@ -12,6 +12,7 @@ type Handler struct {
 	workspaceSvc   *WorkspaceService
 	environmentSvc *EnvironmentService
 	interpolator   *Interpolator
+	importSvc      *ImportService
 }
 
 // NewHandler creates a new Handler instance.
@@ -20,6 +21,7 @@ func NewHandler(ws *WorkspaceService, env *EnvironmentService, in *Interpolator)
 		workspaceSvc:   ws,
 		environmentSvc: env,
 		interpolator:   in,
+		importSvc:      NewImportService(),
 	}
 }
 
@@ -36,6 +38,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/request/interpolate", h.handleInterpolate)
 	mux.HandleFunc("/api/environments", h.handleEnvironments)
 	mux.HandleFunc("/api/environments/save", h.handleSaveEnvironment)
+	mux.HandleFunc("/api/import", h.handleImport)
 }
 
 func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
@@ -336,6 +339,51 @@ func (h *Handler) handleInterpolate(w http.ResponseWriter, r *http.Request) {
 	h.jsonResponse(w, map[string]any{
 		"interpolatedRequest": interpolatedReq,
 		"variables":           varMap,
+	})
+}
+
+func (h *Handler) handleImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Source string `json:"source"` // "curl", "postman", "openapi"
+		Content string `json:"content"` // raw text or JSON string
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	var reqs []*types.RequestDefinition
+	var err error
+
+	switch payload.Source {
+	case "curl":
+		var req *types.RequestDefinition
+		req, err = h.importSvc.ParseCURL(payload.Content)
+		if err == nil {
+			reqs = []*types.RequestDefinition{req}
+		}
+	case "postman":
+		reqs, err = h.importSvc.ParsePostman([]byte(payload.Content))
+	case "openapi":
+		reqs, err = h.importSvc.ParseOpenAPI([]byte(payload.Content))
+	default:
+		h.jsonError(w, "source must be one of: curl, postman, openapi", http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"requests": reqs,
+		"count":    len(reqs),
 	})
 }
 
