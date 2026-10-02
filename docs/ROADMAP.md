@@ -21,7 +21,7 @@ Rules for whoever updates this file:
 | # | Prompt | Phase | Status | Done |
 |---|---|---|---|---|
 | 1 | Security hardening | P0 | `[x]` | 10/10 |
-| 2 | Schema v1, ordering, file watcher | P0 | `[ ]` | 0/8 |
+| 2 | Schema v1, ordering, file watcher | P0 | `[x]` | 8/8 |
 | 3 | Multi-tab & tree management | P0 | `[ ]` | 0/9 |
 | 4 | Folder-level inheritance | P0 | `[ ]` | 0/7 |
 | 5 | Auth, cookies, request settings | P0 | `[ ]` | 0/10 |
@@ -55,14 +55,14 @@ Rules for whoever updates this file:
 - [x] 1.10 Secret masking in logs/CLI/history + "trust this workspace" prompt before first script run
 
 ## Prompt 2 – Schema v1, ordering, file watcher
-- [ ] 2.1 `schemaVersion: 1` added to all file types
-- [ ] 2.2 Automatic v0 → v1 migration on read (no overwrite until Save), with tests
-- [ ] 2.3 Stable serialization (key order, indent, trailing newline) with golden tests
-- [ ] 2.4 Explicit ordering mechanism, compatible with numeric prefixes (options compared first)
-- [ ] 2.5 Large bodies/uploads stored as relative path references
-- [ ] 2.6 Watcher: debounce, self-write ignore
-- [ ] 2.7 Conflict dialog (Keep mine / Reload / View diff) with tests
-- [ ] 2.8 `docs/file-format.md` written
+- [x] 2.1 `schemaVersion: 1` added to all file types
+- [x] 2.2 Automatic v0 → v1 migration on read (no overwrite until Save), with tests
+- [x] 2.3 Stable serialization (key order, indent, trailing newline) with golden tests
+- [x] 2.4 Explicit ordering mechanism, compatible with numeric prefixes (options compared first)
+- [x] 2.5 Large bodies/uploads stored as relative path references
+- [x] 2.6 Watcher: debounce, self-write ignore
+- [x] 2.7 Conflict dialog (Keep mine / Reload / View diff) with tests
+- [x] 2.8 `docs/file-format.md` written
 
 ## Prompt 3 – Multi-tab & tree management
 - [ ] 3.1 Preview tab (single click) and pinned tab (double click)
@@ -220,3 +220,4 @@ Coverage before/after: _fill in_
 |---|---|---|---|
 | 2026-10-02 | init | Placed `docs/ROADMAP.md` from roadmap template; all items start at `[ ]` | — |
 | 2026-10-02 | 1 | Security hardening: token auth, path guard, CORS/headers, sandbox timeout/caps, gitignore protection, secret masking, and workspace trust | `010e994..6d39171` |
+| 2026-10-02 | 2 | Schema v1, ordering, file watcher: schemaVersion 1, v0->v1 migration on read, stable serialization, Option C hybrid ordering, relative bodies, debounced watcher, conflict dialog, and file-format.md | `b78444e..e16dabd` |
