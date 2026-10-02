@@ -419,7 +419,7 @@ export function CollectionTree() {
                 <Folder className="w-3.5 h-3.5 text-zinc-400/90 dark:text-zinc-500/90 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
               )}
               <span className="truncate font-medium text-xs text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">
-                {node.name}
+                {node.displayName || node.name}
               </span>
             </button>
 
@@ -486,7 +486,7 @@ export function CollectionTree() {
           {node.method || 'GET'}
         </span>
         <span className="truncate flex-1">
-          {node.name.replace('.pebble.json', '')}
+          {(node.displayName || node.name).replace('.pebble.json', '')}
         </span>
       </button>
     )

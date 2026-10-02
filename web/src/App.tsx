@@ -4,15 +4,20 @@ import { CollectionTree } from './components/sidebar/CollectionTree'
 import { RequestPanel } from './components/request/RequestPanel'
 import { ResponsePanel } from './components/response/ResponsePanel'
 import { QuickSearch } from './components/common/QuickSearch'
+import { ConflictDialog } from './components/common/ConflictDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useWorkspaceStore } from './store/workspaceStore'
 
 export default function App() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
-  const { loadWorkspace, workspacePath } = useWorkspaceStore()
+  const { loadWorkspace, workspacePath, initWatcher, cleanupWatcher } = useWorkspaceStore()
 
   useEffect(() => {
     loadWorkspace(workspacePath || '.')
+    initWatcher()
+    return () => {
+      cleanupWatcher()
+    }
   }, [])
 
   useEffect(() => {
@@ -51,6 +56,9 @@ export default function App() {
         open={quickSearchOpen}
         onClose={() => setQuickSearchOpen(false)}
       />
+
+      {/* External File Change Conflict Dialog */}
+      <ConflictDialog />
     </div>
     </TooltipProvider>
   )
