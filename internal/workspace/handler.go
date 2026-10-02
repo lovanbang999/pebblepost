@@ -2,8 +2,10 @@ package workspace
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
+	"sync"
 
 	"pebblepost/internal/security"
 	"pebblepost/internal/types"
@@ -15,6 +17,8 @@ type Handler struct {
 	environmentSvc *EnvironmentService
 	interpolator   *Interpolator
 	importSvc      *ImportService
+	watchersMu     sync.Mutex
+	watchers       map[string]*Watcher
 }
 
 // NewHandler creates a new Handler instance.
@@ -24,6 +28,7 @@ func NewHandler(ws *WorkspaceService, env *EnvironmentService, in *Interpolator)
 		environmentSvc: env,
 		interpolator:   in,
 		importSvc:      NewImportService(),
+		watchers:       make(map[string]*Watcher),
 	}
 }
 
@@ -35,6 +40,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/folder", h.handleCreateFolder)
 	mux.HandleFunc("/api/workspace/rename", h.handleRename)
 	mux.HandleFunc("/api/workspace/gitignore/ensure", h.handleEnsureGitignore)
+	mux.HandleFunc("/api/workspace/events", h.handleEvents)
 	mux.HandleFunc("/api/request", h.handleGetRequest)
 	mux.HandleFunc("/api/request/save", h.handleSaveRequest)
 	mux.HandleFunc("/api/request/delete", h.handleDeleteRequest)
@@ -549,3 +555,89 @@ func (h *Handler) jsonError(w http.ResponseWriter, message string, code int) {
 		"error": message,
 	})
 }
+
+func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspacePath")
+	if workspacePath == "" {
+		http.Error(w, "Query parameter 'workspacePath' is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := security.ValidateWorkspaceRoot(workspacePath); err != nil {
+		h.jsonError(w, "invalid workspace path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	watcher, err := h.getOrCreateWatcher(workspacePath)
+	if err != nil {
+		h.jsonError(w, "failed to start workspace watcher: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Send initial connection confirmation event
+	_, _ = fmt.Fprintf(w, "data: {\"type\":\"connected\",\"workspacePath\":%q}\n\n", workspacePath)
+	flusher.Flush()
+
+	events, unsubscribe := watcher.Subscribe()
+	defer unsubscribe()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case evt, ok := <-events:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(evt)
+			if err == nil {
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+func (h *Handler) getOrCreateWatcher(rootPath string) (*Watcher, error) {
+	h.watchersMu.Lock()
+	defer h.watchersMu.Unlock()
+
+	clean := filepath.Clean(rootPath)
+	if w, exists := h.watchers[clean]; exists {
+		return w, nil
+	}
+
+	w, err := NewWatcher(clean)
+	if err != nil {
+		return nil, err
+	}
+
+	h.watchers[clean] = w
+	h.workspaceSvc.SetWatcher(w)
+	h.environmentSvc.SetWatcher(w)
+
+	return w, nil
+}
+
+// Close gracefully closes all active workspace file watchers.
+func (h *Handler) Close() {
+	h.watchersMu.Lock()
+	defer h.watchersMu.Unlock()
+
+	for _, w := range h.watchers {
+		_ = w.Close()
+	}
+	h.watchers = make(map[string]*Watcher)
+}
+

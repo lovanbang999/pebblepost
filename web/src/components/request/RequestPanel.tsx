@@ -443,6 +443,7 @@ export function RequestPanel() {
                       { id: "formData", label: "Form Data" },
                       { id: "raw", label: "Raw" },
                       { id: "graphql", label: "GraphQL" },
+                      { id: "file", label: "File Reference" },
                     ] as const
                   ).map(({ id, label }) => {
                     const isSelected =
@@ -467,21 +468,51 @@ export function RequestPanel() {
                 </RadioGroup>
               </div>
 
-              <div className="flex-1 min-h-55 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                <CodeMirror
-                  value={activeRequest.body?.raw || ""}
-                  height="100%"
-                  extensions={[json()]}
-                  theme={theme === "dark" ? "dark" : "light"}
-                  onChange={(val) =>
-                    updateActiveRequest((prev) => ({
-                      ...prev,
-                      body: { ...prev.body, raw: val },
-                    }))
-                  }
-                  className="text-xs font-mono"
-                />
-              </div>
+              {activeRequest.body?.type === "file" ? (
+                <div className="space-y-3 p-4 border border-zinc-200 dark:border-zinc-800 rounded-md bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                      Relative File Path
+                    </label>
+                    <Input
+                      type="text"
+                      value={activeRequest.body?.filePath || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          body: { ...prev.body, filePath: e.target.value },
+                        }))
+                      }
+                      placeholder="e.g. data/large-payload.json or uploads/sample.bin"
+                      className="font-mono text-xs bg-white dark:bg-zinc-950"
+                    />
+                  </div>
+                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 space-y-1">
+                    <p>
+                      Stored in <code className="font-mono text-zinc-700 dark:text-zinc-300">.pebble.json</code> as a relative file reference (<code className="font-mono text-zinc-700 dark:text-zinc-300">"filePath"</code>).
+                    </p>
+                    <p className="text-emerald-600 dark:text-emerald-400 font-medium">
+                      ✓ Zero base64 embedding in JSON keeps Git repositories clean and diffs readable.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 min-h-55 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                  <CodeMirror
+                    value={activeRequest.body?.raw || ""}
+                    height="100%"
+                    extensions={[json()]}
+                    theme={theme === "dark" ? "dark" : "light"}
+                    onChange={(val) =>
+                      updateActiveRequest((prev) => ({
+                        ...prev,
+                        body: { ...prev.body, raw: val },
+                      }))
+                    }
+                    className="text-xs font-mono"
+                  />
+                </div>
+              )}
             </div>
           </TabsContent>
 

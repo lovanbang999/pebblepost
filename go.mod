@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/dop251/goja v0.0.0-20260930195847-0f92c903ca4a
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/wailsapp/wails/v2 v2.16.0
 )
 

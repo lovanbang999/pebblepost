@@ -24,8 +24,9 @@ type AuthDefinition struct {
 
 // BodyDefinition represents the request body payload.
 type BodyDefinition struct {
-	Type       string     `json:"type"` // "none", "json", "raw", "formData", "urlEncoded", "graphql"
+	Type       string     `json:"type"` // "none", "json", "raw", "formData", "urlEncoded", "graphql", "file"
 	Raw        string     `json:"raw,omitempty"`
+	FilePath   string     `json:"filePath,omitempty"` // Relative path reference to large payload file
 	FormData   []KeyValue `json:"formData,omitempty"`
 	UrlEncoded []KeyValue `json:"urlEncoded,omitempty"`
 	GraphQL    *GraphQL   `json:"graphql,omitempty"`
@@ -45,49 +46,63 @@ type ScriptDefinition struct {
 
 // SettingDefinition holds per-request execution settings.
 type SettingDefinition struct {
-	FollowRedirects  bool `json:"followRedirects"`
-	VerifySSL        bool `json:"verifySSL"`
-	TimeoutMs        int  `json:"timeoutMs"`
-	ScriptTimeoutMs  int  `json:"scriptTimeoutMs,omitempty"` // 0 = engine default (5 s)
+	FollowRedirects bool `json:"followRedirects"`
+	VerifySSL       bool `json:"verifySSL"`
+	TimeoutMs       int  `json:"timeoutMs"`
+	ScriptTimeoutMs int  `json:"scriptTimeoutMs,omitempty"` // 0 = engine default (5 s)
 }
 
 // RequestDefinition is the schema for a *.pebble.json file.
 type RequestDefinition struct {
-	Schema      string            `json:"$schema,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	ID          string            `json:"id,omitempty"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	Method      string            `json:"method"`
-	URL         string            `json:"url"`
-	Headers     []KeyValue        `json:"headers,omitempty"`
-	Params      []KeyValue        `json:"params,omitempty"`
-	Auth        AuthDefinition    `json:"auth"`
-	Body        BodyDefinition    `json:"body"`
-	Scripts     ScriptDefinition  `json:"scripts"`
-	Settings    SettingDefinition `json:"settings"`
+	Schema        string            `json:"$schema,omitempty"`
+	SchemaVersion int               `json:"schemaVersion"`
+	Version       string            `json:"version,omitempty"`
+	ID            string            `json:"id,omitempty"`
+	Name          string            `json:"name"`
+	Description   string            `json:"description,omitempty"`
+	Order         int               `json:"order,omitempty"`
+	Method        string            `json:"method"`
+	URL           string            `json:"url"`
+	Headers       []KeyValue        `json:"headers,omitempty"`
+	Params        []KeyValue        `json:"params,omitempty"`
+	Auth          AuthDefinition    `json:"auth"`
+	Body          BodyDefinition    `json:"body"`
+	Scripts       ScriptDefinition  `json:"scripts"`
+	Settings      SettingDefinition `json:"settings"`
 }
 
 // EnvironmentDefinition represents an environment file (*.env.json or *.secret.env.json).
 type EnvironmentDefinition struct {
-	Name      string     `json:"name"`
-	Variables []KeyValue `json:"variables"`
+	SchemaVersion int        `json:"schemaVersion"`
+	Name          string     `json:"name"`
+	Variables     []KeyValue `json:"variables"`
 }
 
 // WorkspaceDefinition represents workspace-level metadata (.pebble/workspace.json).
 type WorkspaceDefinition struct {
-	Version           string `json:"version"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	Version           string `json:"version,omitempty"`
 	Name              string `json:"name"`
 	ActiveEnvironment string `json:"activeEnvironment,omitempty"`
+	Trusted           bool   `json:"trusted,omitempty"`
+}
+
+// FolderDefinition represents folder-level metadata and ordering (_folder.pebble.json).
+type FolderDefinition struct {
+	SchemaVersion int      `json:"schemaVersion"`
+	Name          string   `json:"name,omitempty"`
+	Description   string   `json:"description,omitempty"`
+	Order         int      `json:"order,omitempty"`
+	ItemOrder     []string `json:"itemOrder,omitempty"` // Explicit sequence of child filenames or subfolder names
 }
 
 // TimingMetrics records detailed network roundtrip breakdown in milliseconds.
 type TimingMetrics struct {
-	DNSLookupMs    float64 `json:"dnsLookupMs"`
-	TCPConnectMs   float64 `json:"tcpConnectMs"`
-	TLSHandshakeMs float64 `json:"tlsHandshakeMs"`
-	TTFBMs         float64 `json:"ttfbMs"` // Time to First Byte
-	DownloadMs     float64 `json:"downloadMs"`
+	DNSLookupMs     float64 `json:"dnsLookupMs"`
+	TCPConnectMs    float64 `json:"tcpConnectMs"`
+	TLSHandshakeMs  float64 `json:"tlsHandshakeMs"`
+	TTFBMs          float64 `json:"ttfbMs"` // Time to First Byte
+	DownloadMs      float64 `json:"downloadMs"`
 	TotalDurationMs float64 `json:"totalDurationMs"`
 }
 
@@ -115,11 +130,13 @@ type ExecutionResult struct {
 
 // TreeNode represents a file or folder in the collection directory explorer.
 type TreeNode struct {
-	ID       string      `json:"id"`
-	Name     string      `json:"name"`
-	Path     string      `json:"path"`
-	RelPath  string      `json:"relPath"`
-	IsDir    bool        `json:"isDir"`
-	Method   string      `json:"method,omitempty"`
-	Children []*TreeNode `json:"children,omitempty"`
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	DisplayName string      `json:"displayName,omitempty"`
+	Path        string      `json:"path"`
+	RelPath     string      `json:"relPath"`
+	IsDir       bool        `json:"isDir"`
+	Order       int         `json:"order,omitempty"`
+	Method      string      `json:"method,omitempty"`
+	Children    []*TreeNode `json:"children,omitempty"`
 }

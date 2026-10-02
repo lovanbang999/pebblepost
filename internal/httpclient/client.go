@@ -216,9 +216,36 @@ func (c *DefaultClient) buildURL(rawURL string, params []types.KeyValue) (*url.U
 func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string, error) {
 	bodyType := strings.ToLower(strings.TrimSpace(body.Type))
 
+	// If body references an external file, load content from disk (never embed large payload in JSON)
+	if body.FilePath != "" {
+		data, err := os.ReadFile(body.FilePath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read body file %s: %w", body.FilePath, err)
+		}
+		contentType := "application/octet-stream"
+		switch bodyType {
+		case "json":
+			contentType = "application/json"
+		case "raw":
+			contentType = "text/plain"
+		}
+		return bytes.NewReader(data), contentType, nil
+	}
+
 	switch bodyType {
 	case "", "none":
 		return nil, "", nil
+
+	case "file":
+		filePath := body.Raw
+		if filePath == "" {
+			return nil, "", nil
+		}
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read body file %s: %w", filePath, err)
+		}
+		return bytes.NewReader(data), "application/octet-stream", nil
 
 	case "json":
 		raw := strings.TrimSpace(body.Raw)
