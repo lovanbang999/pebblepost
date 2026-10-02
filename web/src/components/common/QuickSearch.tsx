@@ -96,7 +96,7 @@ export function QuickSearch({ open, onClose }: QuickSearchProps) {
       onClick={e => e.target === e.currentTarget && onClose()}
     >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60 transition-opacity" onClick={onClose} />
 
       {/* Modal */}
       <div className="relative w-full max-w-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl shadow-2xl overflow-hidden transition-colors">

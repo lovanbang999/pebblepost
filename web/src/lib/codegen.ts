@@ -128,11 +128,8 @@ export function generateNodeFetch(req: RequestDefinition): string {
   const headersObj = Object.fromEntries(headers.map((h) => [h.key, h.value]))
 
   let bodyPart = ''
-  let bodyHeader = ''
-
   if (req.body.type === 'json' || req.body.type === 'raw') {
     bodyPart = `\n  body: \`${(req.body.raw || '').replace(/`/g, '\\`')}\`,`
-    bodyHeader = `\n  // Content-Type set explicitly:`
     headersObj['Content-Type'] = 'application/json'
   }
 
