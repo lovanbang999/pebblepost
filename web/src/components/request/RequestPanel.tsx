@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { Send, Loader2, Plus, Trash2, Save, Check } from "lucide-react";
+import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
+import { ImportDialog } from "../common/ImportDialog";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
@@ -253,6 +255,10 @@ export function RequestPanel() {
             placeholder="Enter request URL or {{VARIABLE}}"
           />
         </div>
+
+        {/* Code Generator & Import buttons */}
+        <CodeGeneratorDialog request={activeRequest} />
+        <ImportDialog />
 
         {/* Save Button */}
         <Tooltip content="Save Request (Ctrl+S / Cmd+S)">
