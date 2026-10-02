@@ -10,16 +10,16 @@ const buttonVariants = cva(
         default:
           'bg-blue-600 text-white shadow hover:bg-blue-500 active:bg-blue-700',
         destructive:
-          'bg-red-600 text-white shadow-sm hover:bg-red-500 active:bg-red-700',
+          'bg-red-600 text-white shadow-xs hover:bg-red-500 active:bg-red-700',
         outline:
-          'border border-zinc-800 bg-transparent shadow-sm hover:bg-zinc-800/60 hover:text-zinc-100 text-zinc-300',
+          'border border-zinc-200 dark:border-zinc-800 bg-transparent shadow-xs hover:bg-zinc-100 dark:hover:bg-zinc-800/60 hover:text-zinc-900 dark:hover:text-zinc-100 text-zinc-700 dark:text-zinc-300',
         secondary:
-          'bg-zinc-800 text-zinc-100 shadow-sm hover:bg-zinc-700/80',
+          'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shadow-xs hover:bg-zinc-200 dark:hover:bg-zinc-700/80',
         ghost:
-          'hover:bg-zinc-800/60 hover:text-zinc-100 text-zinc-400',
-        link: 'text-blue-400 underline-offset-4 hover:underline',
+          'hover:bg-zinc-100 dark:hover:bg-zinc-800/60 hover:text-zinc-900 dark:hover:text-zinc-100 text-zinc-600 dark:text-zinc-400',
+        link: 'text-blue-500 dark:text-blue-400 underline-offset-4 hover:underline',
         success:
-          'bg-emerald-600/15 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/25',
+          'bg-emerald-600/15 border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-600/25',
       },
       size: {
         default: 'h-8 px-3 py-1.5',

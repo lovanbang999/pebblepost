@@ -1,7 +1,9 @@
-import React, { useState } from 'react'
-import { CheckCircle2, XCircle, Clock, Database, Copy, Check } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { CheckCircle2, XCircle, Clock, Database, Copy, Check, Terminal } from 'lucide-react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
+import { javascript } from '@codemirror/lang-javascript'
+import { xml } from '@codemirror/lang-xml'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { formatBytes, formatDuration } from '../../lib/utils'
 import { Button } from '../ui/button'
@@ -17,14 +19,28 @@ import {
 } from '../ui/table'
 import { Tooltip } from '../ui/tooltip'
 
-export const ResponsePanel: React.FC = () => {
-  const { lastResult, isExecuting } = useWorkspaceStore()
-  const [activeSubTab, setActiveSubTab] = useState<'body' | 'headers' | 'tests' | 'timing'>('body')
+// Detect the best CodeMirror language extension from Content-Type header
+function detectLanguageExtension(headers: Record<string, string[]>) {
+  const ct = Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1]?.[0] || ''
+  if (ct.includes('json')) return [json()]
+  if (ct.includes('xml') || ct.includes('html')) return [xml()]
+  if (ct.includes('javascript')) return [javascript()]
+  return [json()] // fallback
+}
+
+export function ResponsePanel() {
+  const { theme, lastResult, isExecuting } = useWorkspaceStore()
+  const [activeSubTab, setActiveSubTab] = useState<'body' | 'headers' | 'tests' | 'timing' | 'console'>('body')
   const [copied, setCopied] = useState(false)
+
+  const langExtensions = useMemo(
+    () => lastResult ? detectLanguageExtension(lastResult.headers || {}) : [json()],
+    [lastResult]
+  )
 
   if (isExecuting) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-zinc-950 text-zinc-400 gap-3 border-l border-zinc-800">
+      <div className="flex-1 flex flex-col items-center justify-center bg-white dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 gap-3 border-l border-zinc-200 dark:border-zinc-800">
         <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         <span className="text-xs font-mono">Executing request & network timing trace...</span>
       </div>
@@ -33,9 +49,9 @@ export const ResponsePanel: React.FC = () => {
 
   if (!lastResult) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-zinc-950 text-zinc-500 text-xs gap-1 border-l border-zinc-800 p-6 text-center">
-        <Clock className="w-8 h-8 text-zinc-700 stroke-[1.5] mb-2" />
-        <span className="font-semibold text-zinc-300 text-sm">No Response Yet</span>
+      <div className="flex-1 flex flex-col items-center justify-center bg-white dark:bg-zinc-950 text-zinc-500 text-xs gap-1 border-l border-zinc-200 dark:border-zinc-800 p-6 text-center">
+        <Clock className="w-8 h-8 text-zinc-300 dark:text-zinc-700 stroke-[1.5] mb-2" />
+        <span className="font-semibold text-zinc-900 dark:text-zinc-300 text-sm">No Response Yet</span>
         <span className="max-w-xs text-zinc-500 mt-1">
           Click "Send" or press Ctrl+Enter to execute the request and view response payload, headers, and timing metrics.
         </span>
@@ -53,9 +69,9 @@ export const ResponsePanel: React.FC = () => {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-zinc-950 border-l border-zinc-800 overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 border-l border-zinc-200 dark:border-zinc-800 overflow-hidden transition-colors duration-150">
       {/* Response Status Bar */}
-      <div className="p-3 border-b border-zinc-800 flex items-center justify-between">
+      <div className="p-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-white dark:bg-zinc-950">
         <div className="flex items-center gap-2.5">
           {/* Status Badge */}
           <Badge
@@ -73,7 +89,7 @@ export const ResponsePanel: React.FC = () => {
 
           {/* Timing Badge */}
           <Tooltip content="Total Roundtrip Duration">
-            <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-mono bg-zinc-900 border border-zinc-800 px-2 py-1 rounded-md">
+            <div className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300 font-mono bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded-md">
               <Clock className="w-3 h-3 text-zinc-400" />
               <span>{formatDuration(lastResult.timing.totalDurationMs)}</span>
             </div>
@@ -81,7 +97,7 @@ export const ResponsePanel: React.FC = () => {
 
           {/* Size Badge */}
           <Tooltip content="Response Payload Size">
-            <div className="flex items-center gap-1.5 text-xs text-zinc-300 font-mono bg-zinc-900 border border-zinc-800 px-2 py-1 rounded-md">
+            <div className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300 font-mono bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 py-1 rounded-md">
               <Database className="w-3 h-3 text-zinc-400" />
               <span>{formatBytes(lastResult.size)}</span>
             </div>
@@ -93,10 +109,10 @@ export const ResponsePanel: React.FC = () => {
             variant="outline"
             size="sm"
             onClick={handleCopyBody}
-            className="h-7 gap-1 px-2.5 text-xs text-zinc-300 hover:text-white"
+            className="h-7 gap-1 px-2.5 text-xs text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white"
           >
             {copied ? (
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <Check className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
             ) : (
               <Copy className="w-3.5 h-3.5 text-zinc-400" />
             )}
@@ -112,15 +128,20 @@ export const ResponsePanel: React.FC = () => {
         className="flex-1 overflow-hidden"
       >
         <TabsList>
-          {(['body', 'headers', 'tests', 'timing'] as const).map((tab) => (
+          {(['body', 'headers', 'tests', 'timing', 'console'] as const).map((tab) => (
             <TabsTrigger key={tab} value={tab} className="capitalize">
-              {tab}
+              {tab === 'console' ? <><Terminal className="w-3 h-3 mr-1" />Console</> : tab}
               {tab === 'tests' && lastResult.tests && lastResult.tests.length > 0 && (
                 <Badge
                   variant={lastResult.tests.every((t) => t.passed) ? 'success' : 'destructive'}
                   className="ml-1.5 px-1 py-0 text-[9px]"
                 >
                   {lastResult.tests.filter((t) => t.passed).length}/{lastResult.tests.length}
+                </Badge>
+              )}
+              {tab === 'console' && lastResult.logs && lastResult.logs.length > 0 && (
+                <Badge variant="secondary" className="ml-1.5 px-1 py-0 text-[9px]">
+                  {lastResult.logs.length}
                 </Badge>
               )}
             </TabsTrigger>
@@ -130,12 +151,12 @@ export const ResponsePanel: React.FC = () => {
         {/* Tab Content Panels */}
         <div className="flex-1 overflow-y-auto p-3">
           <TabsContent value="body">
-            <div className="h-full rounded-md border border-zinc-800 overflow-hidden bg-zinc-950">
+            <div className="h-full rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950">
               <CodeMirror
                 value={lastResult.body}
                 height="100%"
-                extensions={[json()]}
-                theme="dark"
+                extensions={langExtensions}
+                theme={theme === 'dark' ? 'dark' : 'light'}
                 readOnly
                 className="text-xs font-mono"
               />
@@ -143,7 +164,7 @@ export const ResponsePanel: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="headers">
-            <div className="border border-zinc-800 rounded-md overflow-hidden bg-zinc-950">
+            <div className="border border-zinc-200 dark:border-zinc-800 rounded-md overflow-hidden bg-white dark:bg-zinc-950">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -154,8 +175,8 @@ export const ResponsePanel: React.FC = () => {
                 <TableBody>
                   {Object.entries(lastResult.headers || {}).map(([key, vals]) => (
                     <TableRow key={key}>
-                      <TableCell className="text-zinc-300 font-semibold">{key}</TableCell>
-                      <TableCell className="text-zinc-400">{vals.join(', ')}</TableCell>
+                      <TableCell className="text-zinc-800 dark:text-zinc-300 font-semibold">{key}</TableCell>
+                      <TableCell className="text-zinc-600 dark:text-zinc-400">{vals.join(', ')}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -171,14 +192,14 @@ export const ResponsePanel: React.FC = () => {
                     key={idx}
                     className={`p-2.5 rounded-md border flex items-start gap-2 ${
                       test.passed
-                        ? 'bg-emerald-950/20 border-emerald-900/50 text-emerald-300'
-                        : 'bg-rose-950/20 border-rose-900/50 text-rose-300'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/50 text-rose-800 dark:text-rose-300'
                     }`}
                   >
                     {test.passed ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0 mt-0.5" />
                     ) : (
-                      <XCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <XCircle className="w-4 h-4 text-rose-500 dark:text-rose-400 shrink-0 mt-0.5" />
                     )}
                     <div>
                       <div className="font-semibold">{test.name}</div>
@@ -195,34 +216,78 @@ export const ResponsePanel: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="timing">
-            <div className="space-y-3 text-xs">
-              <span className="font-semibold text-zinc-300">Network Timing Breakdown</span>
-              <div className="border border-zinc-800 rounded-md p-3.5 space-y-2.5 bg-zinc-900/40">
-                <div className="flex justify-between text-zinc-400 font-mono">
-                  <span>DNS Lookup:</span>
-                  <span>{lastResult.timing.dnsLookupMs.toFixed(2)} ms</span>
+            <div className="space-y-4 text-xs">
+              <span className="font-semibold text-zinc-900 dark:text-zinc-300">Network Timing Breakdown</span>
+
+              {/* Visual Waterfall Bar */}
+              {(() => {
+                const t = lastResult.timing
+                const total = t.totalDurationMs || 1
+                const phases = [
+                  { label: 'DNS', ms: t.dnsLookupMs, color: 'bg-violet-500' },
+                  { label: 'TCP', ms: t.tcpConnectMs, color: 'bg-blue-500' },
+                  { label: 'TLS', ms: t.tlsHandshakeMs, color: 'bg-cyan-500' },
+                  { label: 'TTFB', ms: t.ttfbMs, color: 'bg-amber-500' },
+                  { label: 'Download', ms: t.downloadMs, color: 'bg-emerald-500' },
+                ]
+                return (
+                  <div className="space-y-2.5">
+                    {/* Stacked bar */}
+                    <div className="h-3 w-full flex rounded-full overflow-hidden border border-zinc-200 dark:border-zinc-800">
+                      {phases.map(p => (
+                        <div
+                          key={p.label}
+                          className={`${p.color} h-full transition-all`}
+                          style={{ width: `${Math.max((p.ms / total) * 100, 0.5)}%` }}
+                          title={`${p.label}: ${p.ms.toFixed(2)}ms`}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Phase rows */}
+                    {phases.map(p => (
+                      <div key={p.label} className="flex items-center gap-2">
+                        <div className={`w-2.5 h-2.5 rounded-sm shrink-0 ${p.color}`} />
+                        <span className="text-zinc-600 dark:text-zinc-400 w-24 shrink-0">{p.label}</span>
+                        <div className="flex-1 h-1.5 bg-zinc-200 dark:bg-zinc-900 rounded-full overflow-hidden">
+                          <div
+                            className={`${p.color} h-full rounded-full transition-all`}
+                            style={{ width: `${Math.max((p.ms / total) * 100, 0.5)}%` }}
+                          />
+                        </div>
+                        <span className="font-mono text-zinc-800 dark:text-zinc-300 w-20 text-right shrink-0">{p.ms.toFixed(2)} ms</span>
+                      </div>
+                    ))}
+
+                    <div className="border-t border-zinc-200 dark:border-zinc-800 pt-2.5 flex justify-between font-bold text-zinc-900 dark:text-zinc-200 font-mono">
+                      <span>Total Duration:</span>
+                      <span className="text-blue-600 dark:text-blue-400">{total.toFixed(2)} ms</span>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="console">
+            <div className="space-y-1.5">
+              {lastResult.logs && lastResult.logs.length > 0 ? (
+                lastResult.logs.map((log, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-start gap-2 font-mono text-[11px] bg-zinc-100 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800/50 rounded px-2.5 py-1.5"
+                  >
+                    <span className="text-zinc-400 dark:text-zinc-600 shrink-0 select-none">{String(idx + 1).padStart(2, '0')}</span>
+                    <span className="text-zinc-800 dark:text-zinc-300 break-all">{log}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-zinc-500 text-xs">
+                  <Terminal className="w-7 h-7 mb-2 opacity-30" />
+                  <span>No console output from scripts.</span>
+                  <span className="text-zinc-600 dark:text-zinc-500 mt-1">Use <code className="font-mono">console.log()</code> in your scripts to see output here.</span>
                 </div>
-                <div className="flex justify-between text-zinc-400 font-mono">
-                  <span>TCP Connection:</span>
-                  <span>{lastResult.timing.tcpConnectMs.toFixed(2)} ms</span>
-                </div>
-                <div className="flex justify-between text-zinc-400 font-mono">
-                  <span>TLS Handshake:</span>
-                  <span>{lastResult.timing.tlsHandshakeMs.toFixed(2)} ms</span>
-                </div>
-                <div className="flex justify-between text-zinc-400 font-mono">
-                  <span>Time To First Byte (TTFB):</span>
-                  <span>{lastResult.timing.ttfbMs.toFixed(2)} ms</span>
-                </div>
-                <div className="flex justify-between text-zinc-400 font-mono">
-                  <span>Content Download:</span>
-                  <span>{lastResult.timing.downloadMs.toFixed(2)} ms</span>
-                </div>
-                <div className="border-t border-zinc-800 pt-2.5 flex justify-between font-bold text-zinc-200 font-mono">
-                  <span>Total Duration:</span>
-                  <span className="text-blue-400">{lastResult.timing.totalDurationMs.toFixed(2)} ms</span>
-                </div>
-              </div>
+              )}
             </div>
           </TabsContent>
         </div>

@@ -23,11 +23,19 @@ interface WorkspaceState {
   setActiveTab: (tab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings') => void
   updateActiveRequest: (updater: (prev: RequestDefinition) => RequestDefinition) => void
 
+  theme: 'light' | 'dark'
+  toggleTheme: () => void
+  setTheme: (theme: 'light' | 'dark') => void
+
   // Backend integration actions
-  loadWorkspace: (path: string) => Promise<void>
+  loadWorkspace: (path?: string) => Promise<void>
   loadRequest: (filePath: string) => Promise<void>
   saveCurrentRequest: () => Promise<boolean>
-  createNewRequest: (folderPath?: string, name?: string) => Promise<string | null>
+  createNewRequest: (
+    folderPath?: string,
+    name?: string,
+    method?: RequestDefinition['method']
+  ) => Promise<string | null>
 }
 
 const defaultRequest: RequestDefinition = {
@@ -51,8 +59,25 @@ const defaultRequest: RequestDefinition = {
   },
 }
 
+function getInitialTheme(): 'light' | 'dark' {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('pebblepost-theme')
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.classList.toggle('dark', saved === 'dark')
+      return saved
+    }
+  }
+  if (typeof document !== 'undefined') {
+    document.documentElement.classList.add('dark')
+  }
+  return 'dark'
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
-  workspacePath: null,
+  theme: getInitialTheme(),
+  workspacePath:
+    (typeof window !== 'undefined' && localStorage.getItem('pebblepost-workspace-path')) ||
+    '.',
   activeEnv: 'dev',
   environments: [
     {
@@ -71,10 +96,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeTab: 'params',
 
   setWorkspacePath: (path) => {
-    set({ workspacePath: path })
-    if (path) {
-      get().loadWorkspace(path)
+    if (typeof window !== 'undefined') {
+      if (path) {
+        localStorage.setItem('pebblepost-workspace-path', path)
+      } else {
+        localStorage.removeItem('pebblepost-workspace-path')
+      }
     }
+    set({ workspacePath: path })
+    get().loadWorkspace(path || '.')
   },
   setActiveEnv: (env) => set({ activeEnv: env }),
   setEnvironments: (environments) => set({ environments }),
@@ -89,10 +119,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeRequest: state.activeRequest ? updater(state.activeRequest) : null,
     })),
 
-  loadWorkspace: async (path: string) => {
+  setTheme: (theme: 'light' | 'dark') => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('pebblepost-theme', theme)
+      document.documentElement.classList.toggle('dark', theme === 'dark')
+    }
+    set({ theme })
+  },
+
+  toggleTheme: () => {
+    const nextTheme = get().theme === 'dark' ? 'light' : 'dark'
+    get().setTheme(nextTheme)
+  },
+
+  loadWorkspace: async (path?: string) => {
+    const targetPath = path || get().workspacePath || '.'
     set({ isLoadingWorkspace: true })
     try {
-      const res = await fetch(`/api/workspace/scan?path=${encodeURIComponent(path)}`)
+      const res = await fetch(`/api/workspace/scan?path=${encodeURIComponent(targetPath)}`)
       if (res.ok) {
         const data = await res.json()
         set({
@@ -147,9 +191,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
   },
 
-  createNewRequest: async (folderPath?: string, name = 'new-request') => {
-    const { workspacePath, loadWorkspace } = get()
-    const targetDir = folderPath || (workspacePath ? `${workspacePath}/collections` : './collections')
+  createNewRequest: async (
+    folderPath?: string,
+    name = 'new-request',
+    method: RequestDefinition['method'] = 'GET',
+  ) => {
+    const currentWs = get().workspacePath || '.'
+    const targetDir =
+      folderPath ||
+      (currentWs && currentWs !== '.' ? `${currentWs}/collections` : 'collections')
     const fileName = name.endsWith('.pebble.json') ? name : `${name}.pebble.json`
     const fullPath = `${targetDir}/${fileName}`
 
@@ -157,7 +207,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       $schema: 'https://pebblepost.dev/schemas/v1/request.json',
       version: '1.0',
       name: name.replace('.pebble.json', ''),
-      method: 'GET',
+      method: method,
       url: '{{BASE_URL}}/api/v1/endpoint',
       headers: [{ key: 'Accept', value: 'application/json', enabled: true }],
       params: [],
@@ -174,9 +224,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         body: JSON.stringify({ path: fullPath, request: newReq }),
       })
       if (res.ok) {
-        if (workspacePath) {
-          await loadWorkspace(workspacePath)
-        }
+        await get().loadWorkspace(currentWs)
         set({ activeRequest: newReq, activeFilePath: fullPath })
         return fullPath
       }

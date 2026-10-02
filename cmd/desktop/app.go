@@ -14,8 +14,9 @@ import (
 
 // App struct holds desktop application state and lifecycle handlers.
 type App struct {
-	ctx  context.Context
-	inst *app.App
+	ctx        context.Context
+	inst       *app.App
+	httpServer *http.Server
 }
 
 // NewApp creates a new App struct and initializes the PebblePost core instance.
@@ -51,10 +52,26 @@ func (a *App) Mux() http.Handler {
 // startup is called when the app starts.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Start local loopback HTTP server on :8080 for Vite dev proxy & browser testing
+	if a.inst != nil && a.inst.Mux != nil {
+		a.httpServer = &http.Server{
+			Addr:    "127.0.0.1:8080",
+			Handler: a.inst.Mux,
+		}
+		go func() {
+			if err := a.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("local dev API server notice: %v", err)
+			}
+		}()
+	}
 }
 
 // shutdown is called at termination.
 func (a *App) shutdown(ctx context.Context) {
+	if a.httpServer != nil {
+		_ = a.httpServer.Close()
+	}
 	if a.inst != nil {
 		_ = a.inst.Close()
 	}
@@ -65,4 +82,19 @@ func (a *App) SelectDirectory() (string, error) {
 	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select API Collection Directory",
 	})
+}
+
+// WindowMinimise minimises the application window.
+func (a *App) WindowMinimise() {
+	runtime.WindowMinimise(a.ctx)
+}
+
+// WindowToggleMaximise toggles the window between maximised and normal states.
+func (a *App) WindowToggleMaximise() {
+	runtime.WindowToggleMaximise(a.ctx)
+}
+
+// WindowClose quits the application.
+func (a *App) WindowClose() {
+	runtime.Quit(a.ctx)
 }
