@@ -27,6 +27,11 @@ interface WorkspaceState {
   toggleTheme: () => void
   setTheme: (theme: 'light' | 'dark') => void
 
+  gitignoreStatus: 'ok' | 'missing' | 'no_rule' | null
+  ensureGitignore: () => Promise<boolean>
+  isWorkspaceTrusted: (path?: string) => boolean
+  setWorkspaceTrusted: (trusted: boolean, path?: string) => void
+
   // Backend integration actions
   loadWorkspace: (path?: string) => Promise<void>
   loadRequest: (filePath: string) => Promise<void>
@@ -132,6 +137,50 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     get().setTheme(nextTheme)
   },
 
+  gitignoreStatus: null,
+
+  ensureGitignore: async () => {
+    const ws = get().workspacePath || '.'
+    try {
+      const res = await fetch('/api/workspace/gitignore/ensure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspacePath: ws }),
+      })
+      if (res.ok) {
+        set({ gitignoreStatus: 'ok' })
+        return true
+      }
+    } catch (err) {
+      console.error('Failed to update gitignore:', err)
+    }
+    return false
+  },
+
+  isWorkspaceTrusted: (path?: string) => {
+    const ws = path || get().workspacePath || '.'
+    if (typeof window === 'undefined') return true
+    try {
+      const trusted = JSON.parse(localStorage.getItem('pebblepost-trusted-workspaces') || '{}')
+      return Boolean(trusted[ws])
+    } catch {
+      return false
+    }
+  },
+
+  setWorkspaceTrusted: (trusted: boolean, path?: string) => {
+    const ws = path || get().workspacePath || '.'
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = JSON.parse(localStorage.getItem('pebblepost-trusted-workspaces') || '{}')
+        stored[ws] = trusted
+        localStorage.setItem('pebblepost-trusted-workspaces', JSON.stringify(stored))
+      } catch (err) {
+        console.error('Failed to store trusted workspace state:', err)
+      }
+    }
+  },
+
   loadWorkspace: async (path?: string) => {
     const targetPath = path || get().workspacePath || '.'
     set({ isLoadingWorkspace: true })
@@ -142,6 +191,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         set({
           tree: data.tree || [],
           environments: data.environments?.length ? data.environments : get().environments,
+          gitignoreStatus: data.gitignoreStatus || null,
         })
         const currentActive = get().activeFilePath
         if (currentActive) {
@@ -157,7 +207,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   loadRequest: async (filePath: string) => {
     try {
-      const res = await fetch(`/api/request?path=${encodeURIComponent(filePath)}`)
+      const ws = get().workspacePath || '.'
+      const res = await fetch(`/api/request?path=${encodeURIComponent(filePath)}&workspacePath=${encodeURIComponent(ws)}`)
       if (res.ok) {
         const reqData: RequestDefinition = await res.json()
         set({ activeRequest: reqData, activeFilePath: filePath, lastResult: null })
@@ -168,7 +219,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   saveCurrentRequest: async () => {
-    const { activeFilePath, activeRequest } = get()
+    const { activeFilePath, activeRequest, workspacePath } = get()
     if (!activeFilePath || !activeRequest) return false
 
     try {
@@ -176,15 +227,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          workspacePath: workspacePath || '.',
           path: activeFilePath,
           request: activeRequest,
         }),
       })
       if (res.ok) {
         // Refresh tree to update method and name badges
-        const { workspacePath, loadWorkspace } = get()
         if (workspacePath) {
-          loadWorkspace(workspacePath)
+          get().loadWorkspace(workspacePath)
         }
         return true
       }
@@ -225,7 +276,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const res = await fetch('/api/request/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: fullPath, request: newReq }),
+        body: JSON.stringify({ workspacePath: currentWs, path: fullPath, request: newReq }),
       })
       if (res.ok) {
         await get().loadWorkspace(currentWs)

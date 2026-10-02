@@ -11,6 +11,15 @@ import (
 	"pebblepost/internal/types"
 )
 
+// DefaultScriptTimeout is used when the request's ScriptTimeoutMs is 0.
+const DefaultScriptTimeout = 5 * time.Second
+
+// maxConsoleLogs caps the number of console.log entries per script run.
+const maxConsoleLogs = 500
+
+// maxLogEntryLen caps the character length of a single console log line.
+const maxLogEntryLen = 4096
+
 // PreRequestResult holds changes produced by a pre-request script execution.
 type PreRequestResult struct {
 	Request          *types.RequestDefinition `json:"request"`
@@ -37,11 +46,13 @@ func NewEngine() *Engine {
 	}
 }
 
-// ExecutePreRequest runs a pre-request script and applies mutations to the request definition and environment.
+// ExecutePreRequest runs a pre-request script and applies mutations to the
+// request definition and environment. timeout=0 uses DefaultScriptTimeout.
 func (e *Engine) ExecutePreRequest(
 	script string,
 	req *types.RequestDefinition,
 	vars map[string]string,
+	timeout time.Duration,
 ) (*PreRequestResult, error) {
 	if strings.TrimSpace(script) == "" {
 		return &PreRequestResult{
@@ -49,6 +60,10 @@ func (e *Engine) ExecutePreRequest(
 			Logs:             []string{},
 			ExtractedEnvVars: make(map[string]string),
 		}, nil
+	}
+
+	if timeout <= 0 {
+		timeout = DefaultScriptTimeout
 	}
 
 	vm := goja.New()
@@ -103,7 +118,7 @@ func (e *Engine) ExecutePreRequest(
 	case err := <-errChan:
 		if err != nil {
 			logsMutex.Lock()
-			logs = append(logs, fmt.Sprintf("[Pre-request Error] %v", err))
+			logs = appendLog(logs, fmt.Sprintf("[Pre-request Error] %s", formatScriptError(err)))
 			logsMutex.Unlock()
 			return &PreRequestResult{
 				Request:          req,
@@ -111,9 +126,9 @@ func (e *Engine) ExecutePreRequest(
 				ExtractedEnvVars: envVars,
 			}, fmt.Errorf("pre-request script error: %w", err)
 		}
-	case <-time.After(3 * time.Second):
-		vm.Interrupt("Script execution timed out (3s)")
-		return nil, fmt.Errorf("pre-request script timed out")
+	case <-time.After(timeout):
+		vm.Interrupt(fmt.Sprintf("Script execution timed out (%s)", timeout))
+		return nil, fmt.Errorf("pre-request script timed out after %s", timeout)
 	}
 
 	return &PreRequestResult{
@@ -123,12 +138,14 @@ func (e *Engine) ExecutePreRequest(
 	}, nil
 }
 
-// ExecutePostResponse runs a post-response test script, executing assertions and tests.
+// ExecutePostResponse runs a post-response test script, executing assertions
+// and tests. timeout=0 uses DefaultScriptTimeout.
 func (e *Engine) ExecutePostResponse(
 	script string,
 	req *types.RequestDefinition,
 	resp *types.ExecutionResult,
 	vars map[string]string,
+	timeout time.Duration,
 ) (*PostResponseResult, error) {
 	if strings.TrimSpace(script) == "" {
 		return &PostResponseResult{
@@ -136,6 +153,10 @@ func (e *Engine) ExecutePostResponse(
 			Logs:             make([]string, 0),
 			ExtractedEnvVars: make(map[string]string),
 		}, nil
+	}
+
+	if timeout <= 0 {
+		timeout = DefaultScriptTimeout
 	}
 
 	vm := goja.New()
@@ -218,7 +239,7 @@ func (e *Engine) ExecutePostResponse(
 	case err := <-errChan:
 		if err != nil {
 			logsMutex.Lock()
-			logs = append(logs, fmt.Sprintf("[Test Script Error] %v", err))
+			logs = appendLog(logs, fmt.Sprintf("[Test Script Error] %s", formatScriptError(err)))
 			logsMutex.Unlock()
 			return &PostResponseResult{
 				Tests:            tests,
@@ -226,9 +247,9 @@ func (e *Engine) ExecutePostResponse(
 				ExtractedEnvVars: envVars,
 			}, fmt.Errorf("post-response script error: %w", err)
 		}
-	case <-time.After(3 * time.Second):
-		vm.Interrupt("Script execution timed out (3s)")
-		return nil, fmt.Errorf("post-response script timed out")
+	case <-time.After(timeout):
+		vm.Interrupt(fmt.Sprintf("Script execution timed out (%s)", timeout))
+		return nil, fmt.Errorf("post-response script timed out after %s", timeout)
 	}
 
 	return &PostResponseResult{
@@ -248,7 +269,7 @@ func (e *Engine) setupConsole(vm *goja.Runtime, logs *[]string, mutex *sync.Mute
 		}
 		msg := strings.Join(parts, " ")
 		mutex.Lock()
-		*logs = append(*logs, msg)
+		*logs = appendLog(*logs, msg)
 		mutex.Unlock()
 		return goja.Undefined()
 	}
@@ -442,4 +463,26 @@ func (e *Engine) setupCryptoBridge(vm *goja.Runtime) *goja.Object {
 	})
 
 	return cryptoObj
+}
+
+// appendLog adds msg to logs, capping at maxConsoleLogs entries and
+// truncating each entry to maxLogEntryLen characters.
+func appendLog(logs []string, msg string) []string {
+	if len(logs) >= maxConsoleLogs {
+		return logs // silently drop once cap is reached
+	}
+	if len(msg) > maxLogEntryLen {
+		msg = msg[:maxLogEntryLen] + "…[truncated]"
+	}
+	return append(logs, msg)
+}
+
+// formatScriptError extracts a readable message from a goja exception
+// (which includes script name, line, and column) or falls back to err.Error().
+func formatScriptError(err error) string {
+	if err == nil {
+		return ""
+	}
+	// goja.Exception.Error() already contains "at <file>:<line>:<col>" info.
+	return err.Error()
 }

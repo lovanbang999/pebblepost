@@ -76,8 +76,24 @@ export function RequestPanel() {
 
   const handleSend = async () => {
     setIsExecuting(true);
+    const { workspacePath, activeEnv, isWorkspaceTrusted, setWorkspaceTrusted } = useWorkspaceStore.getState();
+    const hasScripts = Boolean(
+      activeRequest.scripts?.preRequest?.trim() ||
+      activeRequest.scripts?.postResponse?.trim()
+    );
+
+    let isTrusted = isWorkspaceTrusted(workspacePath || undefined);
+    if (hasScripts && !isTrusted) {
+      const confirmTrust = window.confirm(
+        "This request contains JavaScript pre-request or test scripts.\n\nDo you trust this workspace to execute scripts?"
+      );
+      if (confirmTrust) {
+        setWorkspaceTrusted(true, workspacePath || undefined);
+        isTrusted = true;
+      }
+    }
+
     const startTime = performance.now();
-    const { workspacePath, activeEnv } = useWorkspaceStore.getState();
 
     try {
       const res = await fetch("/api/request/execute", {
@@ -87,6 +103,7 @@ export function RequestPanel() {
           workspacePath: workspacePath || undefined,
           environmentName: activeEnv || undefined,
           request: activeRequest,
+          trusted: isTrusted,
         }),
       });
 

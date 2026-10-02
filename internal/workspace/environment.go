@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
 
@@ -110,8 +111,8 @@ func (s *EnvironmentService) GetEnvironment(rootPath string, envName string) (*t
 
 // SaveEnvironment writes an environment definition to public or secret file.
 func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.EnvironmentDefinition, isSecret bool) error {
-	if env.Name == "" {
-		return fmt.Errorf("environment name cannot be empty")
+	if err := security.ValidateSafeIdentifier(env.Name); err != nil {
+		return fmt.Errorf("invalid environment name: %w", err)
 	}
 
 	envDir := filepath.Join(rootPath, PebbleDir, EnvironmentsDir)
@@ -137,8 +138,8 @@ func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.Environm
 
 // DeleteEnvironment removes both public and secret files for an environment.
 func (s *EnvironmentService) DeleteEnvironment(rootPath string, envName string) error {
-	if envName == "" {
-		return fmt.Errorf("environment name cannot be empty")
+	if err := security.ValidateSafeIdentifier(envName); err != nil {
+		return fmt.Errorf("invalid environment name: %w", err)
 	}
 
 	envDir := filepath.Join(rootPath, PebbleDir, EnvironmentsDir)

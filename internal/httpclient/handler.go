@@ -3,8 +3,10 @@ package httpclient
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"pebblepost/internal/scripting"
+	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
 )
@@ -46,6 +48,7 @@ type ExecutePayload struct {
 	EnvironmentName string                   `json:"environmentName,omitempty"`
 	Request         *types.RequestDefinition `json:"request"`
 	Overrides       map[string]string        `json:"overrides,omitempty"`
+	Trusted         *bool                    `json:"trusted,omitempty"` // nil or true = allow scripts, false = block scripts
 }
 
 func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
@@ -67,10 +70,10 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	reqToExecute := payload.Request
 	varMap := make(map[string]string)
+	var env *types.EnvironmentDefinition
 
 	// 1. Build variable map and run initial interpolation
 	if h.interpolator != nil {
-		var env *types.EnvironmentDefinition
 		if h.environmentSvc != nil && payload.WorkspacePath != "" && payload.EnvironmentName != "" {
 			env, _ = h.environmentSvc.GetEnvironment(payload.WorkspacePath, payload.EnvironmentName)
 		}
@@ -79,26 +82,37 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		reqToExecute = h.interpolator.InterpolateRequest(payload.Request, varMap)
 	}
 
+	// Determine if scripts are allowed (untrusted workspace blocks script execution)
+	scriptsAllowed := true
+	if payload.Trusted != nil && !*payload.Trusted {
+		scriptsAllowed = false
+	}
+
 	var preLogs []string
 
 	// 2. Pre-request Script Sandbox Execution
-	if h.scriptEngine != nil && reqToExecute.Scripts.PreRequest != "" {
-		preResult, preErr := h.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap)
-		if preResult != nil {
-			preLogs = preResult.Logs
-			for k, v := range preResult.ExtractedEnvVars {
-				varMap[k] = v
+	if reqToExecute.Scripts.PreRequest != "" {
+		if !scriptsAllowed {
+			preLogs = append(preLogs, "[WARN] Pre-request script blocked: workspace is not trusted")
+		} else if h.scriptEngine != nil {
+			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
+			preResult, preErr := h.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap, scriptTimeout)
+			if preResult != nil {
+				preLogs = preResult.Logs
+				for k, v := range preResult.ExtractedEnvVars {
+					varMap[k] = v
+				}
+				reqToExecute = preResult.Request
 			}
-			reqToExecute = preResult.Request
-		}
-		if preErr != nil {
-			// Return execution result with pre-request error
-			h.jsonResponse(w, &types.ExecutionResult{
-				Error: preErr.Error(),
-				Logs:  preLogs,
-				Tests: []types.TestAssertionResult{},
-			})
-			return
+			if preErr != nil {
+				// Return execution result with pre-request error
+				h.jsonResponse(w, &types.ExecutionResult{
+					Error: preErr.Error(),
+					Logs:  preLogs,
+					Tests: []types.TestAssertionResult{},
+				})
+				return
+			}
 		}
 	}
 
@@ -117,12 +131,35 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4. Post-response / Test Script Sandbox Execution
-	if h.scriptEngine != nil && reqToExecute.Scripts.PostResponse != "" {
-		postResult, _ := h.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, result, varMap)
-		if postResult != nil {
-			result.Tests = postResult.Tests
-			result.Logs = append(result.Logs, postResult.Logs...)
-			result.ExtractedEnvVars = postResult.ExtractedEnvVars
+	if reqToExecute.Scripts.PostResponse != "" {
+		if !scriptsAllowed {
+			result.Logs = append(result.Logs, "[WARN] Post-response script blocked: workspace is not trusted")
+		} else if h.scriptEngine != nil {
+			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
+			postResult, _ := h.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, result, varMap, scriptTimeout)
+			if postResult != nil {
+				result.Tests = postResult.Tests
+				result.Logs = append(result.Logs, postResult.Logs...)
+				result.ExtractedEnvVars = postResult.ExtractedEnvVars
+			}
+		}
+	}
+
+	// 5. Mask secrets in logs and error before returning
+	var secretValues []string
+	if env != nil {
+		for _, v := range env.Variables {
+			if v.Secret && v.Value != "" {
+				secretValues = append(secretValues, v.Value)
+			}
+		}
+	}
+	if len(secretValues) > 0 {
+		for i, log := range result.Logs {
+			result.Logs[i] = security.MaskSecrets(log, secretValues)
+		}
+		if result.Error != "" {
+			result.Error = security.MaskSecrets(result.Error, secretValues)
 		}
 	}
 
@@ -140,4 +177,13 @@ func (h *Handler) jsonError(w http.ResponseWriter, message string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": message,
 	})
+}
+
+// scriptTimeoutFor converts the per-request ScriptTimeoutMs setting to a
+// Duration. Zero or negative values fall back to the engine default (5 s).
+func scriptTimeoutFor(ms int) time.Duration {
+	if ms <= 0 {
+		return scripting.DefaultScriptTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
 }

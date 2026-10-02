@@ -7,7 +7,8 @@ type KeyValue struct {
 	Key     string `json:"key"`
 	Value   string `json:"value"`
 	Enabled bool   `json:"enabled"`
-	Type    string `json:"type,omitempty"` // "text" or "file"
+	Type    string `json:"type,omitempty"`   // "text" or "file"
+	Secret  bool   `json:"secret,omitempty"` // value must be masked in logs/output
 }
 
 // AuthDefinition represents authentication configuration for a request.
@@ -44,9 +45,10 @@ type ScriptDefinition struct {
 
 // SettingDefinition holds per-request execution settings.
 type SettingDefinition struct {
-	FollowRedirects bool `json:"followRedirects"`
-	VerifySSL       bool `json:"verifySSL"`
-	TimeoutMs       int  `json:"timeoutMs"`
+	FollowRedirects  bool `json:"followRedirects"`
+	VerifySSL        bool `json:"verifySSL"`
+	TimeoutMs        int  `json:"timeoutMs"`
+	ScriptTimeoutMs  int  `json:"scriptTimeoutMs,omitempty"` // 0 = engine default (5 s)
 }
 
 // RequestDefinition is the schema for a *.pebble.json file.

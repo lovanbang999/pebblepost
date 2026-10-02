@@ -314,7 +314,7 @@ export function CollectionTree() {
         const res = await fetch('/api/workspace/folder', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: fullFolderPath }),
+          body: JSON.stringify({ workspacePath: workspacePath || '.', path: fullFolderPath }),
         })
         if (res.ok) {
           await loadWorkspace(workspacePath || '.')

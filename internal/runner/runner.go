@@ -11,6 +11,7 @@ import (
 
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/scripting"
+	"pebblepost/internal/security"
 	"pebblepost/internal/workspace"
 )
 
@@ -78,11 +79,17 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 	// 2. Locate workspace root & initialize variable map
 	wsRoot := r.findWorkspaceRoot(targetPath)
 	varMap := make(map[string]string)
+	var secretValues []string
 
 	if opts.EnvironmentName != "" && r.environmentSvc != nil {
 		envDef, err := r.environmentSvc.GetEnvironment(wsRoot, opts.EnvironmentName)
 		if err == nil && envDef != nil {
 			varMap = r.interpolator.BuildVariableMap(envDef, nil)
+			for _, v := range envDef.Variables {
+				if v.Secret && v.Value != "" {
+					secretValues = append(secretValues, v.Value)
+				}
+			}
 		} else {
 			r.formatter.PrintWarning(out, fmt.Sprintf("Environment '%s' not found in workspace %s, proceeding with empty environment.", opts.EnvironmentName, wsRoot))
 		}
@@ -143,7 +150,8 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 
 		// Execute Pre-Request script
 		if r.scriptEngine != nil && reqToExecute.Scripts.PreRequest != "" {
-			preResult, preErr := r.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap)
+			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
+			preResult, preErr := r.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap, scriptTimeout)
 			if preResult != nil {
 				for k, v := range preResult.ExtractedEnvVars {
 					varMap[k] = v
@@ -205,7 +213,8 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 
 		// Execute Post-Response test script
 		if r.scriptEngine != nil && reqToExecute.Scripts.PostResponse != "" {
-			postResult, _ := r.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, execResult, varMap)
+			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
+			postResult, _ := r.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, execResult, varMap, scriptTimeout)
 			if postResult != nil {
 				execResult.Tests = postResult.Tests
 				for k, v := range postResult.ExtractedEnvVars {
@@ -241,6 +250,19 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			summary.PassedRequests++
 		} else {
 			summary.FailedRequests++
+		}
+
+		if len(secretValues) > 0 {
+			failureReason = security.MaskSecrets(failureReason, secretValues)
+			if execResult != nil {
+				execResult.Body = security.MaskSecrets(execResult.Body, secretValues)
+				for i, log := range execResult.Logs {
+					execResult.Logs[i] = security.MaskSecrets(log, secretValues)
+				}
+				for i, t := range execResult.Tests {
+					execResult.Tests[i].Message = security.MaskSecrets(t.Message, secretValues)
+				}
+			}
 		}
 
 		reqResult := RequestRunResult{
@@ -347,4 +369,13 @@ func (r *Runner) findWorkspaceRoot(path string) string {
 	}
 
 	return absPath
+}
+
+// scriptTimeoutFor converts the per-request ScriptTimeoutMs setting to a
+// Duration. Zero or negative values fall back to the engine default (5 s).
+func scriptTimeoutFor(ms int) time.Duration {
+	if ms <= 0 {
+		return scripting.DefaultScriptTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
 }

@@ -166,4 +166,82 @@ func TestHandler_APIEndpoints(t *testing.T) {
 			t.Errorf("expected URL 'http://override.io/api/v1/auth', got '%s'", interpResp.InterpolatedRequest.URL)
 		}
 	})
+
+	// 6. Test Gitignore status and ensure endpoint
+	t.Run("Gitignore Check and Ensure", func(t *testing.T) {
+		// Scan initially reports gitignore status
+		scanReq := httptest.NewRequest(http.MethodGet, "/api/workspace/scan?path="+url.QueryEscape(tempDir), nil)
+		scanRR := httptest.NewRecorder()
+		mux.ServeHTTP(scanRR, scanReq)
+
+		var scanResp struct {
+			GitignoreStatus string `json:"gitignoreStatus"`
+		}
+		_ = json.NewDecoder(scanRR.Body).Decode(&scanResp)
+		if scanResp.GitignoreStatus == "" {
+			t.Errorf("expected gitignoreStatus in scan response, got empty")
+		}
+
+		// Ensure gitignore
+		ensurePayload, _ := json.Marshal(map[string]any{
+			"workspacePath": tempDir,
+		})
+		ensureReq := httptest.NewRequest(http.MethodPost, "/api/workspace/gitignore/ensure", bytes.NewReader(ensurePayload))
+		ensureRR := httptest.NewRecorder()
+		mux.ServeHTTP(ensureRR, ensureReq)
+
+		if ensureRR.Code != http.StatusOK {
+			t.Fatalf("ensure gitignore failed: %d - %s", ensureRR.Code, ensureRR.Body.String())
+		}
+	})
+
+	// 7. Test Path Traversal Protection
+	t.Run("Path Traversal Protection", func(t *testing.T) {
+		// Attempt reading traversal path
+		badGetReq := httptest.NewRequest(http.MethodGet, "/api/request?path=../../etc/passwd&workspacePath="+url.QueryEscape(tempDir), nil)
+		badGetRR := httptest.NewRecorder()
+		mux.ServeHTTP(badGetRR, badGetReq)
+
+		if badGetRR.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for path traversal, got %d", badGetRR.Code)
+		}
+
+		// Attempt saving traversal path
+		badSavePayload, _ := json.Marshal(map[string]any{
+			"workspacePath": tempDir,
+			"path":          filepath.Join(tempDir, "..", "outside.pebble.json"),
+			"request": types.RequestDefinition{
+				Name:   "Evil",
+				Method: "GET",
+				URL:    "http://evil.com",
+			},
+		})
+		badSaveReq := httptest.NewRequest(http.MethodPost, "/api/request/save", bytes.NewReader(badSavePayload))
+		badSaveRR := httptest.NewRecorder()
+		mux.ServeHTTP(badSaveRR, badSaveReq)
+
+		if badSaveRR.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for saving outside workspace, got %d", badSaveRR.Code)
+		}
+	})
+
+	// 8. Test Invalid Environment Name
+	t.Run("Invalid Environment Name Rejection", func(t *testing.T) {
+		badEnvPayload, _ := json.Marshal(map[string]any{
+			"workspacePath": tempDir,
+			"environment": types.EnvironmentDefinition{
+				Name: "../../evil",
+				Variables: []types.KeyValue{
+					{Key: "K", Value: "V", Enabled: true},
+				},
+			},
+		})
+		badEnvReq := httptest.NewRequest(http.MethodPost, "/api/environments/save", bytes.NewReader(badEnvPayload))
+		badEnvRR := httptest.NewRecorder()
+		mux.ServeHTTP(badEnvRR, badEnvReq)
+
+		if badEnvRR.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 for invalid env name, got %d", badEnvRR.Code)
+		}
+	})
 }

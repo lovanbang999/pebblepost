@@ -443,6 +443,53 @@ func TestClient_SettingsAndRedirects(t *testing.T) {
 		}
 	})
 
+	// 2b. Cross-Origin Redirect strips sensitive headers
+	t.Run("CrossOriginRedirect_StripsSensitiveHeaders", func(t *testing.T) {
+		var receivedAuthHeader string
+		var receivedCookieHeader string
+
+		// Target server (different port/origin)
+		targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedAuthHeader = r.Header.Get("Authorization")
+			receivedCookieHeader = r.Header.Get("Cookie")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("target reached"))
+		}))
+		defer targetServer.Close()
+
+		// Origin server that redirects to targetServer
+		originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, targetServer.URL+"/redirected", http.StatusFound)
+		}))
+		defer originServer.Close()
+
+		req := &types.RequestDefinition{
+			Method: "GET",
+			URL:    originServer.URL + "/start",
+			Headers: []types.KeyValue{
+				{Key: "Authorization", Value: "Bearer secret-token", Enabled: true},
+				{Key: "Cookie", Value: "session=secret-session-id", Enabled: true},
+			},
+			Settings: types.SettingDefinition{
+				FollowRedirects: true,
+			},
+		}
+
+		res, err := client.Execute(context.Background(), req)
+		if err != nil {
+			t.Fatalf("execute error: %v", err)
+		}
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 OK after cross-origin redirect, got %d", res.StatusCode)
+		}
+		if receivedAuthHeader != "" {
+			t.Errorf("expected Authorization header to be stripped across origins, but received: %q", receivedAuthHeader)
+		}
+		if receivedCookieHeader != "" {
+			t.Errorf("expected Cookie header to be stripped across origins, but received: %q", receivedCookieHeader)
+		}
+	})
+
 	// 3. TimeoutMs
 	t.Run("TimeoutExceeded", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
