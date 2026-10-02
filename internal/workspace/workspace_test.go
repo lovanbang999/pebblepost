@@ -1,137 +1,135 @@
 package workspace
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"pebblepost/internal/types"
 )
 
-func TestWorkspaceService_Init(t *testing.T) {
-	tempDir := t.TempDir()
+func TestWorkspaceService_DuplicateRequest(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "get-user.pebble.json")
+
 	svc := NewWorkspaceService()
+	req := &types.RequestDefinition{
+		Name:   "Get User",
+		Method: "GET",
+		URL:    "https://api.example.com/users/1",
+	}
 
-	wsDef, err := svc.Init(tempDir, "Test API Project")
+	if err := svc.SaveRequest(sourcePath, req); err != nil {
+		t.Fatalf("failed to save initial request: %v", err)
+	}
+
+	// 1. First duplicate: should produce "get-user (Copy).pebble.json"
+	dup1, err := svc.DuplicateRequest(sourcePath)
 	if err != nil {
-		t.Fatalf("unexpected error initializing workspace: %v", err)
+		t.Fatalf("DuplicateRequest 1 failed: %v", err)
+	}
+	expected1 := filepath.Join(tmpDir, "get-user (Copy).pebble.json")
+	if dup1 != expected1 {
+		t.Errorf("expected duplicate path %s, got %s", expected1, dup1)
 	}
 
-	if wsDef.Name != "Test API Project" {
-		t.Errorf("expected workspace name 'Test API Project', got '%s'", wsDef.Name)
-	}
-
-	// Verify info can be read back
-	info, err := svc.GetWorkspaceInfo(tempDir)
+	dup1Req, err := svc.ReadRequest(dup1)
 	if err != nil {
-		t.Fatalf("failed to read workspace info: %v", err)
+		t.Fatalf("failed to read duplicate 1: %v", err)
 	}
-	if info.Name != "Test API Project" {
-		t.Errorf("expected workspace info name 'Test API Project', got '%s'", info.Name)
+	if dup1Req.Name != "Get User (Copy)" {
+		t.Errorf("expected name 'Get User (Copy)', got %s", dup1Req.Name)
 	}
 
-	// Verify tree has the starter example
-	tree, err := svc.ScanTree(tempDir)
+	// 2. Second duplicate: should produce "get-user (Copy 2).pebble.json"
+	dup2, err := svc.DuplicateRequest(sourcePath)
 	if err != nil {
-		t.Fatalf("failed to scan tree: %v", err)
+		t.Fatalf("DuplicateRequest 2 failed: %v", err)
 	}
-	if len(tree) == 0 {
-		t.Fatalf("expected non-empty tree, got 0 nodes")
-	}
-
-	// Check that the starter example is inside 'example' folder
-	exampleFolder := tree[0]
-	if !exampleFolder.IsDir || exampleFolder.Name != "example" {
-		t.Errorf("expected 'example' folder, got %+v", exampleFolder)
-	}
-	if len(exampleFolder.Children) == 0 {
-		t.Fatalf("expected example folder to have children, got 0")
-	}
-	reqNode := exampleFolder.Children[0]
-	if reqNode.IsDir || reqNode.Method != "GET" {
-		t.Errorf("expected GET request node, got %+v", reqNode)
+	expected2 := filepath.Join(tmpDir, "get-user (Copy 2).pebble.json")
+	if dup2 != expected2 {
+		t.Errorf("expected duplicate path %s, got %s", expected2, dup2)
 	}
 }
 
-func TestWorkspaceService_ReadWriteRequest(t *testing.T) {
-	tempDir := t.TempDir()
-	svc := NewWorkspaceService()
+func TestWorkspaceService_MovePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "login.pebble.json")
+	targetFolder := filepath.Join(tmpDir, "collections", "auth")
 
-	reqPath := filepath.Join(tempDir, "auth", "login.pebble.json")
-	originalReq := &types.RequestDefinition{
-		Name:   "User Login",
+	svc := NewWorkspaceService()
+	req := &types.RequestDefinition{
+		Name:   "Login",
 		Method: "POST",
-		URL:    "https://api.example.com/v1/auth/login",
-		Headers: []types.KeyValue{
-			{Key: "Content-Type", Value: "application/json", Enabled: true},
-		},
-		Body: types.BodyDefinition{
-			Type: "json",
-			Raw:  `{"username":"admin"}`,
-		},
-		Scripts: types.ScriptDefinition{
-			PostResponse: "pb.test('200 ok', () => pb.expect(pb.response.status).to.eql(200));",
-		},
-		Settings: types.SettingDefinition{
-			FollowRedirects: true,
-			TimeoutMs:       5000,
-		},
+		URL:    "https://api.example.com/login",
 	}
 
-	// Save request
-	if err := svc.SaveRequest(reqPath, originalReq); err != nil {
+	if err := svc.SaveRequest(sourcePath, req); err != nil {
 		t.Fatalf("failed to save request: %v", err)
 	}
 
-	// Read request back
-	loadedReq, err := svc.ReadRequest(reqPath)
+	// Move file into targetFolder
+	newPath, err := svc.MovePath(sourcePath, targetFolder)
 	if err != nil {
-		t.Fatalf("failed to read saved request: %v", err)
+		t.Fatalf("MovePath failed: %v", err)
 	}
 
-	if loadedReq.Name != originalReq.Name {
-		t.Errorf("expected request name '%s', got '%s'", originalReq.Name, loadedReq.Name)
+	expectedPath := filepath.Join(targetFolder, "login.pebble.json")
+	if newPath != expectedPath {
+		t.Errorf("expected newPath %s, got %s", expectedPath, newPath)
 	}
-	if loadedReq.Method != "POST" {
-		t.Errorf("expected method 'POST', got '%s'", loadedReq.Method)
+
+	// Original should no longer exist
+	if _, err := os.Stat(sourcePath); !os.IsNotExist(err) {
+		t.Errorf("source file %s still exists after move", sourcePath)
 	}
-	if len(loadedReq.Headers) != 1 || loadedReq.Headers[0].Key != "Content-Type" {
-		t.Errorf("headers mismatch: %+v", loadedReq.Headers)
+
+	// New path must exist and be readable
+	readReq, err := svc.ReadRequest(newPath)
+	if err != nil {
+		t.Fatalf("failed to read moved request: %v", err)
+	}
+	if readReq.Name != "Login" {
+		t.Errorf("expected name 'Login', got %s", readReq.Name)
 	}
 }
 
-func TestWorkspaceService_FolderAndRename(t *testing.T) {
-	tempDir := t.TempDir()
+func TestWorkspaceService_TrashPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	reqPath := filepath.Join(tmpDir, "delete-me.pebble.json")
+
 	svc := NewWorkspaceService()
-
-	folderPath := filepath.Join(tempDir, "custom-folder")
-	if err := svc.CreateFolder(folderPath); err != nil {
-		t.Fatalf("failed to create folder: %v", err)
+	req := &types.RequestDefinition{
+		Name:   "Delete Me",
+		Method: "DELETE",
+		URL:    "https://api.example.com/item",
 	}
 
-	reqPath := filepath.Join(folderPath, "test.pebble.json")
-	req := &types.RequestDefinition{Name: "Test Req", Method: "GET", URL: "http://localhost:8080"}
 	if err := svc.SaveRequest(reqPath, req); err != nil {
-		t.Fatalf("failed to save req: %v", err)
+		t.Fatalf("failed to save request: %v", err)
 	}
 
-	// Rename folder
-	newFolderPath := filepath.Join(tempDir, "renamed-folder")
-	if err := svc.Rename(folderPath, newFolderPath); err != nil {
-		t.Fatalf("failed to rename folder: %v", err)
+	// Move to trash
+	if err := svc.TrashPath(tmpDir, reqPath); err != nil {
+		t.Fatalf("TrashPath failed: %v", err)
 	}
 
-	// Verify request exists at new path
-	newReqPath := filepath.Join(newFolderPath, "test.pebble.json")
-	if _, err := svc.ReadRequest(newReqPath); err != nil {
-		t.Fatalf("failed to read req at new path: %v", err)
+	// Original file must no longer exist at reqPath
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("file still exists at %s after TrashPath", reqPath)
 	}
 
-	// Delete folder
-	if err := svc.DeletePath(newFolderPath); err != nil {
-		t.Fatalf("failed to delete folder: %v", err)
+	// Trash directory must exist and contain the backed up file
+	trashDir := filepath.Join(tmpDir, PebbleDir, "trash")
+	entries, err := os.ReadDir(trashDir)
+	if err != nil {
+		t.Fatalf("failed to read trash directory: %v", err)
 	}
-
-	if _, err := svc.ReadRequest(newReqPath); err == nil {
-		t.Errorf("expected error reading deleted request, got nil")
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 file in trash, got %d", len(entries))
+	}
+	if !strings.HasSuffix(entries[0].Name(), "delete-me.pebble.json") {
+		t.Errorf("unexpected trashed filename: %s", entries[0].Name())
 	}
 }

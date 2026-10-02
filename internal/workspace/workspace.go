@@ -345,3 +345,107 @@ func (s *WorkspaceService) Rename(oldPath, newPath string) error {
 	}
 	return os.Rename(oldPath, newPath)
 }
+
+// MovePath moves a request file or folder into targetFolder.
+func (s *WorkspaceService) MovePath(sourcePath, targetFolder string) (string, error) {
+	if sourcePath == "" || targetFolder == "" {
+		return "", fmt.Errorf("source path and target folder cannot be empty")
+	}
+
+	baseName := filepath.Base(sourcePath)
+	newPath := filepath.Join(targetFolder, baseName)
+
+	if filepath.Clean(sourcePath) == filepath.Clean(newPath) {
+		return sourcePath, nil
+	}
+
+	if err := os.MkdirAll(targetFolder, 0755); err != nil {
+		return "", fmt.Errorf("failed to create destination folder %s: %w", targetFolder, err)
+	}
+
+	if s.watcher != nil {
+		s.watcher.Suppress(sourcePath, 1000*time.Millisecond)
+		s.watcher.Suppress(newPath, 1000*time.Millisecond)
+	}
+
+	if err := os.Rename(sourcePath, newPath); err != nil {
+		return "", fmt.Errorf("failed to move from %s to %s: %w", sourcePath, newPath, err)
+	}
+
+	return newPath, nil
+}
+
+// DuplicateRequest copies an existing request file to a new file in the same directory,
+// generating a non-colliding name (e.g., "get-user (Copy).pebble.json")
+// and writing it atomically using WriteFileStable.
+func (s *WorkspaceService) DuplicateRequest(sourcePath string) (string, error) {
+	if sourcePath == "" {
+		return "", fmt.Errorf("source path cannot be empty")
+	}
+
+	req, err := s.ReadRequest(sourcePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read source request: %w", err)
+	}
+
+	dir := filepath.Dir(sourcePath)
+	base := filepath.Base(sourcePath)
+
+	cleanBase := base
+	if strings.HasSuffix(cleanBase, PebbleExt) {
+		cleanBase = strings.TrimSuffix(cleanBase, PebbleExt)
+	} else if strings.HasSuffix(cleanBase, ".json") {
+		cleanBase = strings.TrimSuffix(cleanBase, ".json")
+	}
+
+	targetName := cleanBase + " (Copy)"
+	targetPath := filepath.Join(dir, targetName+PebbleExt)
+	copyIndex := 2
+	for {
+		if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+			break
+		}
+		targetName = fmt.Sprintf("%s (Copy %d)", cleanBase, copyIndex)
+		targetPath = filepath.Join(dir, targetName+PebbleExt)
+		copyIndex++
+	}
+
+	if copyIndex > 2 {
+		req.Name = fmt.Sprintf("%s (Copy %d)", req.Name, copyIndex-1)
+	} else {
+		req.Name = req.Name + " (Copy)"
+	}
+	req.ID = ""
+
+	if err := s.SaveRequest(targetPath, req); err != nil {
+		return "", fmt.Errorf("failed to write duplicate request: %w", err)
+	}
+
+	return targetPath, nil
+}
+
+// TrashPath moves a file or folder to .pebble/trash/ within the workspace if possible,
+// or permanently deletes it as a fallback.
+func (s *WorkspaceService) TrashPath(workspaceRoot, targetPath string) error {
+	if targetPath == "" {
+		return fmt.Errorf("target path cannot be empty")
+	}
+
+	if s.watcher != nil {
+		s.watcher.Suppress(targetPath, 1000*time.Millisecond)
+	}
+
+	if workspaceRoot != "" {
+		trashDir := filepath.Join(workspaceRoot, PebbleDir, "trash")
+		if err := os.MkdirAll(trashDir, 0755); err == nil {
+			timestamp := time.Now().Format("20060102-150405")
+			baseName := filepath.Base(targetPath)
+			dest := filepath.Join(trashDir, fmt.Sprintf("%s-%s", timestamp, baseName))
+			if err := os.Rename(targetPath, dest); err == nil {
+				return nil
+			}
+		}
+	}
+
+	return os.RemoveAll(targetPath)
+}

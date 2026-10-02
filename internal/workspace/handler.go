@@ -39,6 +39,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/info", h.handleInfo)
 	mux.HandleFunc("/api/workspace/folder", h.handleCreateFolder)
 	mux.HandleFunc("/api/workspace/rename", h.handleRename)
+	mux.HandleFunc("/api/workspace/move", h.handleMove)
+	mux.HandleFunc("/api/workspace/duplicate", h.handleDuplicate)
 	mux.HandleFunc("/api/workspace/gitignore/ensure", h.handleEnsureGitignore)
 	mux.HandleFunc("/api/workspace/events", h.handleEvents)
 	mux.HandleFunc("/api/request", h.handleGetRequest)
@@ -228,6 +230,7 @@ func (h *Handler) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		WorkspacePath string `json:"workspacePath"`
 		Path          string `json:"path"`
+		Permanent     bool   `json:"permanent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
@@ -254,7 +257,14 @@ func (h *Handler) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.workspaceSvc.DeletePath(payload.Path); err != nil {
+	var err error
+	if !payload.Permanent && payload.WorkspacePath != "" {
+		err = h.workspaceSvc.TrashPath(payload.WorkspacePath, payload.Path)
+	} else {
+		err = h.workspaceSvc.DeletePath(payload.Path)
+	}
+
+	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -342,6 +352,101 @@ func (h *Handler) handleRename(w http.ResponseWriter, r *http.Request) {
 
 	h.jsonResponse(w, map[string]any{
 		"success": true,
+	})
+}
+
+func (h *Handler) handleDuplicate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath string `json:"workspacePath"`
+		Path          string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Path == "" {
+		h.jsonError(w, "path cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	newPath, err := h.workspaceSvc.DuplicateRequest(payload.Path)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"success": true,
+		"newPath": newPath,
+	})
+}
+
+func (h *Handler) handleMove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath string `json:"workspacePath"`
+		SourcePath    string `json:"sourcePath"`
+		TargetFolder  string `json:"targetFolder"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.SourcePath == "" || payload.TargetFolder == "" {
+		h.jsonError(w, "sourcePath and targetFolder cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.SourcePath); err != nil {
+			h.jsonError(w, "invalid source path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.TargetFolder); err != nil {
+			h.jsonError(w, "invalid target folder: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := security.RejectTraversal(payload.SourcePath); err != nil {
+			h.jsonError(w, "invalid source path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := security.RejectTraversal(payload.TargetFolder); err != nil {
+			h.jsonError(w, "invalid target folder: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	newPath, err := h.workspaceSvc.MovePath(payload.SourcePath, payload.TargetFolder)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"success": true,
+		"newPath": newPath,
 	})
 }
 
