@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"pebblepost/internal/types"
 )
@@ -17,14 +18,22 @@ const (
 	EnvironmentsDir = "environments"
 	CollectionsDir  = "collections"
 	PebbleExt       = ".pebble.json"
+	FolderFile      = "_folder.pebble.json"
 )
 
 // WorkspaceService handles reading, writing, and scanning API collections on the local filesystem.
-type WorkspaceService struct{}
+type WorkspaceService struct {
+	watcher *Watcher
+}
 
 // NewWorkspaceService creates a new WorkspaceService instance.
 func NewWorkspaceService() *WorkspaceService {
 	return &WorkspaceService{}
+}
+
+// SetWatcher connects an active file watcher to the service for self-write suppression.
+func (s *WorkspaceService) SetWatcher(w *Watcher) {
+	s.watcher = w
 }
 
 // Init initializes a new PebblePost workspace directory structure.
@@ -59,33 +68,30 @@ func (s *WorkspaceService) Init(rootPath string, name string) (*types.WorkspaceD
 		_ = os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644)
 	}
 
-	// 3. Create .pebble/workspace.json
+	// 3. Create .pebble/workspace.json with SchemaVersion = 1
 	wsDef := &types.WorkspaceDefinition{
+		SchemaVersion:     CurrentSchemaVersion,
 		Version:           "1.0",
 		Name:              name,
 		ActiveEnvironment: "dev",
+		Trusted:           true,
 	}
 	wsJSONPath := filepath.Join(pebblePath, WorkspaceFile)
 	if _, err := os.Stat(wsJSONPath); os.IsNotExist(err) {
-		data, err := json.MarshalIndent(wsDef, "", "  ")
-		if err == nil {
-			_ = os.WriteFile(wsJSONPath, data, 0644)
-		}
+		_ = WriteFileStable(wsJSONPath, wsDef)
 	}
 
 	// 4. Create default dev.env.json if not exists
 	devEnvPath := filepath.Join(envPath, "dev.env.json")
 	if _, err := os.Stat(devEnvPath); os.IsNotExist(err) {
 		devEnv := types.EnvironmentDefinition{
-			Name: "dev",
+			SchemaVersion: CurrentSchemaVersion,
+			Name:          "dev",
 			Variables: []types.KeyValue{
 				{Key: "BASE_URL", Value: "https://httpbin.org", Enabled: true},
 			},
 		}
-		data, err := json.MarshalIndent(devEnv, "", "  ")
-		if err == nil {
-			_ = os.WriteFile(devEnvPath, data, 0644)
-		}
+		_ = WriteFileStable(devEnvPath, devEnv)
 	}
 
 	// 5. Create default example request in collections/example/get-started.pebble.json if empty
@@ -94,12 +100,13 @@ func (s *WorkspaceService) Init(rootPath string, name string) (*types.WorkspaceD
 	exampleReqPath := filepath.Join(exampleDir, "get-started.pebble.json")
 	if _, err := os.Stat(exampleReqPath); os.IsNotExist(err) {
 		exampleReq := types.RequestDefinition{
-			Schema:      "https://pebblepost.dev/schemas/v1/request.json",
-			Version:     "1.0",
-			Name:        "Get Started (HTTPBin)",
-			Description: "Sample request demonstrating PebblePost offline collection capabilities",
-			Method:      "GET",
-			URL:         "{{BASE_URL}}/get",
+			SchemaVersion: CurrentSchemaVersion,
+			Schema:        DefaultRequestSchema,
+			Version:       "1.0",
+			Name:          "Get Started (HTTPBin)",
+			Description:   "Sample request demonstrating PebblePost offline collection capabilities",
+			Method:        "GET",
+			URL:           "{{BASE_URL}}/get",
 			Headers: []types.KeyValue{
 				{Key: "Accept", Value: "application/json", Enabled: true},
 				{Key: "User-Agent", Value: "PebblePost/0.1.0", Enabled: true},
@@ -123,10 +130,7 @@ func (s *WorkspaceService) Init(rootPath string, name string) (*types.WorkspaceD
 				TimeoutMs:       30000,
 			},
 		}
-		data, err := json.MarshalIndent(exampleReq, "", "  ")
-		if err == nil {
-			_ = os.WriteFile(exampleReqPath, data, 0644)
-		}
+		_ = WriteFileStable(exampleReqPath, exampleReq)
 	}
 
 	return wsDef, nil
@@ -140,9 +144,11 @@ func (s *WorkspaceService) GetWorkspaceInfo(rootPath string) (*types.WorkspaceDe
 		if os.IsNotExist(err) {
 			// Return default fallback
 			return &types.WorkspaceDefinition{
+				SchemaVersion:     CurrentSchemaVersion,
 				Version:           "1.0",
 				Name:              filepath.Base(rootPath),
 				ActiveEnvironment: "dev",
+				Trusted:           true,
 			}, nil
 		}
 		return nil, fmt.Errorf("failed to read workspace.json: %w", err)
@@ -153,11 +159,12 @@ func (s *WorkspaceService) GetWorkspaceInfo(rootPath string) (*types.WorkspaceDe
 		return nil, fmt.Errorf("failed to parse workspace.json: %w", err)
 	}
 
-	return &def, nil
+	migrated, _ := MigrateWorkspace(&def)
+	return migrated, nil
 }
 
 // ScanTree recursively scans the collections directory (or root if collections doesn't exist)
-// and builds a hierarchical tree of folders and *.pebble.json requests.
+// and builds a hierarchical tree of folders and *.pebble.json requests with explicit ordering.
 func (s *WorkspaceService) ScanTree(rootPath string) ([]*types.TreeNode, error) {
 	if rootPath == "" {
 		return []*types.TreeNode{}, nil
@@ -182,18 +189,31 @@ func (s *WorkspaceService) scanDir(dirPath string, workspaceRoot string) ([]*typ
 		return nil, fmt.Errorf("failed to read directory %s: %w", dirPath, err)
 	}
 
+	// Check if _folder.pebble.json exists in this directory for explicit ordering
+	var folderItemOrder []string
+	folderFilePath := filepath.Join(dirPath, FolderFile)
+	if data, err := os.ReadFile(folderFilePath); err == nil {
+		var folderDef types.FolderDefinition
+		if json.Unmarshal(data, &folderDef) == nil && len(folderDef.ItemOrder) > 0 {
+			folderItemOrder = folderDef.ItemOrder
+		}
+	}
+
 	var nodes []*types.TreeNode
 
 	for _, entry := range entries {
 		name := entry.Name()
 
 		// Skip hidden files & directories (.git, .pebble, node_modules, etc.)
-		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "dist" {
+		// Also skip _folder.pebble.json (internal folder metadata)
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "dist" || name == FolderFile {
 			continue
 		}
 
 		fullPath := filepath.Join(dirPath, name)
 		relPath, _ := filepath.Rel(workspaceRoot, fullPath)
+
+		order, _, displayName := ParseOrderPrefix(name)
 
 		if entry.IsDir() {
 			children, err := s.scanDir(fullPath, workspaceRoot)
@@ -202,43 +222,52 @@ func (s *WorkspaceService) scanDir(dirPath string, workspaceRoot string) ([]*typ
 			}
 
 			nodes = append(nodes, &types.TreeNode{
-				ID:       relPath,
-				Name:     name,
-				Path:     fullPath,
-				RelPath:  relPath,
-				IsDir:    true,
-				Children: children,
+				ID:          relPath,
+				Name:        name,
+				DisplayName: displayName,
+				Path:        fullPath,
+				RelPath:     relPath,
+				IsDir:       true,
+				Order:       order,
+				Children:    children,
 			})
 		} else if strings.HasSuffix(name, PebbleExt) {
-			// Parse quick method from the *.pebble.json file
 			method := "GET"
-			if req, err := s.ReadRequest(fullPath); err == nil && req.Method != "" {
-				method = req.Method
+			itemOrder := order
+
+			if req, err := s.ReadRequest(fullPath); err == nil {
+				if req.Method != "" {
+					method = req.Method
+				}
+				if req.Order > 0 {
+					itemOrder = req.Order
+				}
 			}
 
 			nodes = append(nodes, &types.TreeNode{
-				ID:      relPath,
-				Name:    name,
-				Path:    fullPath,
-				RelPath: relPath,
-				IsDir:   false,
-				Method:  method,
+				ID:          relPath,
+				Name:        name,
+				DisplayName: displayName,
+				Path:        fullPath,
+				RelPath:     relPath,
+				IsDir:       false,
+				Order:       itemOrder,
+				Method:      method,
 			})
 		}
 	}
 
-	// Sort nodes: directories first, then files alphabetically
+	// Sort nodes using Option C: Directories first, then explicit itemOrder > Order > numeric prefix > alphabetical
+	comparator := NewNodeComparator(folderItemOrder)
 	sort.Slice(nodes, func(i, j int) bool {
-		if nodes[i].IsDir != nodes[j].IsDir {
-			return nodes[i].IsDir
-		}
-		return strings.ToLower(nodes[i].Name) < strings.ToLower(nodes[j].Name)
+		return comparator.Compare(nodes[i], nodes[j])
 	})
 
 	return nodes, nil
 }
 
-// ReadRequest reads and parses a *.pebble.json file.
+// ReadRequest reads and parses a *.pebble.json file, migrating legacy v0 files
+// to schemaVersion 1 in memory. It NEVER modifies the file on disk.
 func (s *WorkspaceService) ReadRequest(filePath string) (*types.RequestDefinition, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -250,10 +279,12 @@ func (s *WorkspaceService) ReadRequest(filePath string) (*types.RequestDefinitio
 		return nil, fmt.Errorf("failed to parse JSON from %s: %w", filePath, err)
 	}
 
-	return &req, nil
+	migratedReq, _ := MigrateRequest(&req)
+	return migratedReq, nil
 }
 
-// SaveRequest writes a RequestDefinition to a *.pebble.json file with 2-space indentation.
+// SaveRequest writes a RequestDefinition to a *.pebble.json file with 2-space indentation
+// and trailing newline, updating its schemaVersion to CurrentSchemaVersion (1).
 func (s *WorkspaceService) SaveRequest(filePath string, req *types.RequestDefinition) error {
 	if filePath == "" {
 		return fmt.Errorf("file path cannot be empty")
@@ -264,43 +295,30 @@ func (s *WorkspaceService) SaveRequest(filePath string, req *types.RequestDefini
 		filePath += PebbleExt
 	}
 
-	// Ensure parent directory exists
-	parentDir := filepath.Dir(filePath)
-	if err := os.MkdirAll(parentDir, 0755); err != nil {
-		return fmt.Errorf("failed to create parent directories for %s: %w", filePath, err)
+	// Suppress watcher notifications for internal write
+	if s.watcher != nil {
+		s.watcher.Suppress(filePath, 1000*time.Millisecond)
 	}
 
-	// Default schema and version if missing
+	// Ensure schema version is updated to v1
+	req.SchemaVersion = CurrentSchemaVersion
 	if req.Schema == "" {
-		req.Schema = "https://pebblepost.dev/schemas/v1/request.json"
+		req.Schema = DefaultRequestSchema
 	}
 	if req.Version == "" {
 		req.Version = "1.0"
 	}
 
-	data, err := json.MarshalIndent(req, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to encode request to JSON: %w", err)
-	}
-
-	// Atomic write via temp file
-	tmpPath := filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temporary file: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, filePath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("failed to save request file: %w", err)
-	}
-
-	return nil
+	return WriteFileStable(filePath, req)
 }
 
 // DeletePath removes a file or directory at targetPath.
 func (s *WorkspaceService) DeletePath(targetPath string) error {
 	if targetPath == "" {
 		return fmt.Errorf("target path cannot be empty")
+	}
+	if s.watcher != nil {
+		s.watcher.Suppress(targetPath, 1000*time.Millisecond)
 	}
 	return os.RemoveAll(targetPath)
 }
@@ -310,6 +328,9 @@ func (s *WorkspaceService) CreateFolder(folderPath string) error {
 	if folderPath == "" {
 		return fmt.Errorf("folder path cannot be empty")
 	}
+	if s.watcher != nil {
+		s.watcher.Suppress(folderPath, 1000*time.Millisecond)
+	}
 	return os.MkdirAll(folderPath, 0755)
 }
 
@@ -317,6 +338,10 @@ func (s *WorkspaceService) CreateFolder(folderPath string) error {
 func (s *WorkspaceService) Rename(oldPath, newPath string) error {
 	if oldPath == "" || newPath == "" {
 		return fmt.Errorf("paths cannot be empty")
+	}
+	if s.watcher != nil {
+		s.watcher.Suppress(oldPath, 1000*time.Millisecond)
+		s.watcher.Suppress(newPath, 1000*time.Millisecond)
 	}
 	return os.Rename(oldPath, newPath)
 }
