@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Send, Loader2, Plus, Trash2, Save, Check } from "lucide-react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
@@ -19,9 +19,18 @@ import {
   TableCell,
 } from "../ui/table";
 import { Tooltip } from "../ui/tooltip";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import { Checkbox } from "../ui/checkbox";
 
-export const RequestPanel: React.FC = () => {
+export function RequestPanel() {
   const {
+    theme,
     activeRequest,
     activeFilePath,
     isExecuting,
@@ -56,7 +65,7 @@ export const RequestPanel: React.FC = () => {
 
   if (!activeRequest) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
+      <div className="flex-1 flex items-center justify-center text-zinc-400 dark:text-zinc-500 text-sm">
         Select a request from the sidebar or create a new one.
       </div>
     );
@@ -65,12 +74,17 @@ export const RequestPanel: React.FC = () => {
   const handleSend = async () => {
     setIsExecuting(true);
     const startTime = performance.now();
+    const { workspacePath, activeEnv } = useWorkspaceStore.getState();
 
     try {
       const res = await fetch("/api/request/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(activeRequest),
+        body: JSON.stringify({
+          workspacePath: workspacePath || undefined,
+          environmentName: activeEnv || undefined,
+          request: activeRequest,
+        }),
       });
 
       const totalMs = performance.now() - startTime;
@@ -137,20 +151,19 @@ export const RequestPanel: React.FC = () => {
     }
   };
 
+  // Header CRUD
   const handleAddHeader = () => {
     updateActiveRequest((prev) => ({
       ...prev,
       headers: [...(prev.headers || []), { key: "", value: "", enabled: true }],
     }));
   };
-
   const handleRemoveHeader = (index: number) => {
     updateActiveRequest((prev) => ({
       ...prev,
       headers: (prev.headers || []).filter((_, i) => i !== index),
     }));
   };
-
   const handleUpdateHeader = (
     index: number,
     field: keyof KeyValue,
@@ -163,33 +176,71 @@ export const RequestPanel: React.FC = () => {
     });
   };
 
+  // Params CRUD
+  const handleAddParam = () => {
+    updateActiveRequest((prev) => ({
+      ...prev,
+      params: [...(prev.params || []), { key: "", value: "", enabled: true }],
+    }));
+  };
+  const handleRemoveParam = (index: number) => {
+    updateActiveRequest((prev) => ({
+      ...prev,
+      params: (prev.params || []).filter((_, i) => i !== index),
+    }));
+  };
+  const handleUpdateParam = (
+    index: number,
+    field: keyof KeyValue,
+    val: any,
+  ) => {
+    updateActiveRequest((prev) => {
+      const next = [...(prev.params || [])];
+      next[index] = { ...next[index], [field]: val };
+      return { ...prev, params: next };
+    });
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-zinc-950 overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden transition-colors duration-150">
       {/* Top Request Bar */}
-      <div className="p-3 border-b border-zinc-800 flex items-center gap-2">
+      <div className="p-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2 bg-white dark:bg-zinc-950">
         {/* HTTP Method Dropdown */}
-        <div className="relative shrink-0">
-          <select
-            value={activeRequest.method}
-            onChange={(e) =>
-              updateActiveRequest((prev) => ({
-                ...prev,
-                method: e.target.value as any,
-              }))
-            }
-            className={`text-xs font-mono font-bold px-2.5 py-1.5 rounded-md border appearance-none cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-500 pr-6 ${getMethodColor(
+        <Select
+          value={activeRequest.method}
+          onValueChange={(val) =>
+            typeof val === "string" &&
+            updateActiveRequest((prev) => ({
+              ...prev,
+              method: val as any,
+            }))
+          }
+        >
+          <SelectTrigger
+            className={`w-26.25 h-8 text-xs font-mono font-bold border transition-colors ${getMethodColor(
               activeRequest.method,
             )}`}
           >
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PUT">PUT</option>
-            <option value="PATCH">PATCH</option>
-            <option value="DELETE">DELETE</option>
-            <option value="HEAD">HEAD</option>
-            <option value="OPTIONS">OPTIONS</option>
-          </select>
-        </div>
+            <SelectValue placeholder="Method" />
+          </SelectTrigger>
+          <SelectContent align="start">
+            {(
+              [
+                "GET",
+                "POST",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "HEAD",
+                "OPTIONS",
+              ] as const
+            ).map((m) => (
+              <SelectItem key={m} value={m} className="font-mono font-bold">
+                <span className={getMethodColor(m)}>{m}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* URL Input */}
         <div className="flex-1 relative">
@@ -245,15 +296,26 @@ export const RequestPanel: React.FC = () => {
       >
         <TabsList>
           {(
-            ["params", "headers", "auth", "body", "scripts", "settings"] as const
+            [
+              "params",
+              "headers",
+              "auth",
+              "body",
+              "scripts",
+              "settings",
+            ] as const
           ).map((tab) => (
             <TabsTrigger key={tab} value={tab} className="capitalize">
               {tab}
-              {tab === "headers" && (activeRequest.headers?.length || 0) > 0 && (
-                <Badge variant="secondary" className="ml-1.5 px-1 py-0 text-[9px]">
-                  {activeRequest.headers?.filter((h) => h.enabled).length}
-                </Badge>
-              )}
+              {tab === "headers" &&
+                (activeRequest.headers?.length || 0) > 0 && (
+                  <Badge
+                    variant="secondary"
+                    className="ml-1.5 px-1 py-0 text-[9px]"
+                  >
+                    {activeRequest.headers?.filter((h) => h.enabled).length}
+                  </Badge>
+                )}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -263,7 +325,9 @@ export const RequestPanel: React.FC = () => {
           <TabsContent value="headers">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-zinc-400 mb-2">
-                <span className="font-semibold text-zinc-300">Headers List</span>
+                <span className="font-semibold text-zinc-300">
+                  Headers List
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -274,7 +338,7 @@ export const RequestPanel: React.FC = () => {
                 </Button>
               </div>
 
-              <div className="border border-zinc-800 rounded-md overflow-hidden bg-zinc-950">
+              <div className="border border-zinc-200 dark:border-zinc-800 rounded-md overflow-hidden bg-white dark:bg-zinc-950">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -288,13 +352,11 @@ export const RequestPanel: React.FC = () => {
                     {(activeRequest.headers || []).map((header, idx) => (
                       <TableRow key={idx}>
                         <TableCell className="text-center p-2">
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={header.enabled}
-                            onChange={(e) =>
-                              handleUpdateHeader(idx, "enabled", e.target.checked)
+                            onCheckedChange={(checked) =>
+                              handleUpdateHeader(idx, "enabled", !!checked)
                             }
-                            className="rounded bg-zinc-900 border-zinc-700 text-blue-600 focus:ring-0 cursor-pointer"
                           />
                         </TableCell>
                         <TableCell className="p-1">
@@ -305,7 +367,7 @@ export const RequestPanel: React.FC = () => {
                               handleUpdateHeader(idx, "key", e.target.value)
                             }
                             placeholder="Header Name"
-                            className="w-full bg-transparent px-2 py-1 text-zinc-200 focus:outline-none"
+                            className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
                           />
                         </TableCell>
                         <TableCell className="p-1">
@@ -316,7 +378,7 @@ export const RequestPanel: React.FC = () => {
                               handleUpdateHeader(idx, "value", e.target.value)
                             }
                             placeholder="Value or {{VAR}}"
-                            className="w-full bg-transparent px-2 py-1 text-zinc-200 focus:outline-none"
+                            className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
                           />
                         </TableCell>
                         <TableCell className="p-1 text-center">
@@ -364,12 +426,12 @@ export const RequestPanel: React.FC = () => {
                 )}
               </div>
 
-              <div className="flex-1 min-h-55 rounded-md border border-zinc-800 overflow-hidden">
+              <div className="flex-1 min-h-55 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
                 <CodeMirror
                   value={activeRequest.body?.raw || ""}
                   height="100%"
                   extensions={[json()]}
-                  theme="dark"
+                  theme={theme === "dark" ? "dark" : "light"}
                   onChange={(val) =>
                     updateActiveRequest((prev) => ({
                       ...prev,
@@ -391,12 +453,12 @@ export const RequestPanel: React.FC = () => {
                     Runs before request execution
                   </span>
                 </div>
-                <div className="rounded-md border border-zinc-800 overflow-hidden h-36">
+                <div className="rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden h-36">
                   <CodeMirror
                     value={activeRequest.scripts?.preRequest || ""}
                     height="100%"
                     extensions={[javascript()]}
-                    theme="dark"
+                    theme={theme === "dark" ? "dark" : "light"}
                     onChange={(val) =>
                       updateActiveRequest((prev) => ({
                         ...prev,
@@ -409,18 +471,18 @@ export const RequestPanel: React.FC = () => {
               </div>
 
               <div>
-                <div className="text-xs font-semibold text-zinc-300 mb-1 flex items-center justify-between">
+                <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
                   <span>Post-response Tests (JavaScript)</span>
                   <span className="text-[10px] text-zinc-500">
                     Runs assertions on response
                   </span>
                 </div>
-                <div className="rounded-md border border-zinc-800 overflow-hidden h-40">
+                <div className="rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden h-40">
                   <CodeMirror
                     value={activeRequest.scripts?.postResponse || ""}
                     height="100%"
                     extensions={[javascript()]}
-                    theme="dark"
+                    theme={theme === "dark" ? "dark" : "light"}
                     onChange={(val) =>
                       updateActiveRequest((prev) => ({
                         ...prev,
@@ -435,37 +497,268 @@ export const RequestPanel: React.FC = () => {
           </TabsContent>
 
           <TabsContent value="params">
-            <div className="text-xs text-zinc-400 p-4 border border-dashed border-zinc-800 rounded-md text-center">
-              Query parameters defined in the URL will automatically appear here.
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-zinc-400 mb-2">
+                <span className="font-semibold text-zinc-300">
+                  Query Parameters
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleAddParam}
+                  className="h-7 text-xs text-blue-400 hover:text-blue-300 gap-1 px-2"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Param
+                </Button>
+              </div>
+              <div className="border border-zinc-200 dark:border-zinc-800 rounded-md overflow-hidden bg-white dark:bg-zinc-950">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8 text-center"></TableHead>
+                      <TableHead className="w-1/3">Key</TableHead>
+                      <TableHead>Value</TableHead>
+                      <TableHead className="w-8"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(activeRequest.params || []).length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={4}
+                          className="text-center text-zinc-400 dark:text-zinc-500 py-4 text-xs"
+                        >
+                          No query parameters yet. Click "Add Param" to add one.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      (activeRequest.params || []).map((param, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell className="text-center p-2">
+                            <Checkbox
+                              checked={param.enabled}
+                              onCheckedChange={(checked) =>
+                                handleUpdateParam(idx, "enabled", !!checked)
+                              }
+                            />
+                          </TableCell>
+                          <TableCell className="p-1">
+                            <input
+                              type="text"
+                              value={param.key}
+                              onChange={(e) =>
+                                handleUpdateParam(idx, "key", e.target.value)
+                              }
+                              placeholder="param_key"
+                              className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                            />
+                          </TableCell>
+                          <TableCell className="p-1">
+                            <input
+                              type="text"
+                              value={param.value}
+                              onChange={(e) =>
+                                handleUpdateParam(idx, "value", e.target.value)
+                              }
+                              placeholder="value or {{VAR}}"
+                              className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                            />
+                          </TableCell>
+                          <TableCell className="p-1 text-center">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleRemoveParam(idx)}
+                              className="h-6 w-6 text-zinc-500 hover:text-rose-400"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </TabsContent>
 
           <TabsContent value="auth">
-            <div className="text-xs text-zinc-400 p-4 border border-zinc-800 rounded-md space-y-3 bg-zinc-900/30">
-              <span className="font-semibold text-zinc-200">
-                Authentication Type
-              </span>
-              <select
-                value={activeRequest.auth.type}
-                onChange={(e) =>
-                  updateActiveRequest((prev) => ({
-                    ...prev,
-                    auth: { ...prev.auth, type: e.target.value as any },
-                  }))
-                }
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-md p-2 text-xs text-zinc-200 focus:outline-none cursor-pointer"
-              >
-                <option value="none">No Auth</option>
-                <option value="bearer">Bearer Token</option>
-                <option value="basic">Basic Auth</option>
-                <option value="apiKey">API Key</option>
-              </select>
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center gap-3">
+                <span className="font-semibold text-zinc-700 dark:text-zinc-300 shrink-0">
+                  Auth Type:
+                </span>
+                <Select
+                  value={activeRequest.auth.type}
+                  onValueChange={(val) =>
+                    typeof val === "string" &&
+                    updateActiveRequest((prev) => ({
+                      ...prev,
+                      auth: { type: val as any },
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-60 h-8 bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Auth</SelectItem>
+                    <SelectItem value="bearer">Bearer Token</SelectItem>
+                    <SelectItem value="basic">
+                      Basic Auth (Username / Password)
+                    </SelectItem>
+                    <SelectItem value="apiKey">API Key</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {activeRequest.auth.type === "bearer" && (
+                <div className="space-y-2 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
+                    Bearer Token
+                  </label>
+                  <Input
+                    type="text"
+                    value={activeRequest.auth.token || ""}
+                    onChange={(e) =>
+                      updateActiveRequest((prev) => ({
+                        ...prev,
+                        auth: { ...prev.auth, token: e.target.value },
+                      }))
+                    }
+                    placeholder="Enter token or {{TOKEN_VAR}}"
+                    className="w-full bg-white dark:bg-zinc-950"
+                  />
+                  <p className="text-[10px] text-zinc-500">
+                    Sent as:{" "}
+                    <code className="font-mono">
+                      Authorization: Bearer &lt;token&gt;
+                    </code>
+                  </p>
+                </div>
+              )}
+
+              {activeRequest.auth.type === "basic" && (
+                <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div>
+                    <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
+                      Username
+                    </label>
+                    <Input
+                      type="text"
+                      value={activeRequest.auth.username || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          auth: { ...prev.auth, username: e.target.value },
+                        }))
+                      }
+                      placeholder="username or {{USERNAME}}"
+                      className="w-full bg-white dark:bg-zinc-950"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
+                      Password
+                    </label>
+                    <Input
+                      type="password"
+                      value={activeRequest.auth.password || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          auth: { ...prev.auth, password: e.target.value },
+                        }))
+                      }
+                      placeholder="password or {{PASSWORD}}"
+                      className="w-full bg-white dark:bg-zinc-950"
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-500">
+                    Sent as:{" "}
+                    <code className="font-mono">
+                      Authorization: Basic base64(user:pass)
+                    </code>
+                  </p>
+                </div>
+              )}
+
+              {activeRequest.auth.type === "apiKey" && (
+                <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
+                        Key Name
+                      </label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.key || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, key: e.target.value },
+                          }))
+                        }
+                        placeholder="X-API-KEY"
+                        className="w-full bg-white dark:bg-zinc-950"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
+                        Value
+                      </label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.value || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, value: e.target.value },
+                          }))
+                        }
+                        placeholder="api-key-value or {{API_KEY}}"
+                        className="w-full bg-white dark:bg-zinc-950"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
+                      Add To
+                    </label>
+                    <Select
+                      value={activeRequest.auth.addTo || "header"}
+                      onValueChange={(val) =>
+                        typeof val === "string" &&
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          auth: { ...prev.auth, addTo: val as any },
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="w-48 h-8 bg-white dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="header">Header</SelectItem>
+                        <SelectItem value="query">Query Parameter</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {activeRequest.auth.type === "none" && (
+                <div className="text-zinc-500 border border-dashed border-zinc-800 rounded-md p-4 text-center">
+                  No authentication configured for this request.
+                </div>
+              )}
             </div>
           </TabsContent>
 
           <TabsContent value="settings">
-            <div className="text-xs text-zinc-400 p-4 border border-zinc-800 rounded-md space-y-3 bg-zinc-900/30">
-              <label className="flex items-center gap-2 cursor-pointer">
+            <div className="text-xs text-zinc-600 dark:text-zinc-400 p-4 border border-zinc-200 dark:border-zinc-800 rounded-md space-y-3 bg-zinc-50 dark:bg-zinc-900/30">
+              <label className="flex items-center gap-2 cursor-pointer text-zinc-700 dark:text-zinc-300">
                 <input
                   type="checkbox"
                   checked={activeRequest.settings.followRedirects}
@@ -478,21 +771,24 @@ export const RequestPanel: React.FC = () => {
                       },
                     }))
                   }
-                  className="rounded text-blue-600 bg-zinc-900 border-zinc-700"
+                  className="rounded text-blue-600 bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"
                 />
                 <span>Follow HTTP Redirects</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-center gap-2 cursor-pointer text-zinc-700 dark:text-zinc-300">
                 <input
                   type="checkbox"
                   checked={activeRequest.settings.verifySSL}
                   onChange={(e) =>
                     updateActiveRequest((prev) => ({
                       ...prev,
-                      settings: { ...prev.settings, verifySSL: e.target.checked },
+                      settings: {
+                        ...prev.settings,
+                        verifySSL: e.target.checked,
+                      },
                     }))
                   }
-                  className="rounded text-blue-600 bg-zinc-900 border-zinc-700"
+                  className="rounded text-blue-600 bg-white dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700"
                 />
                 <span>Verify SSL/TLS Certificates</span>
               </label>
@@ -502,4 +798,4 @@ export const RequestPanel: React.FC = () => {
       </Tabs>
     </div>
   );
-};
+}

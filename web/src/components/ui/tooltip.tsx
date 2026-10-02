@@ -1,50 +1,121 @@
-import * as React from 'react'
-import { cn } from '../../lib/utils'
+import * as React from "react";
+import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
+import { cn } from "../../lib/utils";
 
-interface TooltipProps {
-  content: React.ReactNode
-  children: React.ReactNode
-  className?: string
-  side?: 'top' | 'bottom' | 'left' | 'right'
+export function TooltipProvider({
+  delay = 200,
+  ...props
+}: TooltipPrimitive.Provider.Props) {
+  return (
+    <TooltipPrimitive.Provider
+      data-slot="tooltip-provider"
+      delay={delay}
+      {...props}
+    />
+  );
 }
 
-function Tooltip({
+export function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+}
+
+export interface TooltipContentProps
+  extends
+    TooltipPrimitive.Popup.Props,
+    Pick<
+      TooltipPrimitive.Positioner.Props,
+      "align" | "alignOffset" | "side" | "sideOffset"
+    > {
+  showArrow?: boolean;
+}
+
+export function TooltipContent({
+  className,
+  side = "top",
+  sideOffset = 8,
+  align = "center",
+  alignOffset = 0,
+  showArrow = true,
+  children,
+  ...props
+}: TooltipContentProps) {
+  return (
+    <TooltipPrimitive.Portal>
+      <TooltipPrimitive.Positioner
+        align={align}
+        alignOffset={alignOffset}
+        side={side}
+        sideOffset={sideOffset}
+        className="isolate z-50"
+      >
+        <TooltipPrimitive.Popup
+          data-slot="tooltip-content"
+          className={cn(
+            "relative z-50 inline-flex w-fit max-w-xs items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium shadow-md shadow-black/15 dark:shadow-black/40 border border-foreground/10 select-none pointer-events-none",
+            "bg-foreground text-background",
+            "origin-(--transform-origin)",
+            "transition-[transform,opacity] duration-150 ease-out",
+            "data-starting-style:opacity-0 data-starting-style:scale-95",
+            "data-ending-style:opacity-0 data-ending-style:scale-95",
+            "data-instant:transition-none",
+            className,
+          )}
+          {...props}
+        >
+          {children}
+          {showArrow && (
+            <TooltipPrimitive.Arrow className="relative block w-3 h-1.5 overflow-clip data-[side=bottom]:-top-1.5 data-[side=left]:-right-2.25 data-[side=left]:rotate-90 data-[side=right]:-left-2.25 data-[side=right]:-rotate-90 data-[side=top]:-bottom-1.5 data-[side=top]:rotate-180 before:content-[''] before:absolute before:bottom-0 before:left-1/2 before:w-[8.5px] before:h-[8.5px] before:bg-foreground before:border before:border-foreground/10 before:transform-[translate(-50%,50%)_rotate(45deg)]" />
+          )}
+        </TooltipPrimitive.Popup>
+      </TooltipPrimitive.Positioner>
+    </TooltipPrimitive.Portal>
+  );
+}
+
+export interface TooltipProps extends TooltipPrimitive.Root.Props {
+  content?: React.ReactNode;
+  children?: React.ReactNode;
+  side?: "top" | "bottom" | "left" | "right";
+  sideOffset?: number;
+  align?: "center" | "start" | "end";
+  showArrow?: boolean;
+  className?: string;
+}
+
+export function Tooltip({
   content,
   children,
+  side = "bottom",
+  sideOffset = 8,
+  align = "center",
+  showArrow = true,
   className,
-  side = 'bottom',
+  ...props
 }: TooltipProps) {
-  const [isOpen, setIsOpen] = React.useState(false)
-
-  const sideClasses = {
-    top: 'bottom-full left-1/2 -translate-x-1/2 mb-1.5',
-    bottom: 'top-full left-1/2 -translate-x-1/2 mt-1.5',
-    left: 'right-full top-1/2 -translate-y-1/2 mr-1.5',
-    right: 'left-full top-1/2 -translate-y-1/2 ml-1.5',
+  if (content !== undefined) {
+    return (
+      <TooltipPrimitive.Root {...props}>
+        <TooltipPrimitive.Trigger
+          render={
+            React.isValidElement(children) ? children : <span>{children}</span>
+          }
+        />
+        <TooltipContent
+          side={side}
+          sideOffset={sideOffset}
+          align={align}
+          showArrow={showArrow}
+          className={className}
+        >
+          {content}
+        </TooltipContent>
+      </TooltipPrimitive.Root>
+    );
   }
 
   return (
-    <div
-      className="relative inline-flex"
-      onMouseEnter={() => setIsOpen(true)}
-      onMouseLeave={() => setIsOpen(false)}
-      onFocus={() => setIsOpen(true)}
-      onBlur={() => setIsOpen(false)}
-    >
+    <TooltipPrimitive.Root data-slot="tooltip" {...props}>
       {children}
-      {isOpen && (
-        <div
-          className={cn(
-            'absolute z-50 overflow-hidden rounded bg-zinc-900 border border-zinc-700 px-2 py-1 text-[11px] text-zinc-100 shadow-md animate-in fade-in-0 zoom-in-95 pointer-events-none whitespace-nowrap',
-            sideClasses[side],
-            className
-          )}
-        >
-          {content}
-        </div>
-      )}
-    </div>
-  )
+    </TooltipPrimitive.Root>
+  );
 }
-
-export { Tooltip }

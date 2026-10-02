@@ -22,16 +22,16 @@ export function formatDuration(ms: number) {
 export function getMethodColor(method: string) {
   switch (method.toUpperCase()) {
     case 'GET':
-      return 'text-emerald-400 bg-emerald-950/60 border-emerald-800/60'
+      return 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800/60'
     case 'POST':
-      return 'text-blue-400 bg-blue-950/60 border-blue-800/60'
+      return 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-800/60'
     case 'PUT':
-      return 'text-amber-400 bg-amber-950/60 border-amber-800/60'
+      return 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 border-amber-300 dark:border-amber-800/60'
     case 'PATCH':
-      return 'text-violet-400 bg-violet-950/60 border-violet-800/60'
+      return 'text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/60 border-violet-300 dark:border-violet-800/60'
     case 'DELETE':
-      return 'text-rose-400 bg-rose-950/60 border-rose-800/60'
+      return 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800/60'
     default:
-      return 'text-zinc-400 bg-zinc-900 border-zinc-700'
+      return 'text-zinc-700 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700'
   }
 }

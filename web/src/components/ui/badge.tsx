@@ -10,16 +10,16 @@ const badgeVariants = cva(
         default:
           'border border-transparent bg-blue-600/20 text-blue-400 border-blue-500/30',
         secondary:
-          'border border-transparent bg-zinc-800 text-zinc-300',
+          'border border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
         destructive:
-          'border border-red-500/30 bg-red-950/40 text-red-400',
-        outline: 'border border-zinc-800 text-zinc-400',
+          'border border-red-500/30 bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400',
+        outline: 'border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400',
         success:
-          'border border-emerald-500/30 bg-emerald-950/40 text-emerald-400',
+          'border border-emerald-500/30 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400',
         warning:
-          'border border-amber-500/30 bg-amber-950/40 text-amber-400',
+          'border border-amber-500/30 bg-amber-100 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
         info:
-          'border border-sky-500/30 bg-sky-950/40 text-sky-400',
+          'border border-sky-500/30 bg-sky-100 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400',
       },
     },
     defaultVariants: {

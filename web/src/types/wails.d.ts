@@ -6,6 +6,9 @@ declare global {
       main?: {
         App?: {
           SelectDirectory?: () => Promise<string>
+          WindowMinimise?: () => void
+          WindowToggleMaximise?: () => void
+          WindowClose?: () => void
         }
       }
     }
