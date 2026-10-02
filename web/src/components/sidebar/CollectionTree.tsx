@@ -9,13 +9,28 @@ import {
   RefreshCw,
   ChevronsDownUp,
   ChevronsUpDown,
+  Copy,
+  Trash2,
+  Edit3,
+  Files,
+  ExternalLink,
+  AlertTriangle,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import { useTabStore } from '../../store/tabStore'
 import type { TreeNode, RequestDefinition } from '../../types'
 import { getMethodTextColor, cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
 import { Skeleton } from '../ui/skeleton'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '../ui/dialog'
 
 const VALID_METHODS: RequestDefinition['method'][] = [
   'GET',
@@ -70,10 +85,20 @@ function getAllFolderPaths(nodes: TreeNode[]): string[] {
   return paths
 }
 
+function findNodeByPath(nodes: TreeNode[], targetPath: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.path === targetPath) return node
+    if (node.children) {
+      const found = findNodeByPath(node.children, targetPath)
+      if (found) return found
+    }
+  }
+  return null
+}
+
 function CollectionTreeSkeleton() {
   return (
     <div className="p-1 space-y-0.5 animate-in fade-in-50 duration-200">
-      {/* Folder 1: 01-auth */}
       <div className="h-7 px-1.5 flex items-center gap-2">
         <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
         <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
@@ -87,55 +112,6 @@ function CollectionTreeSkeleton() {
         <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
         <Skeleton className="h-3 w-32 rounded-xs" />
       </div>
-
-      {/* Folder 2: 02-users */}
-      <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
-        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
-        <Skeleton className="h-3.5 w-22 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-24 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-20 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-28 rounded-xs" />
-      </div>
-
-      {/* Folder 3: 03-products */}
-      <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
-        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
-        <Skeleton className="h-3.5 w-24 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-36 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-24 rounded-xs" />
-      </div>
-
-      {/* Folder 4: 04-httpbin-advanced */}
-      <div className="h-7 px-1.5 flex items-center gap-2 pt-1">
-        <Skeleton className="w-3 h-3 rounded-xs shrink-0" />
-        <Skeleton className="w-3.5 h-3.5 rounded-xs shrink-0" />
-        <Skeleton className="h-3.5 w-32 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-32 rounded-xs" />
-      </div>
-      <div className="h-7 pl-6 pr-1.5 flex items-center gap-2">
-        <Skeleton className="h-3 w-10 rounded-xs shrink-0" />
-        <Skeleton className="h-3 w-24 rounded-xs" />
-      </div>
     </div>
   )
 }
@@ -146,10 +122,11 @@ export function CollectionTree() {
     workspacePath,
     activeFilePath,
     isLoadingWorkspace,
-    loadRequest,
     loadWorkspace,
     createNewRequest,
   } = useWorkspaceStore()
+
+  const { openTab, onFileRenamed, onFileDeleted } = useTabStore()
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     collections: true,
@@ -164,6 +141,25 @@ export function CollectionTree() {
   const [inlineName, setInlineName] = useState('')
   const inlineInputRef = useRef<HTMLInputElement>(null)
   const isCommittingRef = useRef(false)
+
+  // F2 inline renaming state
+  const [renamingPath, setRenamingPath] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    node: TreeNode
+  } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Delete confirmation modal state
+  const [deleteConfirmNode, setDeleteConfirmNode] = useState<TreeNode | null>(null)
+
+  // Drag & drop state
+  const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
 
   // Auto-expand loaded folders on mount & updates
   useEffect(() => {
@@ -188,7 +184,7 @@ export function CollectionTree() {
     }
   }, [tree])
 
-  // Focus and select input on mount
+  // Focus and select input on creation
   useEffect(() => {
     if (creatingNode) {
       const timer = setTimeout(() => {
@@ -199,9 +195,42 @@ export function CollectionTree() {
     }
   }, [creatingNode])
 
+  // Close context menu on outside click or scroll
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setContextMenu(null)
+      }
+    }
+    const handleScroll = () => setContextMenu(null)
+
+    if (contextMenu) {
+      window.addEventListener('mousedown', handleOutsideClick)
+      window.addEventListener('scroll', handleScroll, true)
+    }
+    return () => {
+      window.removeEventListener('mousedown', handleOutsideClick)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [contextMenu])
+
+  // F2 global keydown listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2' && selectedPath && !renamingPath && !creatingNode) {
+        e.preventDefault()
+        const node = findNodeByPath(tree, selectedPath)
+        if (node) {
+          startInlineRename(node)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedPath, renamingPath, creatingNode, tree])
+
   const allFolderPaths = useMemo(() => getAllFolderPaths(tree), [tree])
 
-  // Check if at least one folder is currently expanded
   const isAnyFolderExpanded =
     allFolderPaths.length > 0 &&
     allFolderPaths.some((path) => (expandedFolders[path] ?? true) === true)
@@ -213,9 +242,21 @@ export function CollectionTree() {
     }))
   }
 
-  const handleSelectRequest = (node: TreeNode) => {
+  // Handle single click (preview tab) and double click (pinned tab)
+  const handleSelectRequest = async (node: TreeNode, isPreview = true) => {
     setSelectedPath(node.path)
-    loadRequest(node.path)
+    try {
+      const ws = workspacePath || '.'
+      const res = await fetch(
+        `/api/request?path=${encodeURIComponent(node.path)}&workspacePath=${encodeURIComponent(ws)}`
+      )
+      if (res.ok) {
+        const req: RequestDefinition = await res.json()
+        openTab(node.path, req, isPreview)
+      }
+    } catch (err) {
+      console.error('Failed to open request tab:', err)
+    }
   }
 
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -240,7 +281,6 @@ export function CollectionTree() {
     setExpandedFolders(next)
   }
 
-  // Check if a path is a directory inside the tree
   const isPathDir = (nodes: TreeNode[], targetPath: string): boolean => {
     for (const node of nodes) {
       if (node.path === targetPath) return node.isDir
@@ -249,7 +289,6 @@ export function CollectionTree() {
     return false
   }
 
-  // Determine the target directory for file/folder creation like VS Code
   const getTargetDirectory = (explicitParent?: string): string => {
     if (explicitParent) return explicitParent
 
@@ -271,10 +310,8 @@ export function CollectionTree() {
     return currentWs !== '.' ? `${currentWs}/collections` : 'collections'
   }
 
-  // Trigger inline creation like VS Code
   const startInlineCreation = (type: 'file' | 'folder', explicitParent?: string) => {
     const targetDir = getTargetDirectory(explicitParent)
-    // Expand the target folder so the input is immediately visible
     setExpandedFolders((prev) => ({ ...prev, [targetDir]: true }))
     setCreatingNode({ type, parentPath: targetDir })
     setInlineName('')
@@ -304,7 +341,14 @@ export function CollectionTree() {
         const { method, name } = parseRequestInput(raw)
         const createdPath = await createNewRequest(parentPath, name, method)
         if (createdPath) {
-          await loadRequest(createdPath)
+          const ws = workspacePath || '.'
+          const res = await fetch(
+            `/api/request?path=${encodeURIComponent(createdPath)}&workspacePath=${encodeURIComponent(ws)}`
+          )
+          if (res.ok) {
+            const req = await res.json()
+            openTab(createdPath, req, false)
+          }
           setSelectedPath(createdPath)
         }
       } else {
@@ -329,25 +373,193 @@ export function CollectionTree() {
     }
   }
 
-  const handleInlineKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      commitInlineCreation()
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      cancelInlineCreation()
+  // Renaming handlers
+  const startInlineRename = (node: TreeNode) => {
+    const clean = node.isDir
+      ? node.name
+      : node.name.replace(/\.pebble\.json$/, '').replace(/\.json$/, '')
+    setRenamingPath(node.path)
+    setRenameValue(clean)
+    setContextMenu(null)
+    setTimeout(() => {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+    }, 30)
+  }
+
+  const cancelInlineRename = () => {
+    setRenamingPath(null)
+    setRenameValue('')
+  }
+
+  const commitInlineRename = async (node: TreeNode) => {
+    const trimmed = renameValue.trim()
+    if (!trimmed) {
+      cancelInlineRename()
+      return
+    }
+
+    const lastSlash = node.path.lastIndexOf('/')
+    const parentDir = lastSlash > 0 ? node.path.substring(0, lastSlash) : ''
+    const newFileName = node.isDir ? trimmed : `${trimmed}.pebble.json`
+    const newFullPath = parentDir ? `${parentDir}/${newFileName}` : newFileName
+
+    if (newFullPath === node.path) {
+      cancelInlineRename()
+      return
+    }
+
+    setRenamingPath(null)
+
+    try {
+      const res = await fetch('/api/workspace/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspacePath: workspacePath || '.',
+          oldPath: node.path,
+          newPath: newFullPath,
+        }),
+      })
+
+      if (res.ok) {
+        onFileRenamed(node.path, newFullPath, trimmed)
+        await loadWorkspace(workspacePath || '.')
+        setSelectedPath(newFullPath)
+      }
+    } catch (err) {
+      console.error('Failed to rename item:', err)
     }
   }
 
-  const handleInlineBlur = () => {
-    if (inlineName.trim()) {
-      commitInlineCreation()
-    } else {
-      cancelInlineCreation()
+  // Duplicate handler
+  const handleDuplicate = async (node: TreeNode) => {
+    setContextMenu(null)
+    try {
+      const res = await fetch('/api/workspace/duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspacePath: workspacePath || '.',
+          path: node.path,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        await loadWorkspace(workspacePath || '.')
+        if (data.newPath) {
+          const reqRes = await fetch(
+            `/api/request?path=${encodeURIComponent(data.newPath)}&workspacePath=${encodeURIComponent(workspacePath || '.')}`
+          )
+          if (reqRes.ok) {
+            const req = await reqRes.json()
+            openTab(data.newPath, req, false)
+            setSelectedPath(data.newPath)
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to duplicate request:', err)
     }
   }
 
-  // Render the VS Code-style inline input row
+  // Delete handler
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirmNode) return
+    const node = deleteConfirmNode
+    setDeleteConfirmNode(null)
+    setContextMenu(null)
+
+    try {
+      const res = await fetch('/api/request/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspacePath: workspacePath || '.',
+          path: node.path,
+          permanent: false,
+        }),
+      })
+
+      if (res.ok) {
+        onFileDeleted(node.path)
+        await loadWorkspace(workspacePath || '.')
+        if (selectedPath === node.path) {
+          setSelectedPath(null)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete item:', err)
+    }
+  }
+
+  // Drag & drop handlers
+  const handleDragStart = (e: React.DragEvent, node: TreeNode) => {
+    e.dataTransfer.setData('text/plain', node.path)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const handleDragOver = (e: React.DragEvent, folderNode: TreeNode) => {
+    if (!folderNode.isDir) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDragOverFolderPath(folderNode.path)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOverFolderPath(null)
+  }
+
+  const handleDrop = async (e: React.DragEvent, targetFolderNode: TreeNode) => {
+    e.preventDefault()
+    setDragOverFolderPath(null)
+    const sourcePath = e.dataTransfer.getData('text/plain')
+    if (!sourcePath || sourcePath === targetFolderNode.path) return
+
+    // Prevent dropping into subfolder of itself
+    if (targetFolderNode.path.startsWith(sourcePath + '/')) return
+
+    try {
+      const res = await fetch('/api/workspace/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspacePath: workspacePath || '.',
+          sourcePath,
+          targetFolder: targetFolderNode.path,
+        }),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        if (data.newPath) {
+          onFileRenamed(sourcePath, data.newPath)
+        }
+        await loadWorkspace(workspacePath || '.')
+        setExpandedFolders((prev) => ({ ...prev, [targetFolderNode.path]: true }))
+      }
+    } catch (err) {
+      console.error('Failed to move item:', err)
+    }
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, node: TreeNode) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setSelectedPath(node.path)
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      node,
+    })
+  }
+
+  const copyPathToClipboard = (path: string) => {
+    navigator.clipboard.writeText(path)
+    setContextMenu(null)
+  }
+
   const renderInlineInput = (depth: number) => {
     if (!creatingNode) return null
 
@@ -377,8 +589,22 @@ export function CollectionTree() {
           type="text"
           value={inlineName}
           onChange={(e) => setInlineName(e.target.value)}
-          onKeyDown={handleInlineKeyDown}
-          onBlur={handleInlineBlur}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitInlineCreation()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              cancelInlineCreation()
+            }
+          }}
+          onBlur={() => {
+            if (inlineName.trim()) {
+              commitInlineCreation()
+            } else {
+              cancelInlineCreation()
+            }
+          }}
           placeholder={isFolder ? 'folder-name' : 'request-name (or: post login)'}
           className="flex-1 h-6 px-1.5 py-0 text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-400 ring-1 ring-zinc-400/20 shadow-2xs"
         />
@@ -388,42 +614,75 @@ export function CollectionTree() {
 
   function renderNode(node: TreeNode, depth = 0) {
     const isExpanded = expandedFolders[node.path] ?? true
-    const isSelected = (selectedPath || activeFilePath) === node.path
+    const isSelected = selectedPath === node.path
     const isCreatingHere = creatingNode?.parentPath === node.path
+    const isRenaming = renamingPath === node.path
+    const isDragOver = dragOverFolderPath === node.path
 
     if (node.isDir) {
       return (
         <div key={node.path} className="select-none">
           <div
             onClick={() => setSelectedPath(node.path)}
+            onContextMenu={(e) => handleContextMenu(e, node)}
+            draggable={!isRenaming}
+            onDragStart={(e) => handleDragStart(e, node)}
+            onDragOver={(e) => handleDragOver(e, node)}
+            onDragLeave={handleDragLeave}
+            onDrop={(e) => handleDrop(e, node)}
             className={cn(
               'w-full flex items-center justify-between group py-1 px-1.5 rounded-md transition-colors cursor-pointer',
-              selectedPath === node.path
+              isDragOver
+                ? 'bg-blue-100/70 dark:bg-blue-950/60 ring-2 ring-blue-500'
+                : isSelected
                 ? 'bg-zinc-200/60 dark:bg-zinc-800/70 text-zinc-900 dark:text-zinc-100'
                 : 'hover:bg-zinc-100 dark:hover:bg-zinc-900/60 text-zinc-700 dark:text-zinc-300'
             )}
             style={{ paddingLeft: `${depth * 14 + 8}px` }}
           >
-            <button
-              onClick={() => toggleFolder(node.path)}
-              className="flex-1 flex items-center gap-1.5 py-0.5 text-xs rounded truncate cursor-pointer text-left"
-            >
-              {isExpanded ? (
-                <ChevronDown className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
-              ) : (
-                <ChevronRight className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
-              )}
-              {isExpanded ? (
-                <FolderOpen className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
-              ) : (
-                <Folder className="w-3.5 h-3.5 text-zinc-400/90 dark:text-zinc-500/90 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
-              )}
-              <span className="truncate font-medium text-xs text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">
-                {node.displayName || node.name}
-              </span>
-            </button>
+            {isRenaming ? (
+              <div className="flex-1 flex items-center gap-1.5 py-0.5">
+                <Folder className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <input
+                  ref={renameInputRef}
+                  type="text"
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      commitInlineRename(node)
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      cancelInlineRename()
+                    }
+                  }}
+                  onBlur={() => commitInlineRename(node)}
+                  className="flex-1 h-6 px-1.5 py-0 text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-400 dark:border-zinc-600 rounded focus:outline-none"
+                />
+              </div>
+            ) : (
+              <button
+                onClick={() => toggleFolder(node.path)}
+                className="flex-1 flex items-center gap-1.5 py-0.5 text-xs rounded truncate cursor-pointer text-left"
+              >
+                {isExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 shrink-0" />
+                )}
+                {isExpanded ? (
+                  <FolderOpen className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
+                ) : (
+                  <Folder className="w-3.5 h-3.5 text-zinc-400/90 dark:text-zinc-500/90 group-hover:text-zinc-600 dark:group-hover:text-zinc-300 transition-colors shrink-0" />
+                )}
+                <span className="truncate font-medium text-xs text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">
+                  {node.displayName || node.name}
+                </span>
+              </button>
+            )}
 
-            {/* Quick folder action buttons on hover (VS Code style) */}
+            {/* Quick folder action buttons on hover */}
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
               <Tooltip content={`New Request in ${node.name}`}>
                 <button
@@ -454,10 +713,7 @@ export function CollectionTree() {
 
           {isExpanded && (
             <div className="flex flex-col">
-              {/* Render inline creation at top of directory */}
               {isCreatingHere && renderInlineInput(depth + 1)}
-
-              {/* Existing child nodes */}
               {node.children && node.children.map((child) => renderNode(child, depth + 1))}
             </div>
           )}
@@ -466,35 +722,73 @@ export function CollectionTree() {
     }
 
     return (
-      <button
+      <div
         key={node.path}
-        onClick={() => handleSelectRequest(node)}
         style={{ paddingLeft: `${depth * 14 + 10}px` }}
-        className={cn(
-          'w-full flex items-center gap-2 py-1 px-1.5 text-xs rounded-md transition-all group text-left cursor-pointer select-none',
-          isSelected
-            ? 'bg-zinc-200/70 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 font-medium shadow-2xs'
-            : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900/60'
-        )}
+        className="w-full select-none"
       >
-        <span
-          className={cn(
-            'w-10 text-[10px] font-mono font-bold tracking-tight uppercase shrink-0 text-left transition-colors',
-            getMethodTextColor(node.method || 'GET')
-          )}
-        >
-          {node.method || 'GET'}
-        </span>
-        <span className="truncate flex-1">
-          {(node.displayName || node.name).replace('.pebble.json', '')}
-        </span>
-      </button>
+        {isRenaming ? (
+          <div className="flex items-center gap-1.5 py-0.5 pr-2">
+            <span
+              className={cn(
+                'w-10 text-[10px] font-mono font-bold tracking-tight uppercase shrink-0 text-left',
+                getMethodTextColor(node.method || 'GET')
+              )}
+            >
+              {node.method || 'GET'}
+            </span>
+            <input
+              ref={renameInputRef}
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commitInlineRename(node)
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelInlineRename()
+                }
+              }}
+              onBlur={() => commitInlineRename(node)}
+              className="flex-1 h-6 px-1.5 py-0 text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border border-zinc-400 dark:border-zinc-600 rounded focus:outline-none"
+            />
+          </div>
+        ) : (
+          <button
+            onClick={() => handleSelectRequest(node, true)}
+            onDoubleClick={() => handleSelectRequest(node, false)}
+            onContextMenu={(e) => handleContextMenu(e, node)}
+            draggable={!isRenaming}
+            onDragStart={(e) => handleDragStart(e, node)}
+            className={cn(
+              'w-full flex items-center gap-2 py-1 px-1.5 text-xs rounded-md transition-all group text-left cursor-pointer select-none',
+              isSelected
+                ? 'bg-zinc-200/70 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 font-medium shadow-2xs'
+                : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900/60'
+            )}
+          >
+            <span
+              className={cn(
+                'w-10 text-[10px] font-mono font-bold tracking-tight uppercase shrink-0 text-left transition-colors',
+                getMethodTextColor(node.method || 'GET')
+              )}
+            >
+              {node.method || 'GET'}
+            </span>
+            <span className="truncate flex-1">
+              {(node.displayName || node.name).replace('.pebble.json', '')}
+            </span>
+          </button>
+        )}
+      </div>
     )
   }
 
   return (
     <aside className="w-64 bg-white dark:bg-zinc-950 border-r border-zinc-200 dark:border-zinc-800 flex flex-col shrink-0 select-none transition-colors duration-150">
-      {/* Sidebar Header (Developer Tool Actions) */}
+      {/* Sidebar Header */}
       <div className="h-9 px-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
         <span className="font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider uppercase text-[10.5px]">
           Collections
@@ -530,8 +824,8 @@ export function CollectionTree() {
             >
               <RefreshCw
                 className={cn(
-                  "w-3.5 h-3.5 transition-all duration-300",
-                  (isRefreshing || isLoadingWorkspace) && "animate-spin text-zinc-700 dark:text-zinc-300"
+                  'w-3.5 h-3.5 transition-all duration-300',
+                  (isRefreshing || isLoadingWorkspace) && 'animate-spin text-zinc-700 dark:text-zinc-300'
                 )}
               />
             </Button>
@@ -559,7 +853,6 @@ export function CollectionTree() {
           <CollectionTreeSkeleton />
         ) : (
           <>
-            {/* Render at root if target is not inside any rendered directory */}
             {creatingNode &&
               !tree.some((n) => isPathDir([n], creatingNode.parentPath)) &&
               renderInlineInput(0)}
@@ -577,11 +870,172 @@ export function CollectionTree() {
         )}
       </div>
 
-      {/* Git-friendly info footer */}
+      {/* Footer */}
       <div className="p-2 border-t border-zinc-200 dark:border-zinc-900 text-[10px] text-zinc-500 flex items-center justify-between bg-zinc-50 dark:bg-zinc-950/50">
         <span>Format: *.pebble.json</span>
         <span className="text-emerald-600 dark:text-emerald-500 font-mono font-medium">Git-synced</span>
       </div>
+
+      {/* Context Menu Popup */}
+      {contextMenu && (
+        <div
+          ref={menuRef}
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 min-w-44 py-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl text-xs text-zinc-700 dark:text-zinc-200 animate-in fade-in zoom-in-95 duration-100"
+        >
+          {contextMenu.node.isDir ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  startInlineCreation('file', contextMenu.node.path)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <FilePlus2 className="w-3.5 h-3.5 text-zinc-400" />
+                <span>New Request</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  startInlineCreation('folder', contextMenu.node.path)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-zinc-400" />
+                <span>New Folder</span>
+              </button>
+              <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
+              <button
+                type="button"
+                onClick={() => startInlineRename(contextMenu.node)}
+                className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <Edit3 className="w-3.5 h-3.5 text-zinc-400" /> Rename
+                </span>
+                <span className="text-[10px] text-zinc-400">F2</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => copyPathToClipboard(contextMenu.node.path)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5 text-zinc-400" /> Copy Path
+              </button>
+              <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmNode(contextMenu.node)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-left cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Folder
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  handleSelectRequest(contextMenu.node, false)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-zinc-400" /> Open in New Tab
+              </button>
+              <button
+                type="button"
+                onClick={() => startInlineRename(contextMenu.node)}
+                className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <Edit3 className="w-3.5 h-3.5 text-zinc-400" /> Rename
+                </span>
+                <span className="text-[10px] text-zinc-400">F2</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDuplicate(contextMenu.node)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <Files className="w-3.5 h-3.5 text-zinc-400" /> Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() => copyPathToClipboard(contextMenu.node.path)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5 text-zinc-400" /> Copy Path
+              </button>
+              <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmNode(contextMenu.node)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-left cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Request
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmNode && (
+        <Dialog open={true} onOpenChange={(open) => !open && setDeleteConfirmNode(null)}>
+          <DialogContent className="max-w-md p-6">
+            <DialogHeader>
+              <div className="flex items-center gap-2 text-rose-600 mb-1">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                <DialogTitle className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+                  {deleteConfirmNode.isDir ? 'Delete Folder' : 'Delete Request'}
+                </DialogTitle>
+              </div>
+              <DialogDescription className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                Are you sure you want to delete{' '}
+                <strong className="text-zinc-900 dark:text-zinc-100">
+                  "{deleteConfirmNode.displayName || deleteConfirmNode.name}"
+                </strong>
+                ?
+              </DialogDescription>
+            </DialogHeader>
+
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              The item will be moved to <code className="font-mono text-zinc-700 dark:text-zinc-300">.pebble/trash/</code> and any associated open tabs will be closed.
+            </p>
+
+            <DialogFooter className="flex items-center justify-end gap-2 pt-3">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setDeleteConfirmNode(null)}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={handleDeleteConfirm}
+                className="text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white"
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </aside>
   )
 }

@@ -6,6 +6,8 @@ import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { useTabStore } from "../../store/tabStore";
+import { TabBar } from "./TabBar";
 import { getMethodColor, cn } from "../../lib/utils";
 import type { KeyValue } from "../../types";
 import { Button } from "../ui/button";
@@ -32,23 +34,25 @@ import { Checkbox } from "../ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 
 export function RequestPanel() {
+  const { theme, isExecuting, setIsExecuting } = useWorkspaceStore();
   const {
-    theme,
-    activeRequest,
-    activeFilePath,
-    isExecuting,
-    activeTab,
-    setActiveTab,
+    tabs,
+    activeTabId,
     updateActiveRequest,
-    setIsExecuting,
+    setActiveSubTab,
     setLastResult,
-    saveCurrentRequest,
-  } = useWorkspaceStore();
+    saveCurrentTab,
+  } = useTabStore();
+
+  const currentTab = tabs.find((t) => t.id === activeTabId);
+  const activeRequest = currentTab?.request || null;
+  const activeFilePath = currentTab?.filePath || null;
+  const activeTab = currentTab?.activeSubTab || "params";
 
   const [isSaved, setIsSaved] = useState(false);
 
   const handleSave = async () => {
-    const success = await saveCurrentRequest();
+    const success = await saveCurrentTab();
     if (success) {
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 2000);
@@ -66,10 +70,16 @@ export function RequestPanel() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeRequest, activeFilePath]);
 
-  if (!activeRequest) {
+  if (!currentTab || !activeRequest) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-400 dark:text-zinc-500 text-sm">
-        Select a request from the sidebar or create a new one.
+      <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
+        <TabBar />
+        <div className="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-500 text-xs gap-2 p-6 select-none">
+          <p className="font-semibold text-zinc-700 dark:text-zinc-300 text-sm">No Request Open</p>
+          <p className="text-zinc-400 dark:text-zinc-500">
+            Click a request in the sidebar to preview, or double-click to pin a tab.
+          </p>
+        </div>
       </div>
     );
   }
@@ -223,6 +233,7 @@ export function RequestPanel() {
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden transition-colors duration-150">
+      <TabBar />
       {/* Top Request Bar */}
       <div className="p-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2 bg-white dark:bg-zinc-950">
         {/* HTTP Method Dropdown */}
@@ -315,7 +326,7 @@ export function RequestPanel() {
       {/* Sub Tabs */}
       <Tabs
         value={activeTab}
-        onValueChange={(val) => setActiveTab(val as any)}
+        onValueChange={(val) => setActiveSubTab(val as any)}
         className="flex-1 overflow-hidden"
       >
         <TabsList>
