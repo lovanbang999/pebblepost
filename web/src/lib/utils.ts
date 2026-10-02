@@ -35,3 +35,24 @@ export function getMethodColor(method: string) {
       return 'text-zinc-700 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700'
   }
 }
+
+export function getMethodTextColor(method: string) {
+  switch (method.toUpperCase()) {
+    case 'GET':
+      return 'text-emerald-600 dark:text-emerald-400'
+    case 'POST':
+      return 'text-blue-600 dark:text-blue-400'
+    case 'PUT':
+      return 'text-amber-600 dark:text-amber-400'
+    case 'PATCH':
+      return 'text-violet-600 dark:text-violet-400'
+    case 'DELETE':
+      return 'text-rose-600 dark:text-rose-400'
+    case 'HEAD':
+    case 'OPTIONS':
+      return 'text-teal-600 dark:text-teal-400'
+    default:
+      return 'text-zinc-600 dark:text-zinc-400'
+  }
+}
+
