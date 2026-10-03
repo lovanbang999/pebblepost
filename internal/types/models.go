@@ -11,9 +11,9 @@ type KeyValue struct {
 	Secret  bool   `json:"secret,omitempty"` // value must be masked in logs/output
 }
 
-// AuthDefinition represents authentication configuration for a request.
+// AuthDefinition represents authentication configuration for a request or folder.
 type AuthDefinition struct {
-	Type     string `json:"type"` // "none", "bearer", "basic", "apiKey", "oauth2"
+	Type     string `json:"type"` // "inherit", "none", "bearer", "basic", "apiKey", "oauth2"
 	Token    string `json:"token,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
@@ -87,13 +87,36 @@ type WorkspaceDefinition struct {
 	Trusted           bool   `json:"trusted,omitempty"`
 }
 
-// FolderDefinition represents folder-level metadata and ordering (_folder.pebble.json).
+// FolderDefinition represents folder-level metadata, configuration, and ordering (_folder.pebble.json).
 type FolderDefinition struct {
-	SchemaVersion int      `json:"schemaVersion"`
-	Name          string   `json:"name,omitempty"`
-	Description   string   `json:"description,omitempty"`
-	Order         int      `json:"order,omitempty"`
-	ItemOrder     []string `json:"itemOrder,omitempty"` // Explicit sequence of child filenames or subfolder names
+	SchemaVersion int              `json:"schemaVersion"`
+	Name          string           `json:"name,omitempty"`
+	Description   string           `json:"description,omitempty"`
+	Order         int              `json:"order,omitempty"`
+	ItemOrder     []string         `json:"itemOrder,omitempty"` // Explicit sequence of child filenames or subfolder names
+	Headers       []KeyValue       `json:"headers,omitempty"`
+	Auth          AuthDefinition   `json:"auth,omitempty"`
+	Variables     []KeyValue       `json:"variables,omitempty"`
+	Scripts       ScriptDefinition `json:"scripts,omitempty"`
+}
+
+// InheritedItemInfo describes the origin folder of an inherited configuration item.
+type InheritedItemInfo struct {
+	SourceFolder string `json:"sourceFolder"` // e.g. "01-auth" or folder name
+	SourcePath   string `json:"sourcePath"`   // directory path relative to workspace or absolute
+}
+
+// ResolvedRequestResult returns the fully merged effective request and provenance metadata for UI/execution.
+type ResolvedRequestResult struct {
+	Request           RequestDefinition            `json:"request"`
+	InheritedHeaders  map[string]InheritedItemInfo `json:"inheritedHeaders"`            // lowercase header key -> provenance
+	OverriddenHeaders map[string]InheritedItemInfo `json:"overriddenHeaders,omitempty"`  // lowercase header key -> original folder provenance
+	InheritedAuth     *InheritedItemInfo           `json:"inheritedAuth,omitempty"`
+	ParentAuth        *AuthDefinition              `json:"parentAuth,omitempty"`
+	ParentAuthSource  *InheritedItemInfo           `json:"parentAuthSource,omitempty"`
+	InheritedVars     map[string]InheritedItemInfo `json:"inheritedVars"`               // var key -> provenance
+	FolderPreScripts  []string                     `json:"folderPreScripts,omitempty"`  // folder names with pre-request scripts
+	FolderPostScripts []string                     `json:"folderPostScripts,omitempty"` // folder names with post-response scripts
 }
 
 // TimingMetrics records detailed network roundtrip breakdown in milliseconds.

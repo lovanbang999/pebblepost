@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Send, Loader2, Plus, Trash2, Save, Check } from "lucide-react";
+import { Send, Loader2, Plus, Trash2, Save, Check, Folder } from "lucide-react";
 import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
+import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
@@ -9,7 +10,7 @@ import { useWorkspaceStore } from "../../store/workspaceStore";
 import { useTabStore } from "../../store/tabStore";
 import { TabBar } from "./TabBar";
 import { getMethodColor, cn } from "../../lib/utils";
-import type { KeyValue } from "../../types";
+import type { KeyValue, ResolvedRequestResult } from "../../types";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
@@ -50,6 +51,35 @@ export function RequestPanel() {
   const activeTab = currentTab?.activeSubTab || "params";
 
   const [isSaved, setIsSaved] = useState(false);
+  const [resolvedInfo, setResolvedInfo] = useState<ResolvedRequestResult | null>(null);
+
+  useEffect(() => {
+    if (!activeFilePath || currentTab?.type === "folder") {
+      setResolvedInfo(null);
+      return;
+    }
+    const { workspacePath, activeEnv } = useWorkspaceStore.getState();
+    if (!workspacePath) return;
+
+    let isMounted = true;
+    const url = new URL("/api/request/resolved", window.location.origin);
+    url.searchParams.set("workspacePath", workspacePath);
+    url.searchParams.set("path", activeFilePath);
+    if (activeEnv) url.searchParams.set("environmentName", activeEnv);
+
+    fetch(url.toString())
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (isMounted) setResolvedInfo(data);
+      })
+      .catch(() => {
+        if (isMounted) setResolvedInfo(null);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeFilePath, currentTab?.type, activeRequest?.auth?.type, activeRequest?.headers]);
 
   const handleSave = async () => {
     const success = await saveCurrentTab();
@@ -68,9 +98,32 @@ export function RequestPanel() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeRequest, activeFilePath]);
+  }, [activeRequest, activeFilePath, currentTab]);
 
-  if (!currentTab || !activeRequest) {
+  if (!currentTab) {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
+        <TabBar />
+        <div className="flex-1 flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-500 text-xs gap-2 p-6 select-none">
+          <p className="font-semibold text-zinc-700 dark:text-zinc-300 text-sm">No Request Open</p>
+          <p className="text-zinc-400 dark:text-zinc-500">
+            Click a request in the sidebar to preview, or double-click to pin a tab.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentTab.type === "folder" || currentTab.folder) {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
+        <TabBar />
+        <FolderSettingsPanel currentTab={currentTab} />
+      </div>
+    );
+  }
+
+  if (!activeRequest) {
     return (
       <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
         <TabBar />
@@ -112,6 +165,7 @@ export function RequestPanel() {
         body: JSON.stringify({
           workspacePath: workspacePath || undefined,
           environmentName: activeEnv || undefined,
+          path: activeFilePath || undefined,
           request: activeRequest,
           trusted: isTrusted,
         }),
@@ -395,15 +449,25 @@ export function RequestPanel() {
                           />
                         </TableCell>
                         <TableCell className="p-1">
-                          <input
-                            type="text"
-                            value={header.key}
-                            onChange={(e) =>
-                              handleUpdateHeader(idx, "key", e.target.value)
-                            }
-                            placeholder="Header Name"
-                            className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
-                          />
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              value={header.key}
+                              onChange={(e) =>
+                                handleUpdateHeader(idx, "key", e.target.value)
+                              }
+                              placeholder="Header Name"
+                              className="flex-1 bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                            />
+                            {header.key.trim() && resolvedInfo?.overriddenHeaders?.[header.key.trim().toLowerCase()] && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] px-1.5 py-0 h-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-normal shrink-0"
+                              >
+                                overrides {resolvedInfo.overriddenHeaders[header.key.trim().toLowerCase()].sourceFolder}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="p-1">
                           <input
@@ -431,6 +495,90 @@ export function RequestPanel() {
                   </TableBody>
                 </Table>
               </div>
+
+              {/* Inherited Headers section */}
+              {resolvedInfo && (
+                <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+                    <div className="flex items-center gap-1.5 font-medium text-zinc-700 dark:text-zinc-300">
+                      <Folder className="w-3.5 h-3.5 text-amber-500" />
+                      <span>Inherited Headers</span>
+                      <span className="text-[11px] text-zinc-400">
+                        ({Object.keys(resolvedInfo.inheritedHeaders || {}).length})
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-zinc-400">
+                      Inherited along directory tree
+                    </span>
+                  </div>
+
+                  {Object.keys(resolvedInfo.inheritedHeaders || {}).length === 0 ? (
+                    <p className="text-xs text-zinc-400 dark:text-zinc-500 italic p-3 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-md">
+                      No inherited headers active from parent folders.
+                    </p>
+                  ) : (
+                    <div className="border border-zinc-200 dark:border-zinc-800 rounded-md overflow-hidden bg-zinc-50/50 dark:bg-zinc-900/30">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-1/3">Key</TableHead>
+                            <TableHead>Value</TableHead>
+                            <TableHead className="w-48">Source</TableHead>
+                            <TableHead className="w-20 text-right">Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {Object.entries(resolvedInfo.inheritedHeaders || {}).map(([lowerKey, prov]) => {
+                            const resolvedHeader = resolvedInfo.request.headers?.find(
+                              (h) => h.key.toLowerCase() === lowerKey
+                            );
+                            return (
+                              <TableRow key={lowerKey} className="opacity-90">
+                                <TableCell className="p-2 font-mono text-xs text-zinc-700 dark:text-zinc-300 font-semibold">
+                                  {resolvedHeader?.key || lowerKey}
+                                </TableCell>
+                                <TableCell className="p-2 font-mono text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-xs">
+                                  {resolvedHeader?.value || ""}
+                                </TableCell>
+                                <TableCell className="p-2">
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium"
+                                  >
+                                    inherited from {prov.sourceFolder}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="p-2 text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 text-[11px] text-blue-500 hover:text-blue-600 px-2"
+                                    onClick={() => {
+                                      updateActiveRequest((prev) => ({
+                                        ...prev,
+                                        headers: [
+                                          ...(prev.headers || []),
+                                          {
+                                            key: resolvedHeader?.key || lowerKey,
+                                            value: resolvedHeader?.value || "",
+                                            enabled: true,
+                                          },
+                                        ],
+                                      }));
+                                    }}
+                                  >
+                                    Override
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </TabsContent>
 
@@ -536,6 +684,22 @@ export function RequestPanel() {
                     Runs before request execution
                   </span>
                 </div>
+                {resolvedInfo && (resolvedInfo.folderPreScripts?.length || 0) > 0 && (
+                  <div className="mb-2 p-2.5 rounded border border-amber-500/20 bg-amber-500/5 text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span className="text-zinc-600 dark:text-zinc-400">
+                        Folder pre-request scripts run before this script:
+                      </span>
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                        {resolvedInfo.folderPreScripts?.join(" → ")}
+                      </span>
+                    </div>
+                    <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                      root → leaf
+                    </Badge>
+                  </div>
+                )}
                 <div className="rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden h-36">
                   <CodeMirror
                     value={activeRequest.scripts?.preRequest || ""}
@@ -560,6 +724,22 @@ export function RequestPanel() {
                     Runs assertions on response
                   </span>
                 </div>
+                {resolvedInfo && (resolvedInfo.folderPostScripts?.length || 0) > 0 && (
+                  <div className="mb-2 p-2.5 rounded border border-amber-500/20 bg-amber-500/5 text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span className="text-zinc-600 dark:text-zinc-400">
+                        Folder test scripts run after this script:
+                      </span>
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                        {resolvedInfo.folderPostScripts?.join(" → ")}
+                      </span>
+                    </div>
+                    <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">
+                      leaf → root
+                    </Badge>
+                  </div>
+                )}
                 <div className="rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden h-40">
                   <CodeMirror
                     value={activeRequest.scripts?.postResponse || ""}
@@ -673,7 +853,7 @@ export function RequestPanel() {
                   Auth Type:
                 </span>
                 <Select
-                  value={activeRequest.auth.type}
+                  value={activeRequest.auth.type || "inherit"}
                   onValueChange={(val) =>
                     typeof val === "string" &&
                     updateActiveRequest((prev) => ({
@@ -682,10 +862,11 @@ export function RequestPanel() {
                     }))
                   }
                 >
-                  <SelectTrigger className="w-60 h-8 bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
+                  <SelectTrigger className="w-64 h-8 bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="inherit">Inherit from parent</SelectItem>
                     <SelectItem value="none">No Auth</SelectItem>
                     <SelectItem value="bearer">Bearer Token</SelectItem>
                     <SelectItem value="basic">
@@ -694,7 +875,83 @@ export function RequestPanel() {
                     <SelectItem value="apiKey">API Key</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {activeRequest.auth.type && activeRequest.auth.type !== "inherit" && resolvedInfo?.parentAuthSource && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 font-normal"
+                  >
+                    overrides {resolvedInfo.parentAuthSource.sourceFolder}
+                  </Badge>
+                )}
               </div>
+
+              {(!activeRequest.auth.type || activeRequest.auth.type === "inherit") && (
+                <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-4 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Folder className="w-4 h-4 text-amber-500" />
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                        Inherited Authentication
+                      </span>
+                    </div>
+                    {resolvedInfo?.inheritedAuth ? (
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium"
+                      >
+                        inherited from {resolvedInfo.inheritedAuth.sourceFolder}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-zinc-400">
+                        No parent auth found
+                      </Badge>
+                    )}
+                  </div>
+
+                  {resolvedInfo?.inheritedAuth && resolvedInfo.request?.auth ? (
+                    <div className="p-3 bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded text-xs space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-zinc-500 dark:text-zinc-400">Effective Type:</span>
+                        <span className="font-semibold uppercase font-mono text-zinc-800 dark:text-zinc-200">
+                          {resolvedInfo.request.auth.type}
+                        </span>
+                      </div>
+                      {resolvedInfo.request.auth.type === "bearer" && (
+                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                          <span className="text-zinc-500">Token:</span>
+                          <code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-900 px-1.5 py-0.5 rounded">
+                            {resolvedInfo.request.auth.token || "(empty)"}
+                          </code>
+                        </div>
+                      )}
+                      {resolvedInfo.request.auth.type === "basic" && (
+                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                          <span className="text-zinc-500">Username:</span>
+                          <code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-900 px-1.5 py-0.5 rounded">
+                            {resolvedInfo.request.auth.username || "(empty)"}
+                          </code>
+                        </div>
+                      )}
+                      {resolvedInfo.request.auth.type === "apiKey" && (
+                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+                          <span className="text-zinc-500">Key:</span>
+                          <code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-900 px-1.5 py-0.5 rounded">
+                            {resolvedInfo.request.auth.key}={resolvedInfo.request.auth.value} ({resolvedInfo.request.auth.addTo || "header"})
+                          </code>
+                        </div>
+                      )}
+                      <p className="text-[11px] text-zinc-400 pt-1 border-t border-zinc-100 dark:border-zinc-900">
+                        This request automatically uses authentication configured in <span className="font-semibold text-zinc-700 dark:text-zinc-300">{resolvedInfo.inheritedAuth.sourceFolder}</span>.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-zinc-500 text-xs">
+                      No folder along the directory tree defines authentication. This request executes without auth unless configured directly.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {activeRequest.auth.type === "bearer" && (
                 <div className="space-y-2 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">

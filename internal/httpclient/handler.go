@@ -2,6 +2,7 @@ package httpclient
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -17,7 +18,8 @@ type Handler struct {
 	workspaceSvc   *workspace.WorkspaceService
 	environmentSvc *workspace.EnvironmentService
 	interpolator   *workspace.Interpolator
-	scriptEngine   *scripting.Engine
+	scriptEngine        *scripting.Engine
+	inheritanceResolver *workspace.InheritanceResolver
 }
 
 // NewHandler creates a new HTTP Client API Handler.
@@ -29,11 +31,12 @@ func NewHandler(
 	scriptEngine *scripting.Engine,
 ) *Handler {
 	return &Handler{
-		client:         client,
-		workspaceSvc:   wsSvc,
-		environmentSvc: envSvc,
-		interpolator:   in,
-		scriptEngine:   scriptEngine,
+		client:              client,
+		workspaceSvc:        wsSvc,
+		environmentSvc:      envSvc,
+		interpolator:        in,
+		scriptEngine:        scriptEngine,
+		inheritanceResolver: workspace.NewInheritanceResolver(wsSvc),
 	}
 }
 
@@ -46,6 +49,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 type ExecutePayload struct {
 	WorkspacePath   string                   `json:"workspacePath,omitempty"`
 	EnvironmentName string                   `json:"environmentName,omitempty"`
+	Path            string                   `json:"path,omitempty"`
 	Request         *types.RequestDefinition `json:"request"`
 	Overrides       map[string]string        `json:"overrides,omitempty"`
 	Trusted         *bool                    `json:"trusted,omitempty"` // nil or true = allow scripts, false = block scripts
@@ -68,6 +72,11 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var folderChain []workspace.FolderChainItem
+	if payload.Path != "" && h.inheritanceResolver != nil {
+		folderChain, _ = h.inheritanceResolver.DiscoverFolderChain(payload.WorkspacePath, payload.Path)
+	}
+
 	reqToExecute := payload.Request
 	varMap := make(map[string]string)
 	var env *types.EnvironmentDefinition
@@ -78,8 +87,24 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 			env, _ = h.environmentSvc.GetEnvironment(payload.WorkspacePath, payload.EnvironmentName)
 		}
 
-		varMap = h.interpolator.BuildVariableMap(env, payload.Overrides)
-		reqToExecute = h.interpolator.InterpolateRequest(payload.Request, varMap)
+		baseVarMap := h.interpolator.BuildVariableMap(env, nil)
+		if h.inheritanceResolver != nil && len(folderChain) > 0 {
+			varMap, _ = h.inheritanceResolver.MergeVariables(baseVarMap, folderChain, payload.Overrides)
+		} else {
+			varMap = h.interpolator.BuildVariableMap(env, payload.Overrides)
+		}
+	}
+
+	// Merge headers and resolve auth if folderChain is present
+	if h.inheritanceResolver != nil && len(folderChain) > 0 {
+		mergedHeaders, _ := h.inheritanceResolver.MergeHeaders(folderChain, reqToExecute.Headers)
+		reqToExecute.Headers = mergedHeaders
+		resolvedAuth, _ := h.inheritanceResolver.ResolveAuth(folderChain, reqToExecute.Auth)
+		reqToExecute.Auth = resolvedAuth
+	}
+
+	if h.interpolator != nil {
+		reqToExecute = h.interpolator.InterpolateRequest(reqToExecute, varMap)
 	}
 
 	// Determine if scripts are allowed (untrusted workspace blocks script execution)
@@ -90,24 +115,40 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	var preLogs []string
 
-	// 2. Pre-request Script Sandbox Execution
-	if reqToExecute.Scripts.PreRequest != "" {
+	// Build script chains
+	var preScripts []workspace.ScriptChainItem
+	var postScripts []workspace.ScriptChainItem
+	if h.inheritanceResolver != nil && len(folderChain) > 0 {
+		preScripts, postScripts = h.inheritanceResolver.ResolveScripts(folderChain, reqToExecute.Scripts)
+	} else {
+		if reqToExecute.Scripts.PreRequest != "" {
+			preScripts = append(preScripts, workspace.ScriptChainItem{Source: "request", Script: reqToExecute.Scripts.PreRequest})
+		}
+		if reqToExecute.Scripts.PostResponse != "" {
+			postScripts = append(postScripts, workspace.ScriptChainItem{Source: "request", Script: reqToExecute.Scripts.PostResponse})
+		}
+	}
+
+	// 2. Pre-request Script Sandbox Execution (Root-to-Leaf)
+	for _, s := range preScripts {
 		if !scriptsAllowed {
-			preLogs = append(preLogs, "[WARN] Pre-request script blocked: workspace is not trusted")
-		} else if h.scriptEngine != nil {
+			preLogs = append(preLogs, fmt.Sprintf("[WARN] Pre-request script (%s) blocked: workspace is not trusted", s.Source))
+			continue
+		}
+		if h.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
-			preResult, preErr := h.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap, scriptTimeout)
+			preResult, preErr := h.scriptEngine.ExecutePreRequest(s.Script, reqToExecute, varMap, scriptTimeout)
 			if preResult != nil {
-				preLogs = preResult.Logs
+				preLogs = append(preLogs, preResult.Logs...)
 				for k, v := range preResult.ExtractedEnvVars {
 					varMap[k] = v
 				}
 				reqToExecute = preResult.Request
 			}
 			if preErr != nil {
-				// Return execution result with pre-request error
+				// Abort immediately with pre-request error
 				h.jsonResponse(w, &types.ExecutionResult{
-					Error: preErr.Error(),
+					Error: fmt.Sprintf("[%s] Pre-request script error: %v", s.Source, preErr),
 					Logs:  preLogs,
 					Tests: []types.TestAssertionResult{},
 				})
@@ -130,17 +171,25 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		result.Logs = append(preLogs, result.Logs...)
 	}
 
-	// 4. Post-response / Test Script Sandbox Execution
-	if reqToExecute.Scripts.PostResponse != "" {
+	// 4. Post-response / Test Script Sandbox Execution (Leaf-to-Root)
+	for _, s := range postScripts {
 		if !scriptsAllowed {
-			result.Logs = append(result.Logs, "[WARN] Post-response script blocked: workspace is not trusted")
-		} else if h.scriptEngine != nil {
+			result.Logs = append(result.Logs, fmt.Sprintf("[WARN] Post-response script (%s) blocked: workspace is not trusted", s.Source))
+			continue
+		}
+		if h.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
-			postResult, _ := h.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, result, varMap, scriptTimeout)
+			postResult, _ := h.scriptEngine.ExecutePostResponse(s.Script, reqToExecute, result, varMap, scriptTimeout)
 			if postResult != nil {
-				result.Tests = postResult.Tests
+				result.Tests = append(result.Tests, postResult.Tests...)
 				result.Logs = append(result.Logs, postResult.Logs...)
-				result.ExtractedEnvVars = postResult.ExtractedEnvVars
+				if result.ExtractedEnvVars == nil {
+					result.ExtractedEnvVars = make(map[string]string)
+				}
+				for k, v := range postResult.ExtractedEnvVars {
+					varMap[k] = v
+					result.ExtractedEnvVars[k] = v
+				}
 			}
 		}
 	}

@@ -295,3 +295,119 @@ func TestRunner_JSONReportFormat(t *testing.T) {
 		t.Errorf("unexpected counts in JSON report: %+v", parsedSummary)
 	}
 }
+
+func TestRunner_FolderInheritance(t *testing.T) {
+	var receivedAuth string
+	var receivedHeaders http.Header
+	var receivedPath string
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		receivedHeaders = r.Header.Clone()
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, `{"status":"authenticated"}`)
+	}))
+	defer mockServer.Close()
+
+	tempDir := t.TempDir()
+	wsSvc := workspace.NewWorkspaceService()
+	_, _ = wsSvc.Init(tempDir, "Inheritance Workspace")
+
+	// 1. Root collection folder with headers & variables
+	collDir := filepath.Join(tempDir, "collections")
+	rootFolder := types.FolderDefinition{
+		SchemaVersion: 1,
+		Name:          "Root Collection",
+		Headers: []types.KeyValue{
+			{Key: "X-Root-Trace", Value: "trace-999", Enabled: true},
+		},
+		Variables: []types.KeyValue{
+			{Key: "API_VERSION", Value: "v2", Enabled: true},
+		},
+	}
+	_ = wsSvc.SaveFolder(collDir, &rootFolder)
+
+	// 2. Child folder '01-auth' with bearer auth, headers, variables, pre & post scripts
+	authDir := filepath.Join(collDir, "01-auth")
+	_ = os.MkdirAll(authDir, 0755)
+	childFolder := types.FolderDefinition{
+		SchemaVersion: 1,
+		Name:          "01-auth",
+		Auth: types.AuthDefinition{
+			Type:  "bearer",
+			Token: "token-from-folder",
+		},
+		Headers: []types.KeyValue{
+			{Key: "X-Module", Value: "auth-module", Enabled: true},
+		},
+		Scripts: types.ScriptDefinition{
+			PreRequest:   "pb.request.headers.set('X-Folder-Hook', 'hook-active');",
+			PostResponse: "pb.test('folder test passed', () => { pb.expect(pb.response.status).to.eql(200); });",
+		},
+	}
+	_ = wsSvc.SaveFolder(authDir, &childFolder)
+
+	// 3. Request in '01-auth' with auth type "inherit"
+	req := types.RequestDefinition{
+		SchemaVersion: 1,
+		Name:          "Login Test",
+		Method:        "GET",
+		URL:           mockServer.URL + "/api/{{API_VERSION}}",
+		Auth: types.AuthDefinition{
+			Type: "inherit",
+		},
+		Headers: []types.KeyValue{
+			{Key: "X-Req-Custom", Value: "custom-val", Enabled: true},
+		},
+		Scripts: types.ScriptDefinition{
+			PostResponse: "pb.test('req test passed', () => { pb.expect(pb.response.status).to.eql(200); });",
+		},
+	}
+	reqPath := filepath.Join(authDir, "login.pebble.json")
+	_ = wsSvc.SaveRequest(reqPath, &req)
+
+	var out bytes.Buffer
+	r := NewRunner()
+
+	summary, err := r.Run(context.Background(), RunOptions{
+		TargetPath: reqPath,
+		Writer:     &out,
+	})
+
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if !summary.Success {
+		t.Fatalf("expected test suite to succeed, results: %+v, out:\n%s", summary, out.String())
+	}
+
+	// Verify Auth was inherited
+	if receivedAuth != "Bearer token-from-folder" {
+		t.Errorf("expected Authorization 'Bearer token-from-folder', got %q", receivedAuth)
+	}
+
+	// Verify headers from root, child folder, request, and pre-request script
+	if receivedHeaders.Get("X-Root-Trace") != "trace-999" {
+		t.Errorf("expected X-Root-Trace='trace-999', got %q", receivedHeaders.Get("X-Root-Trace"))
+	}
+	if receivedHeaders.Get("X-Module") != "auth-module" {
+		t.Errorf("expected X-Module='auth-module', got %q", receivedHeaders.Get("X-Module"))
+	}
+	if receivedHeaders.Get("X-Req-Custom") != "custom-val" {
+		t.Errorf("expected X-Req-Custom='custom-val', got %q", receivedHeaders.Get("X-Req-Custom"))
+	}
+	if receivedHeaders.Get("X-Folder-Hook") != "hook-active" {
+		t.Errorf("expected X-Folder-Hook='hook-active' from pre-request script, got %q", receivedHeaders.Get("X-Folder-Hook"))
+	}
+
+	// Verify variable interpolation from folder variable
+	if receivedPath != "/api/v2" {
+		t.Errorf("expected URL path '/api/v2', got %q", receivedPath)
+	}
+
+	// Verify test assertions: 1 from request + 1 from folder = 2 tests
+	if summary.PassedTests != 2 {
+		t.Errorf("expected 2 passed tests (1 req + 1 folder), got %d", summary.PassedTests)
+	}
+}

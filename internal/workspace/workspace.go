@@ -334,6 +334,73 @@ func (s *WorkspaceService) CreateFolder(folderPath string) error {
 	return os.MkdirAll(folderPath, 0755)
 }
 
+// ReadFolder reads and parses a _folder.pebble.json file from the given folder directory.
+// If the file does not exist, it returns a default FolderDefinition without error.
+func (s *WorkspaceService) ReadFolder(folderPath string) (*types.FolderDefinition, error) {
+	if folderPath == "" {
+		return nil, fmt.Errorf("folder path cannot be empty")
+	}
+
+	filePath := folderPath
+	if !strings.HasSuffix(filePath, FolderFile) {
+		filePath = filepath.Join(folderPath, FolderFile)
+	}
+
+	dirName := filepath.Base(filepath.Dir(filePath))
+	_, _, displayName := ParseOrderPrefix(dirName)
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &types.FolderDefinition{
+				SchemaVersion: CurrentSchemaVersion,
+				Name:          displayName,
+				Auth:          types.AuthDefinition{Type: "inherit"},
+				Headers:       []types.KeyValue{},
+				Variables:     []types.KeyValue{},
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to read folder metadata %s: %w", filePath, err)
+	}
+
+	var folderDef types.FolderDefinition
+	if err := json.Unmarshal(data, &folderDef); err != nil {
+		return nil, fmt.Errorf("failed to parse folder JSON from %s: %w", filePath, err)
+	}
+
+	migrated, _ := MigrateFolder(&folderDef)
+	if migrated.Name == "" {
+		migrated.Name = displayName
+	}
+	if migrated.Auth.Type == "" {
+		migrated.Auth.Type = "inherit"
+	}
+	return migrated, nil
+}
+
+// SaveFolder writes a FolderDefinition to _folder.pebble.json in the folder directory.
+func (s *WorkspaceService) SaveFolder(folderPath string, def *types.FolderDefinition) error {
+	if folderPath == "" || def == nil {
+		return fmt.Errorf("folder path and definition cannot be empty")
+	}
+
+	filePath := folderPath
+	if !strings.HasSuffix(filePath, FolderFile) {
+		filePath = filepath.Join(folderPath, FolderFile)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return fmt.Errorf("failed to create folder directory: %w", err)
+	}
+
+	if s.watcher != nil {
+		s.watcher.Suppress(filePath, 1000*time.Millisecond)
+	}
+
+	def.SchemaVersion = CurrentSchemaVersion
+	return WriteFileStable(filePath, def)
+}
+
 // Rename renames or moves a file/folder.
 func (s *WorkspaceService) Rename(oldPath, newPath string) error {
 	if oldPath == "" || newPath == "" {
