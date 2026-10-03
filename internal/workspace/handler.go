@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
+	"pebblepost/internal/impexp"
 	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
@@ -18,6 +21,7 @@ type Handler struct {
 	interpolator        *Interpolator
 	inheritanceResolver *InheritanceResolver
 	importSvc           *ImportService
+	impexpSvc           *impexp.Service
 	watchersMu          sync.Mutex
 	watchers            map[string]*Watcher
 }
@@ -30,6 +34,7 @@ func NewHandler(ws *WorkspaceService, env *EnvironmentService, in *Interpolator)
 		interpolator:        in,
 		inheritanceResolver: NewInheritanceResolver(ws),
 		importSvc:           NewImportService(),
+		impexpSvc:           impexp.NewService(),
 		watchers:            make(map[string]*Watcher),
 	}
 }
@@ -55,6 +60,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/environments", h.handleEnvironments)
 	mux.HandleFunc("/api/environments/save", h.handleSaveEnvironment)
 	mux.HandleFunc("/api/import", h.handleImport)
+	mux.HandleFunc("/api/impexp/export", h.handleExport)
 }
 
 func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
@@ -221,8 +227,8 @@ func (h *Handler) handleSaveFolder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		WorkspacePath string                 `json:"workspacePath"`
-		Path          string                 `json:"path"`
+		WorkspacePath string                  `json:"workspacePath"`
+		Path          string                  `json:"path"`
 		Folder        *types.FolderDefinition `json:"folder"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -736,41 +742,137 @@ func (h *Handler) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		Source string `json:"source"` // "curl", "postman", "openapi"
-		Content string `json:"content"` // raw text or JSON string
+		Source    string `json:"source"`    // "curl", "postman", "openapi", "bruno", "insomnia", "har" (or empty for auto)
+		Content   string `json:"content"`   // raw text or JSON string
+		Save      bool   `json:"save"`      // if true, write directly to workspace filesystem
+		OutDir    string `json:"outDir"`    // target folder in workspace (e.g. collections/my-api)
+		Workspace string `json:"workspace"` // workspace root path
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	var reqs []*types.RequestDefinition
-	var err error
-
-	switch payload.Source {
-	case "curl":
-		var req *types.RequestDefinition
-		req, err = h.importSvc.ParseCURL(payload.Content)
-		if err == nil {
-			reqs = []*types.RequestDefinition{req}
-		}
-	case "postman":
-		reqs, err = h.importSvc.ParsePostman([]byte(payload.Content))
-	case "openapi":
-		reqs, err = h.importSvc.ParseOpenAPI([]byte(payload.Content))
-	default:
-		h.jsonError(w, "source must be one of: curl, postman, openapi", http.StatusBadRequest)
+	if len(payload.Content) > impexp.MaxImportFileSize {
+		h.jsonError(w, "File size exceeds maximum allowed size of 50 MB", http.StatusBadRequest)
 		return
 	}
 
+	result, err := h.impexpSvc.Parse([]byte(payload.Content), payload.Source, impexp.Format(payload.Source))
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 
+	var reqs []*types.RequestDefinition
+	for _, it := range result.Requests {
+		if it.Request != nil {
+			reqs = append(reqs, it.Request)
+		}
+	}
+
+	report := result.ToReport()
+
+	if payload.Save {
+		wsRoot := payload.Workspace
+		if wsRoot == "" {
+			wsRoot = "."
+		}
+		savedReport, saveErr := h.impexpSvc.SaveToWorkspace(wsRoot, payload.OutDir, result)
+		if saveErr != nil {
+			h.jsonError(w, fmt.Sprintf("Failed to save imported collection: %v", saveErr), http.StatusInternalServerError)
+			return
+		}
+		report = *savedReport
+	}
+
 	h.jsonResponse(w, map[string]any{
 		"requests": reqs,
 		"count":    len(reqs),
+		"report":   report,
+	})
+}
+
+func (h *Handler) handleExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Format         string `json:"format"` // "postman" or "openapi"
+		CollectionName string `json:"collectionName"`
+		FolderPath     string `json:"folderPath"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	folderPath := payload.FolderPath
+	if folderPath == "" {
+		folderPath = CollectionsDir
+	}
+
+	var items []impexp.ImportedItem
+	var folders []impexp.ImportedFolder
+	var variables []types.KeyValue
+
+	_ = filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), PebbleExt) && info.Name() != FolderFile {
+			req, err := h.workspaceSvc.ReadRequest(path)
+			if err == nil && req != nil {
+				rel, _ := filepath.Rel(folderPath, path)
+				items = append(items, impexp.ImportedItem{
+					Name:    req.Name,
+					RelPath: rel,
+					Request: req,
+				})
+			}
+		} else if info.Name() == FolderFile {
+			fDef, err := h.workspaceSvc.ReadFolder(filepath.Dir(path))
+			if err == nil && fDef != nil {
+				relDir, _ := filepath.Rel(folderPath, filepath.Dir(path))
+				folders = append(folders, impexp.ImportedFolder{
+					Name:       fDef.Name,
+					RelPath:    relDir,
+					Definition: *fDef,
+				})
+				if relDir == "." || relDir == "" {
+					variables = append(variables, fDef.Variables...)
+				}
+			}
+		}
+		return nil
+	})
+
+	colName := payload.CollectionName
+	if colName == "" {
+		colName = filepath.Base(folderPath)
+		if colName == "." || colName == "" || colName == CollectionsDir {
+			colName = "PebblePost Export"
+		}
+	}
+
+	exportBytes, err := h.impexpSvc.Export(colName, impexp.Format(payload.Format), items, folders, variables)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	filename := impexp.SanitizeFilename(colName) + "_" + payload.Format + ".json"
+
+	h.jsonResponse(w, map[string]any{
+		"format":   payload.Format,
+		"filename": filename,
+		"content":  string(exportBytes),
+		"count":    len(items),
 	})
 }
 
@@ -871,4 +973,3 @@ func (h *Handler) Close() {
 	}
 	h.watchers = make(map[string]*Watcher)
 }
-

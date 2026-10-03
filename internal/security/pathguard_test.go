@@ -231,4 +231,3 @@ func TestValidateFileExtension(t *testing.T) {
 		})
 	}
 }
-

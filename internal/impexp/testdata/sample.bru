@@ -1,0 +1,36 @@
+meta {
+  name: Get User Profile
+  type: http
+  seq: 1
+}
+
+get {
+  url: https://api.example.com/v1/users/42
+  body: none
+  auth: bearer
+}
+
+params:query {
+  include_orders: true
+  ~verbose: false
+}
+
+headers {
+  Accept: application/json
+  X-Client-Version: 2.4.0
+  ~X-Debug: 1
+}
+
+auth:bearer {
+  token: {{apiKey}}
+}
+
+script:pre-request {
+  pb.environment.set("timestamp", Date.now());
+}
+
+tests {
+  pb.test("Status is 200", () => {
+    pb.expect(pb.response.status).toBe(200);
+  });
+}

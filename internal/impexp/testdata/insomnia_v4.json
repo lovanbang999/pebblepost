@@ -1,0 +1,91 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2024-03-15T12:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2024.1.0",
+  "resources": [
+    {
+      "_id": "wrk_1",
+      "_type": "workspace",
+      "name": "Payments API",
+      "description": "Production Payment Gateway API"
+    },
+    {
+      "_id": "env_1",
+      "_type": "environment",
+      "parentId": "wrk_1",
+      "name": "Base Environment",
+      "data": {
+        "baseUrl": "https://api.payments.example.com",
+        "apiVersion": "v2"
+      }
+    },
+    {
+      "_id": "fld_1",
+      "_type": "request_group",
+      "parentId": "wrk_1",
+      "name": "Transactions",
+      "description": "Payment transactions endpoints"
+    },
+    {
+      "_id": "req_1",
+      "_type": "request",
+      "parentId": "fld_1",
+      "name": "Charge Credit Card",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/{{ _.apiVersion }}/charges",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        },
+        {
+          "name": "Idempotency-Key",
+          "value": "idem-12345"
+        }
+      ],
+      "parameters": [
+        {
+          "name": "notify_customer",
+          "value": "true"
+        }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"amount\": 5000,\n  \"currency\": \"usd\",\n  \"customer_id\": \"cust_987\"\n}"
+      },
+      "authentication": {
+        "type": "bearer",
+        "token": "sk_test_SECRET_TOKEN"
+      }
+    },
+    {
+      "_id": "req_2",
+      "_type": "request",
+      "parentId": "fld_1",
+      "name": "Refund Charge",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/{{ _.apiVersion }}/refunds",
+      "headers": [],
+      "parameters": [],
+      "body": {
+        "mimeType": "application/x-www-form-urlencoded",
+        "params": [
+          {
+            "name": "charge_id",
+            "value": "ch_5544"
+          },
+          {
+            "name": "reason",
+            "value": "duplicate"
+          }
+        ]
+      },
+      "authentication": {
+        "type": "basic",
+        "username": "api_user",
+        "password": "api_password"
+      }
+    }
+  ]
+}

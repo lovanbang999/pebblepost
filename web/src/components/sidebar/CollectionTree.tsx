@@ -24,6 +24,8 @@ import { getMethodTextColor, cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
 import { Skeleton } from '../ui/skeleton'
+import { ImportDialog } from '../common/ImportDialog'
+import { ExportDialog } from '../common/ExportDialog'
 import {
   Dialog,
   DialogContent,
@@ -864,6 +866,8 @@ export function CollectionTree() {
               )}
             </Button>
           </Tooltip>
+          <ImportDialog />
+          <ExportDialog />
         </div>
       </div>
 

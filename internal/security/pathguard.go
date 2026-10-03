@@ -227,4 +227,3 @@ func ValidateFileExtension(path string, allowedExts ...string) error {
 	}
 	return fmt.Errorf("file extension not allowed for %q (permitted: %s)", path, strings.Join(allowedExts, ", "))
 }
-

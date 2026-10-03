@@ -36,9 +36,9 @@ func (s *ImportService) ParseCURL(curlStr string) (*types.RequestDefinition, err
 	}
 
 	req := &types.RequestDefinition{
-		Method: "GET",
-		Auth:   types.AuthDefinition{Type: "none"},
-		Body:   types.BodyDefinition{Type: "none"},
+		Method:  "GET",
+		Auth:    types.AuthDefinition{Type: "none"},
+		Body:    types.BodyDefinition{Type: "none"},
 		Scripts: types.ScriptDefinition{},
 		Settings: types.SettingDefinition{
 			FollowRedirects: true,
@@ -89,7 +89,7 @@ func (s *ImportService) ParseCURL(curlStr string) (*types.RequestDefinition, err
 				body = strings.TrimSuffix(body, "'")
 				// Detect JSON
 				trimmed := strings.TrimSpace(body)
-				if (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
+				if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
 					req.Body = types.BodyDefinition{Type: "json", Raw: body}
 				} else {
 					req.Body = types.BodyDefinition{Type: "raw", Raw: body}
@@ -233,8 +233,8 @@ func tokenizeCURL(s string) ([]string, error) {
 // --- Postman v2.1 ---
 
 type postmanCollection struct {
-	Info  postmanInfo   `json:"info"`
-	Item  []postmanItem `json:"item"`
+	Info postmanInfo   `json:"info"`
+	Item []postmanItem `json:"item"`
 }
 
 type postmanInfo struct {
@@ -248,15 +248,15 @@ type postmanItem struct {
 }
 
 type postmanReq struct {
-	Method string            `json:"method"`
-	URL    postmanURL        `json:"url"`
-	Header []postmanHeader   `json:"header"`
-	Body   *postmanBody      `json:"body"`
-	Auth   *postmanAuth      `json:"auth"`
+	Method string          `json:"method"`
+	URL    postmanURL      `json:"url"`
+	Header []postmanHeader `json:"header"`
+	Body   *postmanBody    `json:"body"`
+	Auth   *postmanAuth    `json:"auth"`
 }
 
 type postmanURL struct {
-	Raw   string   `json:"raw"`
+	Raw   string `json:"raw"`
 	Query []struct {
 		Key      string `json:"key"`
 		Value    string `json:"value"`
@@ -328,11 +328,11 @@ func (s *ImportService) flattenPostmanItems(items []postmanItem, out *[]*types.R
 		}
 		r := item.Request
 		req := &types.RequestDefinition{
-			Name:   item.Name,
-			Method: strings.ToUpper(r.Method),
-			URL:    r.URL.Raw,
-			Auth:   types.AuthDefinition{Type: "none"},
-			Body:   types.BodyDefinition{Type: "none"},
+			Name:    item.Name,
+			Method:  strings.ToUpper(r.Method),
+			URL:     r.URL.Raw,
+			Auth:    types.AuthDefinition{Type: "none"},
+			Body:    types.BodyDefinition{Type: "none"},
 			Scripts: types.ScriptDefinition{},
 			Settings: types.SettingDefinition{
 				FollowRedirects: true,
@@ -434,18 +434,18 @@ func (s *ImportService) flattenPostmanItems(items []postmanItem, out *[]*types.R
 // --- OpenAPI 3.0 ---
 
 type openAPISpec struct {
-	OpenAPI string                 `json:"openapi"`
-	Info    struct{ Title string } `json:"info"`
-	Servers []struct{ URL string } `json:"servers"`
+	OpenAPI string                     `json:"openapi"`
+	Info    struct{ Title string }     `json:"info"`
+	Servers []struct{ URL string }     `json:"servers"`
 	Paths   map[string]openAPIPathItem `json:"paths"`
 }
 
 type openAPIPathItem map[string]openAPIOperation // key: get, post, put, patch, delete, head, options
 
 type openAPIOperation struct {
-	Summary     string             `json:"summary"`
-	OperationID string             `json:"operationId"`
-	Parameters  []openAPIParameter `json:"parameters"`
+	Summary     string              `json:"summary"`
+	OperationID string              `json:"operationId"`
+	Parameters  []openAPIParameter  `json:"parameters"`
 	RequestBody *openAPIRequestBody `json:"requestBody"`
 }
 
@@ -502,11 +502,11 @@ func (s *ImportService) ParseOpenAPI(data []byte) ([]*types.RequestDefinition, e
 			}
 
 			req := &types.RequestDefinition{
-				Name:   name,
-				Method: strings.ToUpper(method),
-				URL:    baseURL + path,
-				Auth:   types.AuthDefinition{Type: "none"},
-				Body:   types.BodyDefinition{Type: "none"},
+				Name:    name,
+				Method:  strings.ToUpper(method),
+				URL:     baseURL + path,
+				Auth:    types.AuthDefinition{Type: "none"},
+				Body:    types.BodyDefinition{Type: "none"},
 				Scripts: types.ScriptDefinition{},
 				Settings: types.SettingDefinition{
 					FollowRedirects: true,
