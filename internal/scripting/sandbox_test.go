@@ -516,8 +516,8 @@ func TestEngine_NewMatchers(t *testing.T) {
 // TestEngine_StaticSyntaxValidation verifies static detection of unsupported Goja syntax.
 func TestEngine_StaticSyntaxValidation(t *testing.T) {
 	tests := []struct {
-		name          string
-		script        string
+		name           string
+		script         string
 		expectedErrSub string
 	}{
 		{"async function", "async function getData() { return 1; }", "'async' functions are not supported"},
@@ -540,4 +540,3 @@ func TestEngine_StaticSyntaxValidation(t *testing.T) {
 		})
 	}
 }
-

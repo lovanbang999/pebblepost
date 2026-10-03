@@ -1,0 +1,55 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Petstore Service API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://petstore.example.com/api/v3"
+    }
+  ],
+  "paths": {
+    "/pets": {
+      "get": {
+        "summary": "Find Pets",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": true,
+            "example": "available"
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "example": "req-999"
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create Pet",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "example": "Doggie"
+                  },
+                  "tag": {
+                    "type": "string",
+                    "example": "friendly"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

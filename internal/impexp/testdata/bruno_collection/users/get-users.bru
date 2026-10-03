@@ -1,0 +1,19 @@
+meta {
+  name: List Users
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/users
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 20
+  offset: 0
+}
+
+auth:bearer {
+  token: {{jwtToken}}
+}

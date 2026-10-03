@@ -1,0 +1,125 @@
+{
+  "info": {
+    "_postman_id": "c1f7b0f0-8c29-4b17-b08e-161d9a5b0689",
+    "name": "Acme SaaS Platform",
+    "description": "API collection with folder inheritance and test scripts",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.acme.io",
+      "type": "string"
+    },
+    {
+      "key": "apiVersion",
+      "value": "v1",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Authentication module with bearer auth",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "acme_folder_bearer_token"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "console.log('Running folder pre-request script');",
+              "pm.environment.set('req_timestamp', Date.now());"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/{{apiVersion}}/profile?include=teams",
+              "query": [
+                {
+                  "key": "include",
+                  "value": "teams"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "});",
+                  "pm.test('Has valid user ID', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.id).to.equal('user_123');",
+                  "    pm.environment.set('current_user_id', json.id);",
+                  "});",
+                  "pm.sendRequest('https://analytics.example.com', function (err, res) {});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{baseUrl}}/{{apiVersion}}/profile"
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"John Doe\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/health"
+        },
+        "auth": {
+          "type": "noauth"
+        }
+      }
+    }
+  ]
+}

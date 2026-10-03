@@ -39,8 +39,8 @@ func TestHandler_APIEndpoints(t *testing.T) {
 		}
 
 		var resp struct {
-			Workspace    types.WorkspaceDefinition   `json:"workspace"`
-			Tree         []*types.TreeNode           `json:"tree"`
+			Workspace    types.WorkspaceDefinition     `json:"workspace"`
+			Tree         []*types.TreeNode             `json:"tree"`
 			Environments []types.EnvironmentDefinition `json:"environments"`
 		}
 		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {

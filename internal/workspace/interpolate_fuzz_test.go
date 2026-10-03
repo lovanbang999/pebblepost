@@ -13,9 +13,9 @@ func FuzzInterpolateString(f *testing.F) {
 	// Seed corpus: representative real-world patterns
 	f.Add("TOKEN", "abc123", "Bearer {{TOKEN}}")
 	f.Add("HOST", "localhost", "http://{{HOST}}/api")
-	f.Add("A", "{{B}}", "start {{A}} end")  // circular via B undefined
+	f.Add("A", "{{B}}", "start {{A}} end") // circular via B undefined
 	f.Add("", "", "{{MISSING}}")
-	f.Add("X", "{{X}}", "{{X}}")            // self-referential
+	f.Add("X", "{{X}}", "{{X}}") // self-referential
 	f.Add("K", "v", "{{K}}{{K}}{{K}}")
 	f.Add("PORT", "8080", "{{HOST}}:{{PORT}}")
 	f.Add("$uuid", "", "id={{$uuid}}")

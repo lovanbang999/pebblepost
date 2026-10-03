@@ -119,7 +119,7 @@ func parseDateValue(v any) (time.Time, error) {
 func translateDateTokens(tokenStr string) string {
 	// Simple mapping for common JS/Moment date format tokens
 	replacements := []struct {
-		token string
+		token  string
 		layout string
 	}{
 		{"YYYY", "2006"},
