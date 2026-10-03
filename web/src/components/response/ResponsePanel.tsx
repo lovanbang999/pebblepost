@@ -5,6 +5,7 @@ import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
 import { xml } from '@codemirror/lang-xml'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import { useTabStore } from '../../store/tabStore'
 import { formatBytes, formatDuration } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -29,7 +30,11 @@ function detectLanguageExtension(headers: Record<string, string[]>) {
 }
 
 export function ResponsePanel() {
-  const { theme, lastResult, isExecuting } = useWorkspaceStore()
+  const { theme, lastResult: wsLastResult, isExecuting } = useWorkspaceStore()
+  const { tabs, activeTabId } = useTabStore()
+  const currentTab = tabs.find((t) => t.id === activeTabId)
+  const lastResult = currentTab ? currentTab.lastResult : wsLastResult
+
   const [activeSubTab, setActiveSubTab] = useState<'body' | 'headers' | 'tests' | 'timing' | 'console'>('body')
   const [copied, setCopied] = useState(false)
 
