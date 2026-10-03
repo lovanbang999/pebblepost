@@ -16,11 +16,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
 	"pebblepost/internal/types"
 )
+
+// bodyDisplayThreshold is the maximum number of bytes sent to the frontend as inline body text.
+// Bodies larger than this are streamed to a temp file and the field BodyTruncated is set to true.
+const bodyDisplayThreshold = 5 * 1024 * 1024 // 5 MB
 
 // Client defines the interface for executing HTTP requests.
 type Client interface {
@@ -64,6 +69,12 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 	if req == nil {
 		return nil, fmt.Errorf("request definition cannot be nil")
 	}
+
+	// Redirect chain is populated by the CheckRedirect hook in buildHTTPClient.
+	var (
+		redirectMu    sync.Mutex
+		redirectChain []types.RedirectHop
+	)
 
 	result := &types.ExecutionResult{
 		ExecutedAt: time.Now().UTC(),
@@ -149,8 +160,8 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 	// 8. Apply Authentication
 	c.applyAuth(reqCtx, httpReq, targetURL, &req.Auth, bodyBytes)
 
-	// 9. Build http.Client with Settings
-	httpClient := c.buildHTTPClient(req.Settings)
+	// 9. Build http.Client with Settings (redirect chain is captured inside)
+	httpClient := c.buildHTTPClient(req.Settings, &redirectMu, &redirectChain)
 
 	// 10. Execute Request
 	reqStartTime = time.Now()
@@ -195,13 +206,50 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 		downloadStart = firstByteTime
 	}
 
-	// Limit response size to 50MB to prevent memory exhaustion
-	limitedReader := io.LimitReader(resp.Body, 50*1024*1024)
+	// Capture sent-request summary from the final httpReq (after auth/headers applied).
+	sentSummary := &types.SentRequestSummary{
+		Method:  httpReq.Method,
+		URL:     httpReq.URL.String(),
+		Headers: make(map[string][]string),
+	}
+	for k, vs := range httpReq.Header {
+		sentSummary.Headers[k] = vs
+	}
+	if len(bodyBytes) > 0 && len(bodyBytes) <= 4096 {
+		sentSummary.Body = string(bodyBytes)
+	}
+	result.SentRequest = sentSummary
+
+	// Attach the redirect chain captured during redirect hook.
+	redirectMu.Lock()
+	result.RedirectChain = redirectChain
+	redirectMu.Unlock()
+
+	// Stream large responses to a temp file; only send the first 5MB inline.
+	const readLimit = 50 * 1024 * 1024 // 50 MB hard cap
+	limitedReader := io.LimitReader(resp.Body, readLimit)
 	respBytes, err := io.ReadAll(limitedReader)
 	downloadDone := time.Now()
 
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to read response body: %v", err)
+	}
+
+	actualSize := int64(len(respBytes))
+	result.BodySizeBytes = actualSize
+
+	if actualSize > bodyDisplayThreshold {
+		// Write full body to temp file and truncate the inline preview.
+		tmpFile, tmpErr := os.CreateTemp("", "pebble-body-*.bin")
+		if tmpErr == nil {
+			_, _ = tmpFile.Write(respBytes)
+			_ = tmpFile.Close()
+			result.TempBodyFile = tmpFile.Name()
+		}
+		result.Body = string(respBytes[:bodyDisplayThreshold])
+		result.BodyTruncated = true
+	} else {
+		result.Body = string(respBytes)
 	}
 
 	totalDuration := time.Since(reqStartTime)
@@ -228,8 +276,7 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 	result.StatusCode = resp.StatusCode
 	result.StatusText = resp.Status
 	result.Headers = resp.Header
-	result.Body = string(respBytes)
-	result.Size = int64(len(respBytes))
+	result.Size = actualSize
 
 	return result, nil
 }
@@ -484,7 +531,11 @@ func (c *DefaultClient) applyAuth(ctx context.Context, req *http.Request, u *url
 	}
 }
 
-func (c *DefaultClient) buildHTTPClient(settings types.SettingDefinition) *http.Client {
+func (c *DefaultClient) buildHTTPClient(
+	settings types.SettingDefinition,
+	redirectMu *sync.Mutex,
+	redirectChain *[]types.RedirectHop,
+) *http.Client {
 	// TLS configuration
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: !settings.VerifySSL,
@@ -575,15 +626,32 @@ func (c *DefaultClient) buildHTTPClient(settings types.SettingDefinition) *http.
 	}
 
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		// Return early without capturing if we're not following redirects.
 		if !settings.FollowRedirects {
 			return http.ErrUseLastResponse
 		}
+
+		// Capture the hop being followed.
+		if redirectMu != nil && redirectChain != nil && len(via) > 0 {
+			prev := via[len(via)-1]
+			hop := types.RedirectHop{
+				Method: prev.Method,
+				URL:    prev.URL.String(),
+				Headers: map[string]string{
+					"Location": req.URL.String(),
+				},
+			}
+			redirectMu.Lock()
+			*redirectChain = append(*redirectChain, hop)
+			redirectMu.Unlock()
+		}
+
 		if len(via) >= maxRedirects {
 			return fmt.Errorf("stopped after %d redirects", maxRedirects)
 		}
 		if len(via) > 0 {
 			initial := via[0]
-			// If origin differs, strip sensitive auth credentials & cookies
+			// Strip sensitive headers on cross-origin redirect.
 			if initial.URL.Scheme != req.URL.Scheme || !strings.EqualFold(initial.URL.Host, req.URL.Host) {
 				req.Header.Del("Authorization")
 				req.Header.Del("Cookie")

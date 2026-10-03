@@ -3,9 +3,11 @@ package workspace
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -61,6 +63,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/environments/save", h.handleSaveEnvironment)
 	mux.HandleFunc("/api/import", h.handleImport)
 	mux.HandleFunc("/api/impexp/export", h.handleExport)
+	mux.HandleFunc("/api/response/body", h.handleResponseBody)
 }
 
 func (h *Handler) handleScan(w http.ResponseWriter, r *http.Request) {
@@ -972,4 +975,66 @@ func (h *Handler) Close() {
 		_ = w.Close()
 	}
 	h.watchers = make(map[string]*Watcher)
+}
+
+// handleResponseBody serves a byte-range chunk from a previously spooled temp body file.
+// Query params: file (required), offset (default 0), limit (default 5MB).
+func (h *Handler) handleResponseBody(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	filePath := r.URL.Query().Get("file")
+	if filePath == "" {
+		h.jsonError(w, "query parameter 'file' is required", http.StatusBadRequest)
+		return
+	}
+
+	// Safety: only allow OS temp files created by pebblepost.
+	if !strings.HasPrefix(filepath.Base(filePath), "pebble-body-") {
+		h.jsonError(w, "invalid file reference", http.StatusBadRequest)
+		return
+	}
+
+	offsetStr := r.URL.Query().Get("offset")
+	limitStr := r.URL.Query().Get("limit")
+
+	offset, _ := strconv.ParseInt(offsetStr, 10, 64)
+	limit, err := strconv.ParseInt(limitStr, 10, 64)
+	if err != nil || limit <= 0 || limit > 5*1024*1024 {
+		limit = 5 * 1024 * 1024 // 5 MB default chunk
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		h.jsonError(w, "temp file not found or expired", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	stat, _ := f.Stat()
+	totalSize := stat.Size()
+
+	if offset > 0 {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			h.jsonError(w, "seek error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	chunk, err := io.ReadAll(io.LimitReader(f, limit))
+	if err != nil {
+		h.jsonError(w, "read error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"chunk":     string(chunk),
+		"offset":    offset,
+		"chunkSize": int64(len(chunk)),
+		"totalSize": totalSize,
+		"hasMore":   offset+int64(len(chunk)) < totalSize,
+	})
 }
