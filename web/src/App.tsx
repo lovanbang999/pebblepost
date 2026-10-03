@@ -7,6 +7,7 @@ import { QuickSearch } from './components/common/QuickSearch'
 import { ConflictDialog } from './components/common/ConflictDialog'
 import { CloseTabConfirmDialog } from './components/common/CloseTabConfirmDialog'
 import { CookieManagerDialog } from './components/cookies/CookieManagerDialog'
+import { ManageEnvironmentsDialog } from './components/environments/ManageEnvironmentsDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useWorkspaceStore } from './store/workspaceStore'
 import { useTabStore } from './store/tabStore'
@@ -14,8 +15,9 @@ import { useTabStore } from './store/tabStore'
 export default function App() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false)
+  const [envManagerOpen, setEnvManagerOpen] = useState(false)
   const { loadWorkspace, workspacePath, initWatcher, cleanupWatcher } = useWorkspaceStore()
-  const { restoreTabs, saveCurrentTab } = useTabStore()
+  const { restoreTabs } = useTabStore()
 
   useEffect(() => {
     const ws = workspacePath || '.'
@@ -25,7 +27,7 @@ export default function App() {
     return () => {
       cleanupWatcher()
     }
-  }, [])
+  }, [workspacePath, loadWorkspace, initWatcher, cleanupWatcher, restoreTabs])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -41,7 +43,7 @@ export default function App() {
       // Save Request (Ctrl+S / Cmd+S)
       if (isMod && !e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        saveCurrentTab()
+        useTabStore.getState().saveCurrentTab()
         return
       }
 
@@ -81,6 +83,7 @@ export default function App() {
         <TitleBar
           onOpenQuickSearch={() => setQuickSearchOpen(true)}
           onOpenCookieManager={() => setCookieManagerOpen(true)}
+          onOpenManageEnvironments={() => setEnvManagerOpen(true)}
         />
 
         {/* Main Workspace Layout */}
@@ -113,6 +116,12 @@ export default function App() {
         <CookieManagerDialog
           isOpen={cookieManagerOpen}
           onClose={() => setCookieManagerOpen(false)}
+        />
+
+        {/* Manage Environments Dialog */}
+        <ManageEnvironmentsDialog
+          isOpen={envManagerOpen}
+          onClose={() => setEnvManagerOpen(false)}
         />
       </div>
     </TooltipProvider>

@@ -59,6 +59,9 @@ func (s *EnvironmentService) ListEnvironments(rootPath string) ([]types.Environm
 			envName := strings.TrimSuffix(name, EnvSecretSuffix)
 			vars, err := s.readVariables(fullPath)
 			if err == nil {
+				for i := range vars {
+					vars[i].Secret = true
+				}
 				secretMap[envName] = vars
 			}
 		} else if strings.HasSuffix(name, EnvPublicSuffix) {
@@ -120,7 +123,8 @@ func (s *EnvironmentService) GetEnvironment(rootPath string, envName string) (*t
 	return nil, fmt.Errorf("environment '%s' not found", envName)
 }
 
-// SaveEnvironment writes an environment definition to public or secret file.
+// SaveEnvironment writes an environment definition to public and/or secret files.
+// Variables with Secret: true are saved to *.secret.env.json, and non-secret variables to *.env.json.
 func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.EnvironmentDefinition, isSecret bool) error {
 	if err := security.ValidateSafeIdentifier(env.Name); err != nil {
 		return fmt.Errorf("invalid environment name: %w", err)
@@ -131,22 +135,57 @@ func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.Environm
 		return fmt.Errorf("failed to create environments directory: %w", err)
 	}
 
-	var fileName string
+	publicFilePath := filepath.Join(envDir, env.Name+EnvPublicSuffix)
+	secretFilePath := filepath.Join(envDir, env.Name+EnvSecretSuffix)
+
 	if isSecret {
-		fileName = env.Name + EnvSecretSuffix
-	} else {
-		fileName = env.Name + EnvPublicSuffix
+		if s.watcher != nil {
+			s.watcher.Suppress(secretFilePath, 1000*time.Millisecond)
+		}
+		env.SchemaVersion = CurrentSchemaVersion
+		return WriteFileStable(secretFilePath, env)
 	}
 
-	filePath := filepath.Join(envDir, fileName)
+	// Partition variables by Secret flag
+	var publicVars []types.KeyValue
+	var secretVars []types.KeyValue
+	for _, kv := range env.Variables {
+		if kv.Secret {
+			secretVars = append(secretVars, kv)
+		} else {
+			publicVars = append(publicVars, kv)
+		}
+	}
 
-	// Suppress watcher for internal write
 	if s.watcher != nil {
-		s.watcher.Suppress(filePath, 1000*time.Millisecond)
+		s.watcher.Suppress(publicFilePath, 1000*time.Millisecond)
+		s.watcher.Suppress(secretFilePath, 1000*time.Millisecond)
 	}
 
-	env.SchemaVersion = CurrentSchemaVersion
-	return WriteFileStable(filePath, env)
+	publicEnv := types.EnvironmentDefinition{
+		SchemaVersion: CurrentSchemaVersion,
+		Name:          env.Name,
+		Variables:     publicVars,
+	}
+	if err := WriteFileStable(publicFilePath, publicEnv); err != nil {
+		return err
+	}
+
+	if len(secretVars) > 0 {
+		secretEnv := types.EnvironmentDefinition{
+			SchemaVersion: CurrentSchemaVersion,
+			Name:          env.Name,
+			Variables:     secretVars,
+		}
+		if err := WriteFileStable(secretFilePath, secretEnv); err != nil {
+			return err
+		}
+	} else {
+		// Clean up obsolete secret file if all secrets were removed
+		_ = os.Remove(secretFilePath)
+	}
+
+	return nil
 }
 
 // DeleteEnvironment removes both public and secret files for an environment.

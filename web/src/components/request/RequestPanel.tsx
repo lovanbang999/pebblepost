@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Send,
   Loader2,
@@ -20,6 +20,16 @@ import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
 import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
 import { ScriptTrustDialog } from "./ScriptTrustDialog";
+import { VariableInput } from "../common/VariableInput";
+import { UndefinedVariablesDialog } from "./UndefinedVariablesDialog";
+import { ManageEnvironmentsDialog } from "../environments/ManageEnvironmentsDialog";
+import { getAvailableVariables, findUndefinedVariablesInRequest } from "../../lib/variables";
+import {
+  variableStyles,
+  createVariableHighlightExtension,
+  createVariableHoverTooltip,
+  createVariableAutocomplete,
+} from "../../lib/codemirrorVariableExtension";
 import CodeMirror from "@uiw/react-codemirror";
 import { autocompletion } from "@codemirror/autocomplete";
 import { json } from "@codemirror/lang-json";
@@ -81,6 +91,24 @@ export function RequestPanel() {
   const [isTrustDialogOpen, setIsTrustDialogOpen] = useState(false);
   const [isOAuthAuthorizing, setIsOAuthAuthorizing] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
+
+  const [undefinedDialogOpen, setUndefinedDialogOpen] = useState(false);
+  const [pendingUndefinedVars, setPendingUndefinedVars] = useState<string[]>([]);
+  const [isEnvManagerOpen, setIsEnvManagerOpen] = useState(false);
+
+  const { environments, activeEnv } = useWorkspaceStore();
+  const availableMap = useMemo(() => {
+    return getAvailableVariables(environments, activeEnv);
+  }, [environments, activeEnv]);
+
+  const bodyVariableExtensions = useMemo(() => {
+    return [
+      variableStyles,
+      createVariableHighlightExtension(() => availableMap),
+      createVariableHoverTooltip(() => availableMap, () => setIsEnvManagerOpen(true)),
+      createVariableAutocomplete(() => availableMap),
+    ];
+  }, [availableMap]);
 
   const handleFetchOAuthToken = async () => {
     if (!activeRequest) return;
@@ -295,6 +323,21 @@ export function RequestPanel() {
       return;
     }
 
+    // Check for undefined variables before send
+    const undefinedVars = findUndefinedVariablesInRequest(activeRequest, availableMap);
+    if (undefinedVars.length > 0) {
+      setPendingUndefinedVars(undefinedVars);
+      setUndefinedDialogOpen(true);
+      return;
+    }
+
+    await executeRequest(isTrusted);
+  };
+
+  const handleConfirmSendAnyway = async () => {
+    setUndefinedDialogOpen(false);
+    const { workspacePath, isWorkspaceTrusted } = useWorkspaceStore.getState();
+    const isTrusted = isWorkspaceTrusted(workspacePath || undefined);
     await executeRequest(isTrusted);
   };
 
@@ -392,12 +435,12 @@ export function RequestPanel() {
 
         {/* URL Input */}
         <div className="flex-1 relative">
-          <Input
-            type="text"
+          <VariableInput
             value={activeRequest.url}
-            onChange={(e) =>
-              updateActiveRequest((prev) => ({ ...prev, url: e.target.value }))
+            onChange={(val) =>
+              updateActiveRequest((prev) => ({ ...prev, url: val }))
             }
+            onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
             placeholder="Enter request URL or {{VARIABLE}}"
           />
         </div>
@@ -728,7 +771,7 @@ export function RequestPanel() {
                   <CodeMirror
                     value={activeRequest.body?.raw || ""}
                     height="100%"
-                    extensions={[json()]}
+                    extensions={[json(), ...bodyVariableExtensions]}
                     theme={theme === "dark" ? "dark" : "light"}
                     onChange={(val) =>
                       updateActiveRequest((prev) => ({
@@ -1792,6 +1835,23 @@ export function RequestPanel() {
           executeRequest(false);
         }}
         onCancel={() => setIsTrustDialogOpen(false)}
+      />
+
+      <UndefinedVariablesDialog
+        isOpen={undefinedDialogOpen}
+        undefinedVars={pendingUndefinedVars}
+        activeEnv={activeEnv}
+        onCancel={() => setUndefinedDialogOpen(false)}
+        onConfirmSend={handleConfirmSendAnyway}
+        onOpenManageEnvironments={() => {
+          setUndefinedDialogOpen(false);
+          setIsEnvManagerOpen(true);
+        }}
+      />
+
+      <ManageEnvironmentsDialog
+        isOpen={isEnvManagerOpen}
+        onClose={() => setIsEnvManagerOpen(false)}
       />
     </div>
   );

@@ -78,3 +78,57 @@ func TestEnvironmentService_MergeAndCRUD(t *testing.T) {
 		t.Errorf("expected 0 envs after delete, got %d", len(envsAfterDelete))
 	}
 }
+
+func TestEnvironmentService_SecretSplitting(t *testing.T) {
+	tempDir := t.TempDir()
+	envSvc := NewEnvironmentService()
+
+	// Environment with mixed public and secret variables
+	mixedEnv := types.EnvironmentDefinition{
+		Name: "production",
+		Variables: []types.KeyValue{
+			{Key: "API_URL", Value: "https://api.prod.com", Enabled: true, Secret: false},
+			{Key: "DB_PASS", Value: "super_secret_db_pass", Enabled: true, Secret: true},
+			{Key: "PUBLIC_KEY", Value: "pub_12345", Enabled: true, Secret: false},
+			{Key: "PRIVATE_KEY", Value: "priv_67890", Enabled: true, Secret: true},
+		},
+	}
+
+	// Save environment with isSecret=false (should partition automatically)
+	if err := envSvc.SaveEnvironment(tempDir, mixedEnv, false); err != nil {
+		t.Fatalf("failed to save mixed env: %v", err)
+	}
+
+	// Load environments and verify that secret flags are preserved
+	envs, err := envSvc.ListEnvironments(tempDir)
+	if err != nil {
+		t.Fatalf("failed to list environments: %v", err)
+	}
+	if len(envs) != 1 {
+		t.Fatalf("expected 1 env, got %d", len(envs))
+	}
+
+	prod := envs[0]
+	var foundDBPass, foundAPIUrl bool
+	for _, kv := range prod.Variables {
+		if kv.Key == "DB_PASS" {
+			foundDBPass = true
+			if !kv.Secret {
+				t.Errorf("expected DB_PASS to have Secret: true")
+			}
+			if kv.Value != "super_secret_db_pass" {
+				t.Errorf("unexpected DB_PASS value: %s", kv.Value)
+			}
+		}
+		if kv.Key == "API_URL" {
+			foundAPIUrl = true
+			if kv.Secret {
+				t.Errorf("expected API_URL to have Secret: false")
+			}
+		}
+	}
+
+	if !foundDBPass || !foundAPIUrl {
+		t.Errorf("missing expected variables in loaded env: foundDBPass=%v, foundAPIUrl=%v", foundDBPass, foundAPIUrl)
+	}
+}
