@@ -113,7 +113,21 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	// Interpolate request fields (URL, headers, params, body, auth, settings)
 	if h.interpolator != nil {
-		reqToExecute = h.interpolator.InterpolateRequest(reqToExecute, varMap)
+		interpolated, err := h.interpolator.InterpolateRequestWithError(reqToExecute, varMap)
+		if err != nil {
+			h.jsonResponse(w, types.ExecutionResult{
+				StatusCode: 0,
+				StatusText: "Interpolation Error",
+				Error:      err.Error(),
+				Logs:       []string{"Error during variable interpolation: " + err.Error()},
+				Tests: []types.TestAssertionResult{
+					{Name: "Variable Interpolation", Passed: false, Message: err.Error()},
+				},
+				ExecutedAt: time.Now(),
+			})
+			return
+		}
+		reqToExecute = interpolated
 	}
 
 	// Determine if scripts are allowed (untrusted workspace blocks script execution)
@@ -262,8 +276,6 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 
 	h.jsonResponse(w, result)
 }
-
-
 
 // handleCookies handles GET, POST, DELETE for workspace cookies.
 func (h *Handler) handleCookies(w http.ResponseWriter, r *http.Request) {

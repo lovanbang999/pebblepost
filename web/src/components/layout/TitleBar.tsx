@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, Layers, Search, Sun, Moon, Folder, Cookie } from "lucide-react";
+import { FolderOpen, Layers, Search, Sun, Moon, Folder, Cookie, SlidersHorizontal } from "lucide-react";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -19,19 +19,40 @@ import { Input } from "../ui/input";
 interface TitleBarProps {
   onOpenQuickSearch?: () => void
   onOpenCookieManager?: () => void
+  onOpenManageEnvironments?: () => void
 }
 
-function isWails(): boolean {
-  return !!(window as any).go?.main?.App
+interface WailsApp {
+  SelectDirectory?: () => Promise<string>;
+  [key: string]: ((...args: unknown[]) => unknown) | undefined;
 }
+
+interface WailsWindow {
+  go?: {
+    main?: {
+      App?: WailsApp;
+    };
+  };
+}
+
+function getWailsApp(): WailsApp | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as WailsWindow).go?.main?.App;
+}
+
 
 function wailsCall(method: string) {
-  if (isWails()) {
-    (window as any).go.main.App[method]?.()
+  const app = getWailsApp();
+  if (app && typeof app[method] === "function") {
+    app[method]?.();
   }
 }
 
-export function TitleBar({ onOpenQuickSearch, onOpenCookieManager }: TitleBarProps) {
+export function TitleBar({
+  onOpenQuickSearch,
+  onOpenCookieManager,
+  onOpenManageEnvironments,
+}: TitleBarProps) {
   const [isMaximised, setIsMaximised] = useState(true);
   const [isOpenWorkspaceModalOpen, setIsOpenWorkspaceModalOpen] = useState(false);
   const [inputWorkspacePath, setInputWorkspacePath] = useState("");
@@ -46,9 +67,10 @@ export function TitleBar({ onOpenQuickSearch, onOpenCookieManager }: TitleBarPro
   } = useWorkspaceStore();
 
   const handleOpenFolder = async () => {
-    if (isWails()) {
+    const app = getWailsApp();
+    if (app?.SelectDirectory) {
       try {
-        const path = await (window as any).go.main.App.SelectDirectory();
+        const path = await app.SelectDirectory();
         if (path) setWorkspacePath(path);
       } catch (err) {
         console.error("Failed to open directory dialog:", err);
@@ -129,6 +151,19 @@ export function TitleBar({ onOpenQuickSearch, onOpenCookieManager }: TitleBarPro
             ))}
           </SelectContent>
         </Select>
+
+        {/* Manage Environments */}
+        <Tooltip content="Manage Environments & Variables" side="bottom" sideOffset={6}>
+          <Button
+            id="manage-environments-btn"
+            variant="ghost"
+            size="icon"
+            onClick={onOpenManageEnvironments}
+            className="h-7 w-7 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900 transition-colors cursor-pointer"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+          </Button>
+        </Tooltip>
 
         {/* Manage Cookies */}
         <Tooltip content="Workspace Cookies (.pebble/cookies.json)" side="bottom" sideOffset={6}>

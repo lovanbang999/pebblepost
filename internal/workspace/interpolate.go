@@ -13,7 +13,7 @@ import (
 
 var (
 	// Regex matching {{VARIABLE}} or {{ VARIABLE }}
-	varRegex = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_$.-]+)\s*\}\}`)
+	varRegex          = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_$.-]+)\s*\}\}`)
 	maxRecursionDepth = 10
 )
 
@@ -47,15 +47,59 @@ func (in *Interpolator) BuildVariableMap(env *types.EnvironmentDefinition, overr
 	return vars
 }
 
+const (
+	escapeSentinel = "\x00_PEBBLE_ESCAPED_BRACE_\x00"
+)
+
 // InterpolateString recursively resolves {{VARIABLE}} placeholders within input string.
+// If a circular reference or error occurs, it returns the input with placeholders intact.
 func (in *Interpolator) InterpolateString(input string, vars map[string]string) string {
-	if input == "" || !strings.Contains(input, "{{") {
+	res, err := in.InterpolateStringWithError(input, vars)
+	if err != nil {
 		return input
 	}
+	return res
+}
 
-	current := input
+// InterpolateStringWithError resolves placeholders and returns an error if a circular reference
+// or excessive recursion depth is detected.
+func (in *Interpolator) InterpolateStringWithError(input string, vars map[string]string) (string, error) {
+	if input == "" {
+		return "", nil
+	}
+
+	// 1. Handle literal escape syntax: \{{ -> sentinel placeholder
+	escaped := strings.ReplaceAll(input, `\{{`, escapeSentinel)
+	if !strings.Contains(escaped, "{{") {
+		return strings.ReplaceAll(escaped, escapeSentinel, "{{"), nil
+	}
+
+	res, err := in.resolveWithChain(escaped, vars, nil)
+	if err != nil {
+		return input, err
+	}
+
+	// Restore escaped literal braces
+	return strings.ReplaceAll(res, escapeSentinel, "{{"), nil
+}
+
+func (in *Interpolator) resolveWithChain(text string, vars map[string]string, chain []string) (string, error) {
+	if text == "" || !strings.Contains(text, "{{") {
+		return text, nil
+	}
+
+	if len(chain) >= maxRecursionDepth {
+		return "", fmt.Errorf("variable recursion depth exceeded maximum limit (%d): %s", maxRecursionDepth, strings.Join(chain, " -> "))
+	}
+
+	current := text
 	for depth := 0; depth < maxRecursionDepth; depth++ {
+		var firstErr error
 		replaced := varRegex.ReplaceAllStringFunc(current, func(match string) string {
+			if firstErr != nil {
+				return match
+			}
+
 			submatch := varRegex.FindStringSubmatch(match)
 			if len(submatch) < 2 {
 				return match
@@ -64,7 +108,22 @@ func (in *Interpolator) InterpolateString(input string, vars map[string]string) 
 
 			// 1. Check user-defined environment/runtime variables
 			if val, exists := vars[key]; exists {
-				return val
+				// Check for circular reference in resolution chain
+				for _, prev := range chain {
+					if prev == key {
+						cycle := append(chain, key)
+						firstErr = fmt.Errorf("circular variable reference detected: %s", strings.Join(cycle, " -> "))
+						return match
+					}
+				}
+
+				// Resolve the value recursively with updated chain
+				resolvedVal, err := in.resolveWithChain(val, vars, append(chain, key))
+				if err != nil {
+					firstErr = err
+					return match
+				}
+				return resolvedVal
 			}
 
 			// 2. Check built-in dynamic variables
@@ -76,14 +135,17 @@ func (in *Interpolator) InterpolateString(input string, vars map[string]string) 
 			return match
 		})
 
-		// If no more replacements happened, stop recursion
+		if firstErr != nil {
+			return "", firstErr
+		}
+
 		if replaced == current {
 			break
 		}
 		current = replaced
 	}
 
-	return current
+	return current, nil
 }
 
 // resolveDynamicVariable resolves built-in variables like {{$uuid}}, {{$timestamp}}, etc.
@@ -189,6 +251,117 @@ func (in *Interpolator) InterpolateBody(body types.BodyDefinition, vars map[stri
 	}
 
 	return result
+}
+
+// InterpolateRequestWithError produces a deep copy of RequestDefinition with all variables resolved,
+// returning an error if a circular variable reference or recursion depth limit is encountered.
+func (in *Interpolator) InterpolateRequestWithError(req *types.RequestDefinition, vars map[string]string) (*types.RequestDefinition, error) {
+	if req == nil {
+		return nil, nil
+	}
+
+	interp := func(s string) (string, error) {
+		return in.InterpolateStringWithError(s, vars)
+	}
+
+	name, err := interp(req.Name)
+	if err != nil {
+		return nil, err
+	}
+	desc, err := interp(req.Description)
+	if err != nil {
+		return nil, err
+	}
+	url, err := interp(req.URL)
+	if err != nil {
+		return nil, err
+	}
+
+	// Headers
+	var headers []types.KeyValue
+	if len(req.Headers) > 0 {
+		headers = make([]types.KeyValue, len(req.Headers))
+		for i, h := range req.Headers {
+			k, err := interp(h.Key)
+			if err != nil {
+				return nil, err
+			}
+			v, err := interp(h.Value)
+			if err != nil {
+				return nil, err
+			}
+			headers[i] = types.KeyValue{Key: k, Value: v, Enabled: h.Enabled, Type: h.Type, Secret: h.Secret}
+		}
+	}
+
+	// Params
+	var params []types.KeyValue
+	if len(req.Params) > 0 {
+		params = make([]types.KeyValue, len(req.Params))
+		for i, p := range req.Params {
+			k, err := interp(p.Key)
+			if err != nil {
+				return nil, err
+			}
+			v, err := interp(p.Value)
+			if err != nil {
+				return nil, err
+			}
+			params[i] = types.KeyValue{Key: k, Value: v, Enabled: p.Enabled, Type: p.Type, Secret: p.Secret}
+		}
+	}
+
+	// Auth
+	auth := req.Auth
+	if auth.Token != "" {
+		if auth.Token, err = interp(auth.Token); err != nil {
+			return nil, err
+		}
+	}
+	if auth.Username != "" {
+		if auth.Username, err = interp(auth.Username); err != nil {
+			return nil, err
+		}
+	}
+	if auth.Password != "" {
+		if auth.Password, err = interp(auth.Password); err != nil {
+			return nil, err
+		}
+	}
+	if auth.Key != "" {
+		if auth.Key, err = interp(auth.Key); err != nil {
+			return nil, err
+		}
+	}
+	if auth.Value != "" {
+		if auth.Value, err = interp(auth.Value); err != nil {
+			return nil, err
+		}
+	}
+
+	// Body
+	body := in.InterpolateBody(req.Body, vars)
+	if body.Raw != "" {
+		if body.Raw, err = interp(body.Raw); err != nil {
+			return nil, err
+		}
+	}
+
+	return &types.RequestDefinition{
+		Schema:      req.Schema,
+		Version:     req.Version,
+		ID:          req.ID,
+		Name:        name,
+		Description: desc,
+		Method:      req.Method,
+		URL:         url,
+		Headers:     headers,
+		Params:      params,
+		Auth:        auth,
+		Body:        body,
+		Scripts:     req.Scripts,
+		Settings:    in.InterpolateSettings(req.Settings, vars),
+	}, nil
 }
 
 // InterpolateRequest produces a deep copy of RequestDefinition with all variables resolved.

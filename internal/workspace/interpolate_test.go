@@ -134,3 +134,130 @@ func TestInterpolator_InterpolateRequest(t *testing.T) {
 		t.Errorf("interpolated Body mismatch: %s", interpolated.Body.Raw)
 	}
 }
+
+func TestInterpolator_Escaping(t *testing.T) {
+	interpolator := NewInterpolator()
+	vars := map[string]string{
+		"NAME": "Alice",
+		"ROLE": "Admin",
+	}
+
+	// 1. Pure escaped literal
+	res1 := interpolator.InterpolateString(`\{{LITERAL_VAR}}`, vars)
+	if res1 != "{{LITERAL_VAR}}" {
+		t.Errorf("expected '{{LITERAL_VAR}}', got '%s'", res1)
+	}
+
+	// 2. Escaped literal mixed with interpolated variable
+	res2 := interpolator.InterpolateString(`Hello {{NAME}}, your template is \{{USER_ROLE}} and role is {{ROLE}}`, vars)
+	expected2 := "Hello Alice, your template is {{USER_ROLE}} and role is Admin"
+	if res2 != expected2 {
+		t.Errorf("expected '%s', got '%s'", expected2, res2)
+	}
+
+	// 3. Double backslash before braces: \\{{FOO}}
+	res3 := interpolator.InterpolateString(`Prefix \{{STAY}} Suffix`, nil)
+	if res3 != "Prefix {{STAY}} Suffix" {
+		t.Errorf("expected 'Prefix {{STAY}} Suffix', got '%s'", res3)
+	}
+}
+
+func TestInterpolator_CircularReferenceChain(t *testing.T) {
+	interpolator := NewInterpolator()
+
+	// 1. Two-node cycle: A -> B -> A
+	vars2 := map[string]string{
+		"A": "{{B}}",
+		"B": "{{A}}",
+	}
+	_, err2 := interpolator.InterpolateStringWithError("{{A}}", vars2)
+	if err2 == nil {
+		t.Fatalf("expected circular reference error for A -> B -> A, got nil")
+	}
+	if !strings.Contains(err2.Error(), "circular variable reference detected") || !strings.Contains(err2.Error(), "A -> B -> A") {
+		t.Errorf("unexpected error message: %v", err2)
+	}
+
+	// 2. Three-node cycle: X -> Y -> Z -> X
+	vars3 := map[string]string{
+		"X": "{{Y}}",
+		"Y": "{{Z}}",
+		"Z": "{{X}}",
+	}
+	_, err3 := interpolator.InterpolateStringWithError("Val: {{X}}", vars3)
+	if err3 == nil {
+		t.Fatalf("expected circular reference error for X -> Y -> Z -> X, got nil")
+	}
+	if !strings.Contains(err3.Error(), "X -> Y -> Z -> X") {
+		t.Errorf("expected 'X -> Y -> Z -> X' in error, got: %v", err3)
+	}
+
+	// 3. Self-referential: LOOP -> LOOP
+	varsSelf := map[string]string{
+		"LOOP": "{{LOOP}}",
+	}
+	_, errSelf := interpolator.InterpolateStringWithError("{{LOOP}}", varsSelf)
+	if errSelf == nil {
+		t.Fatalf("expected circular reference error for self-reference, got nil")
+	}
+	if !strings.Contains(errSelf.Error(), "LOOP -> LOOP") {
+		t.Errorf("expected 'LOOP -> LOOP' in error, got: %v", errSelf)
+	}
+}
+
+func TestInterpolator_DynamicVariables_All(t *testing.T) {
+	interpolator := NewInterpolator()
+
+	// $uuid
+	resUUID := interpolator.InterpolateString("{{$uuid}}", nil)
+	if len(resUUID) != 36 {
+		t.Errorf("expected 36-char UUID, got: %s", resUUID)
+	}
+
+	// $timestamp (seconds)
+	resTS := interpolator.InterpolateString("{{$timestamp}}", nil)
+	if len(resTS) < 10 {
+		t.Errorf("expected unix timestamp, got: %s", resTS)
+	}
+
+	// $isoTimestamp (RFC3339)
+	resISO := interpolator.InterpolateString("{{$isoTimestamp}}", nil)
+	if !strings.Contains(resISO, "T") || !strings.HasSuffix(resISO, "Z") {
+		t.Errorf("expected ISO timestamp RFC3339, got: %s", resISO)
+	}
+
+	// $randomInt
+	resInt := interpolator.InterpolateString("{{$randomInt}}", nil)
+	if resInt == "" {
+		t.Errorf("expected non-empty randomInt, got empty")
+	}
+
+	// $randomEmail
+	resEmail := interpolator.InterpolateString("{{$randomEmail}}", nil)
+	if !strings.Contains(resEmail, "@example.com") {
+		t.Errorf("expected random email ending with @example.com, got: %s", resEmail)
+	}
+}
+
+func TestInterpolator_InterpolateRequestWithError(t *testing.T) {
+	interpolator := NewInterpolator()
+
+	// Circular reference in request URL
+	req := &types.RequestDefinition{
+		Name:   "Cycle Test",
+		Method: "GET",
+		URL:    "https://api.example.com/{{A}}",
+	}
+	vars := map[string]string{
+		"A": "{{B}}",
+		"B": "{{A}}",
+	}
+
+	_, err := interpolator.InterpolateRequestWithError(req, vars)
+	if err == nil {
+		t.Fatalf("expected error from InterpolateRequestWithError on circular reference, got nil")
+	}
+	if !strings.Contains(err.Error(), "circular variable reference detected") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}

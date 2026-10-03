@@ -3,6 +3,7 @@ export interface KeyValue {
   value: string
   enabled: boolean
   type?: 'text' | 'file'
+  secret?: boolean
 }
 
 export interface AuthDefinition {
@@ -103,6 +104,7 @@ export interface EnvironmentVariable {
   key: string
   value: string
   enabled: boolean
+  secret?: boolean
   isSecret?: boolean
 }
 
