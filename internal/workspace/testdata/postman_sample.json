@@ -1,0 +1,123 @@
+{
+  "info": {
+    "name": "PebblePost Test Collection",
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"admin\",\"password\":\"secret\"}"
+            },
+            "url": {
+              "raw": "https://api.example.com/auth/login",
+              "query": []
+            }
+          }
+        },
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{TOKEN}}" }]
+            },
+            "url": {
+              "raw": "https://api.example.com/profile",
+              "query": [
+                { "key": "include", "value": "avatar", "disabled": false }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Api-Key", "value": "key-abc-123" }
+            ],
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                { "key": "key", "value": "X-Api-Key" },
+                { "key": "value", "value": "key-abc-123" },
+                { "key": "in", "value": "header" }
+              ]
+            },
+            "url": {
+              "raw": "https://api.example.com/users?page=1&limit=20",
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Request-ID", "value": "req-001", "disabled": true }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "name", "value": "Alice", "disabled": false },
+                { "key": "email", "value": "alice@example.com", "disabled": false }
+              ]
+            },
+            "url": {
+              "raw": "https://api.example.com/users",
+              "query": []
+            }
+          }
+        },
+        {
+          "name": "Upload Avatar",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "user_id", "value": "42", "type": "text" },
+                { "key": "avatar", "src": "/path/to/avatar.png", "type": "file" }
+              ]
+            },
+            "auth": {
+              "type": "basic",
+              "basic": [
+                { "key": "username", "value": "admin" },
+                { "key": "password", "value": "pass123" }
+              ]
+            },
+            "url": {
+              "raw": "https://api.example.com/users/42/avatar",
+              "query": []
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

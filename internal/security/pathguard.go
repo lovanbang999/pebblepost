@@ -78,8 +78,8 @@ func SafeJoin(root, untrusted string) (string, error) {
 		return "", fmt.Errorf("path cannot be empty")
 	}
 
-	// Reject OS-native absolute paths.
-	if filepath.IsAbs(untrusted) {
+	// Reject OS-native absolute paths, leading slashes (Unix absolute or Windows drive-relative).
+	if filepath.IsAbs(untrusted) || strings.HasPrefix(untrusted, "/") || strings.HasPrefix(untrusted, `\`) {
 		return "", fmt.Errorf("absolute paths are not allowed: %s", untrusted)
 	}
 
@@ -134,23 +134,34 @@ func SafeAbsolute(root, absolutePath string) (string, error) {
 }
 
 // validateAbsoluteUnderRoot resolves symlinks and ensures candidate is
-// rooted inside root. When the candidate does not exist yet, the parent
-// directory is resolved.
+// rooted inside root. When the candidate does not exist yet, the deepest
+// existing ancestor directory is resolved to check against symlink escapes.
 func validateAbsoluteUnderRoot(root, candidate string) (string, error) {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		realRoot = filepath.Clean(root)
 	}
 
+	exists := true
 	realCandidate, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		// File/dir does not exist yet; resolve the parent instead.
-		parent := filepath.Dir(candidate)
-		realParent, err2 := filepath.EvalSymlinks(parent)
-		if err2 != nil {
-			realParent = filepath.Clean(parent)
+		exists = false
+		// Candidate does not exist yet. Walk up to find the deepest existing ancestor.
+		cur := candidate
+		var uncreated []string
+		for {
+			parent := filepath.Dir(cur)
+			uncreated = append([]string{filepath.Base(cur)}, uncreated...)
+			if realDir, errDir := filepath.EvalSymlinks(parent); errDir == nil {
+				realCandidate = filepath.Join(append([]string{realDir}, uncreated...)...)
+				break
+			}
+			if parent == cur || parent == "." || parent == "/" || filepath.Dir(parent) == parent {
+				realCandidate = filepath.Clean(candidate)
+				break
+			}
+			cur = parent
 		}
-		realCandidate = filepath.Join(realParent, filepath.Base(candidate))
 	}
 
 	relPath, err := filepath.Rel(realRoot, realCandidate)
@@ -162,6 +173,9 @@ func validateAbsoluteUnderRoot(root, candidate string) (string, error) {
 		return "", fmt.Errorf("path escapes workspace root: %s", candidate)
 	}
 
+	if !exists {
+		return filepath.Clean(candidate), nil
+	}
 	return realCandidate, nil
 }
 
