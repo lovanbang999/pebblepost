@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Send,
   Loader2,
@@ -19,16 +19,23 @@ import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
 import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
+import { ScriptTrustDialog } from "./ScriptTrustDialog";
 import CodeMirror from "@uiw/react-codemirror";
 import { autocompletion } from "@codemirror/autocomplete";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
 import { pebbleScriptCompletions } from "../../lib/codemirror-completions";
 import { useWorkspaceStore } from "../../store/workspaceStore";
-import { useTabStore } from "../../store/tabStore";
+import { useTabStore, type RequestTab } from "../../store/tabStore";
 import { TabBar } from "./TabBar";
 import { getMethodColor, cn } from "../../lib/utils";
-import type { KeyValue, ResolvedRequestResult } from "../../types";
+import type {
+  KeyValue,
+  ResolvedRequestResult,
+  RequestDefinition,
+  AuthDefinition,
+  BodyDefinition,
+} from "../../types";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
@@ -71,6 +78,7 @@ export function RequestPanel() {
   const [isSaved, setIsSaved] = useState(false);
   const [resolvedInfo, setResolvedInfo] = useState<ResolvedRequestResult | null>(null);
   const [isCookieManagerOpen, setIsCookieManagerOpen] = useState(false);
+  const [isTrustDialogOpen, setIsTrustDialogOpen] = useState(false);
   const [isOAuthAuthorizing, setIsOAuthAuthorizing] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
 
@@ -99,8 +107,8 @@ export function RequestPanel() {
           tokenExpiresAt: data.expires_at,
         },
       }));
-    } catch (err: any) {
-      setOauthError(err.message || String(err));
+    } catch (err: unknown) {
+      setOauthError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsOAuthAuthorizing(false);
     }
@@ -134,13 +142,13 @@ export function RequestPanel() {
     };
   }, [activeFilePath, currentTab?.type, activeRequest?.auth?.type, activeRequest?.headers]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     const success = await saveCurrentTab();
     if (success) {
       setIsSaved(true);
       setTimeout(() => setIsSaved(false), 2000);
     }
-  };
+  }, [saveCurrentTab]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -151,7 +159,7 @@ export function RequestPanel() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeRequest, activeFilePath, currentTab]);
+  }, [handleSave]);
 
   if (!currentTab) {
     return (
@@ -190,25 +198,9 @@ export function RequestPanel() {
     );
   }
 
-  const handleSend = async () => {
+  const executeRequest = async (isTrusted: boolean) => {
     setIsExecuting(true);
-    const { workspacePath, activeEnv, isWorkspaceTrusted, setWorkspaceTrusted } = useWorkspaceStore.getState();
-    const hasScripts = Boolean(
-      activeRequest.scripts?.preRequest?.trim() ||
-      activeRequest.scripts?.postResponse?.trim()
-    );
-
-    let isTrusted = isWorkspaceTrusted(workspacePath || undefined);
-    if (hasScripts && !isTrusted) {
-      const confirmTrust = window.confirm(
-        "This request contains JavaScript pre-request or test scripts.\n\nDo you trust this workspace to execute scripts?"
-      );
-      if (confirmTrust) {
-        setWorkspaceTrusted(true, workspacePath || undefined);
-        isTrusted = true;
-      }
-    }
-
+    const { workspacePath, activeEnv } = useWorkspaceStore.getState();
     const startTime = performance.now();
 
     try {
@@ -256,14 +248,15 @@ export function RequestPanel() {
           executedAt: new Date().toISOString(),
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       const totalMs = performance.now() - startTime;
+      const errMsg = err instanceof Error ? err.message : String(err);
       setLastResult({
         statusCode: 0,
         statusText: "Network Error",
         headers: {},
         body: JSON.stringify(
-          { error: err.message || "Connection failed" },
+          { error: errMsg || "Connection failed" },
           null,
           2,
         ),
@@ -277,15 +270,32 @@ export function RequestPanel() {
           totalDurationMs: totalMs,
         },
         tests: [
-          { name: "Server Reachable", passed: false, message: err.message },
+          { name: "Server Reachable", passed: false, message: errMsg },
         ],
-        logs: ["Error executing request: " + err.message],
+        logs: ["Error executing request: " + errMsg],
         executedAt: new Date().toISOString(),
-        error: err.message,
+        error: errMsg,
       });
     } finally {
       setIsExecuting(false);
     }
+  };
+
+  const handleSend = async () => {
+    if (!activeRequest) return;
+    const { workspacePath, isWorkspaceTrusted } = useWorkspaceStore.getState();
+    const hasScripts = Boolean(
+      activeRequest.scripts?.preRequest?.trim() ||
+      activeRequest.scripts?.postResponse?.trim()
+    );
+
+    const isTrusted = isWorkspaceTrusted(workspacePath || undefined);
+    if (hasScripts && !isTrusted) {
+      setIsTrustDialogOpen(true);
+      return;
+    }
+
+    await executeRequest(isTrusted);
   };
 
   // Header CRUD
@@ -301,10 +311,10 @@ export function RequestPanel() {
       headers: (prev.headers || []).filter((_, i) => i !== index),
     }));
   };
-  const handleUpdateHeader = (
+  const handleUpdateHeader = <K extends keyof KeyValue>(
     index: number,
-    field: keyof KeyValue,
-    val: any,
+    field: K,
+    val: KeyValue[K],
   ) => {
     updateActiveRequest((prev) => {
       const next = [...(prev.headers || [])];
@@ -326,10 +336,10 @@ export function RequestPanel() {
       params: (prev.params || []).filter((_, i) => i !== index),
     }));
   };
-  const handleUpdateParam = (
+  const handleUpdateParam = <K extends keyof KeyValue>(
     index: number,
-    field: keyof KeyValue,
-    val: any,
+    field: K,
+    val: KeyValue[K],
   ) => {
     updateActiveRequest((prev) => {
       const next = [...(prev.params || [])];
@@ -350,7 +360,7 @@ export function RequestPanel() {
             typeof val === "string" &&
             updateActiveRequest((prev) => ({
               ...prev,
-              method: val as any,
+              method: val as RequestDefinition["method"],
             }))
           }
         >
@@ -433,7 +443,9 @@ export function RequestPanel() {
       {/* Sub Tabs */}
       <Tabs
         value={activeTab}
-        onValueChange={(val) => setActiveSubTab(val as any)}
+        onValueChange={(val) =>
+          setActiveSubTab(val as RequestTab["activeSubTab"])
+        }
         className="flex-1 overflow-hidden"
       >
         <TabsList>
@@ -643,7 +655,10 @@ export function RequestPanel() {
                   onValueChange={(val) =>
                     updateActiveRequest((prev) => ({
                       ...prev,
-                      body: { ...prev.body, type: val as any },
+                      body: {
+                        ...prev.body,
+                        type: val as BodyDefinition["type"],
+                      },
                     }))
                   }
                   className="flex items-center gap-4 text-xs"
@@ -911,7 +926,10 @@ export function RequestPanel() {
                     typeof val === "string" &&
                     updateActiveRequest((prev) => ({
                       ...prev,
-                      auth: { ...prev.auth, type: val as any },
+                      auth: {
+                        ...prev.auth,
+                        type: val as AuthDefinition["type"],
+                      },
                     }))
                   }
                 >
@@ -1100,7 +1118,10 @@ export function RequestPanel() {
                         typeof val === "string" &&
                         updateActiveRequest((prev) => ({
                           ...prev,
-                          auth: { ...prev.auth, addTo: val as any },
+                          auth: {
+                            ...prev.auth,
+                            addTo: val as AuthDefinition["addTo"],
+                          },
                         }))
                       }
                     >
@@ -1202,7 +1223,10 @@ export function RequestPanel() {
                         onValueChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, grantType: val as any },
+                            auth: {
+                              ...prev.auth,
+                              grantType: val as AuthDefinition["grantType"],
+                            },
                           }))
                         }
                       >
@@ -1749,6 +1773,25 @@ export function RequestPanel() {
       <CookieManagerDialog
         isOpen={isCookieManagerOpen}
         onClose={() => setIsCookieManagerOpen(false)}
+      />
+
+      <ScriptTrustDialog
+        open={isTrustDialogOpen}
+        onOpenChange={setIsTrustDialogOpen}
+        workspacePath={useWorkspaceStore.getState().workspacePath}
+        hasPreRequest={Boolean(activeRequest?.scripts?.preRequest?.trim())}
+        hasPostResponse={Boolean(activeRequest?.scripts?.postResponse?.trim())}
+        onConfirmTrust={() => {
+          const { workspacePath, setWorkspaceTrusted } = useWorkspaceStore.getState();
+          setWorkspaceTrusted(true, workspacePath || undefined);
+          setIsTrustDialogOpen(false);
+          executeRequest(true);
+        }}
+        onRunWithoutScripts={() => {
+          setIsTrustDialogOpen(false);
+          executeRequest(false);
+        }}
+        onCancel={() => setIsTrustDialogOpen(false)}
       />
     </div>
   );

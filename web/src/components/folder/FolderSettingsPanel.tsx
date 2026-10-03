@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Folder, Save, Plus, Trash2, Check, ShieldCheck, Key, Terminal, Variable } from 'lucide-react'
+import { Folder, Save, Plus, Trash2, Check } from 'lucide-react'
 import CodeMirror from '@uiw/react-codemirror'
 import { autocompletion } from '@codemirror/autocomplete'
 import { javascript } from '@codemirror/lang-javascript'
@@ -188,55 +188,46 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
         onValueChange={(val) => setActiveTab(val as any)}
         className="flex-1 flex flex-col overflow-hidden"
       >
-        <div className="px-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/20 dark:bg-zinc-900/10">
-          <TabsList className="h-9 p-0 bg-transparent gap-2">
-            <TabsTrigger
-              value="headers"
-              className="text-xs h-8 px-3 gap-1.5 data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-900 data-[state=active]:shadow-xs rounded-md"
-            >
-              <Key className="w-3.5 h-3.5 text-zinc-500" />
-              Headers
-              {folder.headers && folder.headers.length > 0 && (
-                <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-200 dark:bg-zinc-800 font-mono">
-                  {folder.headers.length}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger
-              value="auth"
-              className="text-xs h-8 px-3 gap-1.5 data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-900 data-[state=active]:shadow-xs rounded-md"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-zinc-500" />
-              Auth
-              {currentAuthType !== 'inherit' && currentAuthType !== 'none' && (
-                <span className="w-2 h-2 rounded-full bg-emerald-500 ml-1" />
-              )}
-            </TabsTrigger>
-            <TabsTrigger
-              value="vars"
-              className="text-xs h-8 px-3 gap-1.5 data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-900 data-[state=active]:shadow-xs rounded-md"
-            >
-              <Variable className="w-3.5 h-3.5 text-zinc-500" />
-              Variables
-              {folder.variables && folder.variables.length > 0 && (
-                <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-200 dark:bg-zinc-800 font-mono">
-                  {folder.variables.length}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger
-              value="scripts"
-              className="text-xs h-8 px-3 gap-1.5 data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-900 data-[state=active]:shadow-xs rounded-md"
-            >
-              <Terminal className="w-3.5 h-3.5 text-zinc-500" />
-              Scripts
-              {((folder.scripts?.preRequest && folder.scripts.preRequest.trim()) ||
-                (folder.scripts?.postResponse && folder.scripts.postResponse.trim())) && (
-                <span className="w-2 h-2 rounded-full bg-blue-500 ml-1" />
-              )}
-            </TabsTrigger>
-          </TabsList>
-        </div>
+        <TabsList>
+          <TabsTrigger value="headers" className="capitalize">
+            Headers
+            {folder.headers && folder.headers.length > 0 && (
+              <Badge
+                variant="secondary"
+                className="ml-1.5 px-1 py-0 text-[9px]"
+              >
+                {folder.headers.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger value="auth" className="capitalize">
+            Auth
+            {currentAuthType !== 'inherit' && currentAuthType !== 'none' && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 ml-1.5" />
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger value="vars" className="capitalize">
+            Variables
+            {folder.variables && folder.variables.length > 0 && (
+              <Badge
+                variant="secondary"
+                className="ml-1.5 px-1 py-0 text-[9px]"
+              >
+                {folder.variables.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger value="scripts" className="capitalize">
+            Scripts
+            {((folder.scripts?.preRequest && folder.scripts.preRequest.trim()) ||
+              (folder.scripts?.postResponse && folder.scripts.postResponse.trim())) && (
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1.5" />
+            )}
+          </TabsTrigger>
+        </TabsList>
 
         {/* Tab 1: Headers */}
         <TabsContent value="headers" className="flex-1 flex flex-col p-4 overflow-y-auto m-0">
