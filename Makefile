@@ -7,6 +7,12 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
+.PHONY: init-hooks
+init-hooks: ## Configure git to use project pre-commit hooks
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit
+	@echo "✅ Pre-commit hook installed successfully"
+
 # ─── Go ───────────────────────────────────────────────────────────────────────
 
 .PHONY: test

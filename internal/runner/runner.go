@@ -2,7 +2,10 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,7 +15,16 @@ import (
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
+	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
+)
+
+// ExitCode constants for os.Exit.
+const (
+	ExitSuccess       = 0 // all assertions passed
+	ExitAssertionFail = 1 // one or more test assertions failed
+	ExitConfigError   = 2 // configuration/parse error
+	ExitNetworkError  = 3 // network error or timeout
 )
 
 // Runner manages CLI collection test executions.
@@ -23,7 +35,6 @@ type Runner struct {
 	inheritanceResolver *workspace.InheritanceResolver
 	client              httpclient.Client
 	scriptEngine        *scripting.Engine
-	formatter           *Formatter
 }
 
 // NewRunner creates a fully initialized CLI Runner.
@@ -36,7 +47,6 @@ func NewRunner() *Runner {
 		inheritanceResolver: workspace.NewInheritanceResolver(wsSvc),
 		client:              httpclient.NewClient(),
 		scriptEngine:        scripting.NewEngine(),
-		formatter:           NewFormatter(),
 	}
 }
 
@@ -55,23 +65,60 @@ func NewCustomRunner(
 		inheritanceResolver: workspace.NewInheritanceResolver(wsSvc),
 		client:              client,
 		scriptEngine:        scriptEngine,
-		formatter:           NewFormatter(),
 	}
 }
 
 // Run executes the requests discovered at targetPath using the specified options.
 func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) {
-	out := opts.Writer
-	if out == nil {
-		out = os.Stdout
+	// ── Resolve reporters ────────────────────────────────────────────────────
+	reporterCfgs := resolveReporters(opts)
+
+	// Determine fallback writer from legacy Writer field
+	legacyWriter := opts.Writer
+	if legacyWriter == nil {
+		legacyWriter = os.Stdout
 	}
 
+	type reporterEntry struct {
+		r     Reporter
+		w     io.Writer
+		owned bool
+		f     *os.File
+	}
+	var reporters []reporterEntry
+	for _, rc := range reporterCfgs {
+		w, owned, err := resolveOut(rc, legacyWriter)
+		if err != nil {
+			return nil, fmt.Errorf("reporter setup: %w", err)
+		}
+		reporters = append(reporters, reporterEntry{
+			r:     newReporter(rc, w),
+			w:     w,
+			owned: owned,
+		})
+	}
+	defer func() {
+		for _, e := range reporters {
+			if e.owned {
+				if f, ok := e.w.(*os.File); ok {
+					_ = f.Close()
+				}
+			}
+		}
+	}()
+
+	broadcast := func(fn func(Reporter)) {
+		for _, e := range reporters {
+			fn(e.r)
+		}
+	}
+
+	// ── Discover request files ────────────────────────────────────────────────
 	targetPath := opts.TargetPath
 	if targetPath == "" {
 		targetPath = "."
 	}
 
-	// 1. Discover *.pebble.json request files
 	requestFiles, err := r.discoverRequests(targetPath)
 	if err != nil {
 		return nil, fmt.Errorf("request discovery error: %w", err)
@@ -80,41 +127,54 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 		return nil, fmt.Errorf("no *.pebble.json request files found in %s", targetPath)
 	}
 
-	// 2. Locate workspace root & initialize variable map
+	// ── Locate workspace root ────────────────────────────────────────────────
 	wsRoot := r.findWorkspaceRoot(targetPath)
 	if wsRoot != "" && r.client != nil {
 		r.client.SetWorkspace(wsRoot)
 	}
-	varMap := make(map[string]string)
+
+	// ── Build variable map ───────────────────────────────────────────────────
+	baseVarMap := make(map[string]string)
 	var secretValues []string
 
 	if opts.EnvironmentName != "" && r.environmentSvc != nil {
-		envDef, err := r.environmentSvc.GetEnvironment(wsRoot, opts.EnvironmentName)
-		if err == nil && envDef != nil {
-			varMap = r.interpolator.BuildVariableMap(envDef, nil)
+		envDef, envErr := r.environmentSvc.GetEnvironment(wsRoot, opts.EnvironmentName)
+		if envErr == nil && envDef != nil {
+			baseVarMap = r.interpolator.BuildVariableMap(envDef, nil)
 			for _, v := range envDef.Variables {
 				if v.Secret && v.Value != "" {
 					secretValues = append(secretValues, v.Value)
 				}
 			}
 		} else {
-			r.formatter.PrintWarning(out, fmt.Sprintf("Environment '%s' not found in workspace %s, proceeding with empty environment.", opts.EnvironmentName, wsRoot))
+			broadcast(func(rep Reporter) {
+				rep.PrintWarning(fmt.Sprintf("Environment '%s' not found in workspace %s, proceeding with empty environment.", opts.EnvironmentName, wsRoot))
+			})
 		}
 	}
 
-	if opts.ReportFormat != "json" {
-		r.formatter.PrintHeader(out, targetPath, opts.EnvironmentName, len(requestFiles), opts.Bail)
-	}
+	// Apply full variable precedence (env < env-file < PEBBLE_VAR_* < --var)
+	varMap := BuildVarMap(baseVarMap, opts.ExtraVars, opts.EnvFile, &secretValues, r.interpolator)
+
+	// ── Print run header (CLI only; JSON/JUnit/HTML skip this) ───────────────
+	broadcast(func(rep Reporter) {
+		rep.PrintHeader(targetPath, opts.EnvironmentName, len(requestFiles), opts.Bail, opts.DryRun)
+	})
 
 	summary := &RunSummary{
 		Target:      targetPath,
 		Environment: opts.EnvironmentName,
 		Results:     make([]RequestRunResult, 0, len(requestFiles)),
+		DryRun:      opts.DryRun,
 	}
 
 	startTime := time.Now()
 
-	// 3. Execute each request in sequence
+	// ── Execute requests ─────────────────────────────────────────────────────
+	hasNetworkError := false
+	hasAssertionFailure := false
+	hasConfigError := false
+
 	for _, filePath := range requestFiles {
 		select {
 		case <-ctx.Done():
@@ -127,24 +187,32 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			relPath = filePath
 		}
 
+		// ── Delay between requests ──────────────────────────────────────────
+		if len(summary.Results) > 0 && opts.DelayMs > 0 {
+			select {
+			case <-ctx.Done():
+				return summary, ctx.Err()
+			case <-time.After(time.Duration(opts.DelayMs) * time.Millisecond):
+			}
+		}
+
 		reqStart := time.Now()
-		req, err := r.workspaceSvc.ReadRequest(filePath)
-		if err != nil {
+
+		// ── Read request file ───────────────────────────────────────────────
+		req, readErr := r.workspaceSvc.ReadRequest(filePath)
+		if readErr != nil {
+			hasConfigError = true
 			reqResult := RequestRunResult{
 				FilePath: filePath,
 				RelPath:  relPath,
 				Passed:   false,
-				Error:    fmt.Sprintf("Failed to read request file: %v", err),
+				Error:    fmt.Sprintf("Failed to read request file: %v", readErr),
 				Duration: time.Since(reqStart),
 			}
 			summary.TotalRequests++
 			summary.FailedRequests++
 			summary.Results = append(summary.Results, reqResult)
-
-			if opts.ReportFormat != "json" {
-				r.formatter.PrintRequestFailure(out, relPath, "READ", reqResult.Error, reqResult.Duration)
-			}
-
+			broadcast(func(rep Reporter) { rep.PrintRequestResult(reqResult) })
 			if opts.Bail {
 				summary.Bailed = true
 				break
@@ -152,14 +220,48 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			continue
 		}
 
-		// 1. Resolve folder chain for inheritance
+		// ── Apply filter ────────────────────────────────────────────────────
+		if !FilterRequest(relPath, req, opts.Filter) {
+			skipResult := RequestRunResult{
+				FilePath: filePath,
+				RelPath:  relPath,
+				Request:  req,
+				Passed:   true,
+				Skipped:  true,
+				Duration: time.Since(reqStart),
+			}
+			summary.SkippedRequests++
+			summary.Results = append(summary.Results, skipResult)
+			broadcast(func(rep Reporter) { rep.PrintRequestResult(skipResult) })
+			continue
+		}
+
+		// ── Dry run: print but do not send ──────────────────────────────────
+		if opts.DryRun {
+			method := req.Method
+			dryResult := RequestRunResult{
+				FilePath: filePath,
+				RelPath:  relPath,
+				Request:  req,
+				Passed:   true,
+				Skipped:  true,
+				Duration: 0,
+				Error:    fmt.Sprintf("dry-run: would send %s %s", method, req.URL),
+			}
+			summary.TotalRequests++
+			summary.PassedRequests++
+			summary.Results = append(summary.Results, dryResult)
+			broadcast(func(rep Reporter) { rep.PrintRequestResult(dryResult) })
+			continue
+		}
+
+		// ── Folder inheritance ──────────────────────────────────────────────
 		var folderChain []workspace.FolderChainItem
 		if r.inheritanceResolver != nil {
 			folderChain, _ = r.inheritanceResolver.DiscoverFolderChain(wsRoot, filePath)
 		}
 
-		// 2. Merge folder variables with current chained environment variables
-		currentVarMap := make(map[string]string)
+		currentVarMap := make(map[string]string, len(varMap))
 		for k, v := range varMap {
 			currentVarMap[k] = v
 		}
@@ -167,7 +269,6 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			currentVarMap, _ = r.inheritanceResolver.MergeVariables(currentVarMap, folderChain, nil)
 		}
 
-		// 3. Merge headers and resolve auth
 		reqToExecute := *req
 		if r.inheritanceResolver != nil && len(folderChain) > 0 {
 			mergedHeaders, _ := r.inheritanceResolver.MergeHeaders(folderChain, req.Headers)
@@ -176,12 +277,15 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			reqToExecute.Auth = resolvedAuth
 		}
 
-		// 4. Interpolate request with current chained environment variables + folder variables
+		// ── Apply global timeout override ───────────────────────────────────
+		if opts.TimeoutMs > 0 {
+			reqToExecute.Settings.TimeoutMs = opts.TimeoutMs
+		}
+
 		interpolatedReq := r.interpolator.InterpolateRequest(&reqToExecute, currentVarMap)
 
-		// 5. Build script chains
-		var preScripts []workspace.ScriptChainItem
-		var postScripts []workspace.ScriptChainItem
+		// ── Pre-request scripts ─────────────────────────────────────────────
+		var preScripts, postScripts []workspace.ScriptChainItem
 		if r.inheritanceResolver != nil && len(folderChain) > 0 {
 			preScripts, postScripts = r.inheritanceResolver.ResolveScripts(folderChain, interpolatedReq.Scripts)
 		} else {
@@ -193,7 +297,6 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			}
 		}
 
-		// 6. Execute Pre-Request scripts (Root-to-Leaf)
 		var preErrOccurred error
 		if r.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
@@ -202,7 +305,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 				if preResult != nil {
 					for k, v := range preResult.ExtractedEnvVars {
 						currentVarMap[k] = v
-						varMap[k] = v // propagate to subsequent requests
+						varMap[k] = v
 					}
 					interpolatedReq = preResult.Request
 				}
@@ -214,22 +317,15 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 		}
 
 		if preErrOccurred != nil {
+			hasConfigError = true
 			reqResult := RequestRunResult{
-				FilePath: filePath,
-				RelPath:  relPath,
-				Request:  req,
-				Passed:   false,
-				Error:    preErrOccurred.Error(),
-				Duration: time.Since(reqStart),
+				FilePath: filePath, RelPath: relPath, Request: req,
+				Passed: false, Error: preErrOccurred.Error(), Duration: time.Since(reqStart),
 			}
 			summary.TotalRequests++
 			summary.FailedRequests++
 			summary.Results = append(summary.Results, reqResult)
-
-			if opts.ReportFormat != "json" {
-				r.formatter.PrintRequestFailure(out, relPath, req.Method, reqResult.Error, reqResult.Duration)
-			}
-
+			broadcast(func(rep Reporter) { rep.PrintRequestResult(reqResult) })
 			if opts.Bail {
 				summary.Bailed = true
 				break
@@ -237,27 +333,48 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			continue
 		}
 
-		// 7. Execute HTTP request
-		execResult, execErr := r.client.Execute(ctx, interpolatedReq)
+		// ── Execute HTTP request (with retry on network error) ───────────────
+		maxAttempts := 1 + opts.RetryCount
+		var execResult *types.ExecutionResult
+		var execErr error
+		var retryCount int
+
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-ctx.Done():
+					execErr = ctx.Err()
+					goto afterRetry
+				case <-time.After(time.Duration(attempt*500) * time.Millisecond):
+				}
+			}
+			execResult, execErr = r.client.Execute(ctx, interpolatedReq)
+			retryCount = attempt
+			if execErr == nil || execResult != nil {
+				break // success or partial result
+			}
+			// only retry on network errors
+			if !isNetworkError(execErr) {
+				break
+			}
+		}
+	afterRetry:
+
 		reqDuration := time.Since(reqStart)
 
 		if execErr != nil && execResult == nil {
+			hasNetworkError = true
 			reqResult := RequestRunResult{
-				FilePath: filePath,
-				RelPath:  relPath,
-				Request:  req,
-				Passed:   false,
-				Error:    fmt.Sprintf("Network execution error: %v", execErr),
-				Duration: reqDuration,
+				FilePath: filePath, RelPath: relPath, Request: req,
+				Passed:     false,
+				Error:      fmt.Sprintf("Network execution error: %v", execErr),
+				Duration:   reqDuration,
+				RetryCount: retryCount,
 			}
 			summary.TotalRequests++
 			summary.FailedRequests++
 			summary.Results = append(summary.Results, reqResult)
-
-			if opts.ReportFormat != "json" {
-				r.formatter.PrintRequestFailure(out, relPath, req.Method, reqResult.Error, reqResult.Duration)
-			}
-
+			broadcast(func(rep Reporter) { rep.PrintRequestResult(reqResult) })
 			if opts.Bail {
 				summary.Bailed = true
 				break
@@ -265,7 +382,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			continue
 		}
 
-		// 8. Execute Post-Response test scripts (Leaf-to-Root)
+		// ── Post-response scripts ───────────────────────────────────────────
 		if r.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
 			for _, s := range postScripts {
@@ -282,7 +399,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			}
 		}
 
-		// Evaluate pass/fail status
+		// ── Evaluate pass/fail ──────────────────────────────────────────────
 		passed := true
 		var failureReason string
 
@@ -298,6 +415,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			} else {
 				summary.FailedTests++
 				passed = false
+				hasAssertionFailure = true
 				if failureReason == "" {
 					failureReason = fmt.Sprintf("Assertion failed: %s (%s)", test.Name, test.Message)
 				}
@@ -311,6 +429,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			summary.FailedRequests++
 		}
 
+		// ── Mask secrets ────────────────────────────────────────────────────
 		if len(secretValues) > 0 {
 			failureReason = security.MaskSecrets(failureReason, secretValues)
 			if execResult != nil {
@@ -325,19 +444,13 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 		}
 
 		reqResult := RequestRunResult{
-			FilePath: filePath,
-			RelPath:  relPath,
-			Request:  req,
-			Result:   execResult,
-			Passed:   passed,
-			Error:    failureReason,
-			Duration: reqDuration,
+			FilePath: filePath, RelPath: relPath,
+			Request: req, Result: execResult,
+			Passed: passed, Error: failureReason,
+			Duration: reqDuration, RetryCount: retryCount,
 		}
 		summary.Results = append(summary.Results, reqResult)
-
-		if opts.ReportFormat != "json" {
-			r.formatter.PrintRequestResult(out, reqResult)
-		}
+		broadcast(func(rep Reporter) { rep.PrintRequestResult(reqResult) })
 
 		if !passed && opts.Bail {
 			summary.Bailed = true
@@ -348,11 +461,19 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 	summary.TotalDuration = time.Since(startTime)
 	summary.Success = (summary.FailedRequests == 0 && summary.FailedTests == 0 && !summary.Bailed)
 
-	if opts.ReportFormat == "json" {
-		r.formatter.PrintJSON(out, summary)
-	} else {
-		r.formatter.PrintSummary(out, summary)
+	// Compute exit code
+	switch {
+	case hasConfigError && !hasNetworkError && !hasAssertionFailure:
+		summary.ExitCode = ExitConfigError
+	case hasNetworkError && !hasAssertionFailure:
+		summary.ExitCode = ExitNetworkError
+	case !summary.Success:
+		summary.ExitCode = ExitAssertionFail
+	default:
+		summary.ExitCode = ExitSuccess
 	}
+
+	broadcast(func(rep Reporter) { rep.PrintSummary(summary) })
 
 	return summary, nil
 }
@@ -364,7 +485,6 @@ func (r *Runner) discoverRequests(targetPath string) ([]string, error) {
 		return nil, err
 	}
 
-	// Single request file execution
 	if !fi.IsDir() {
 		if strings.HasSuffix(targetPath, workspace.PebbleExt) {
 			return []string{targetPath}, nil
@@ -377,7 +497,6 @@ func (r *Runner) discoverRequests(targetPath string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-
 		name := info.Name()
 		if info.IsDir() {
 			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "dist" {
@@ -385,18 +504,14 @@ func (r *Runner) discoverRequests(targetPath string) ([]string, error) {
 			}
 			return nil
 		}
-
 		if strings.HasSuffix(name, workspace.PebbleExt) {
 			files = append(files, path)
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
-
-	// Sort files alphabetically to ensure deterministic test order
 	sort.Strings(files)
 	return files, nil
 }
@@ -407,34 +522,45 @@ func (r *Runner) findWorkspaceRoot(path string) string {
 	if err != nil {
 		return path
 	}
-
 	fi, err := os.Stat(absPath)
 	if err == nil && !fi.IsDir() {
 		absPath = filepath.Dir(absPath)
 	}
-
 	curr := absPath
 	for i := 0; i < 6; i++ {
 		pebbleDir := filepath.Join(curr, workspace.PebbleDir)
 		if fi, err := os.Stat(pebbleDir); err == nil && fi.IsDir() {
 			return curr
 		}
-
 		parent := filepath.Dir(curr)
 		if parent == curr || parent == "/" || parent == "." {
 			break
 		}
 		curr = parent
 	}
-
 	return absPath
 }
 
-// scriptTimeoutFor converts the per-request ScriptTimeoutMs setting to a
-// Duration. Zero or negative values fall back to the engine default (5 s).
+// scriptTimeoutFor converts the per-request ScriptTimeoutMs setting to a Duration.
 func scriptTimeoutFor(ms int) time.Duration {
 	if ms <= 0 {
 		return scripting.DefaultScriptTimeout
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// isNetworkError returns true for errors that are worth retrying (network-level).
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "eof")
 }
