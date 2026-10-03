@@ -94,6 +94,47 @@ type CookieItem struct {
 	SameSite string    `json:"sameSite,omitempty"`
 }
 
+// GrpcDefinition represents gRPC call configuration.
+type GrpcDefinition struct {
+	Address            string     `json:"address"`
+	ProtoSource        string     `json:"protoSource"` // "reflection" or "file"
+	ProtoFiles         []string   `json:"protoFiles,omitempty"`
+	ImportPaths        []string   `json:"importPaths,omitempty"`
+	Service            string     `json:"service"`
+	Method             string     `json:"method"`
+	Metadata           []KeyValue `json:"metadata,omitempty"`
+	Message            string     `json:"message,omitempty"`  // JSON payload for unary/server-streaming
+	Messages           []string   `json:"messages,omitempty"` // Multiple JSON payloads for client/bidi streaming
+	UseTLS             bool       `json:"useTls"`
+	InsecureSkipVerify bool       `json:"insecureSkipVerify,omitempty"`
+	RootCAPath         string     `json:"rootCaPath,omitempty"`
+}
+
+// GrpcStreamMessage represents a message exchanged during a gRPC call.
+type GrpcStreamMessage struct {
+	Index     int       `json:"index"`
+	Direction string    `json:"direction"` // "send" or "receive"
+	Timestamp time.Time `json:"timestamp"`
+	Payload   string    `json:"payload"` // JSON string
+	IsError   bool      `json:"isError,omitempty"`
+}
+
+// GrpcMethodInfo describes a method within a gRPC service.
+type GrpcMethodInfo struct {
+	Name            string `json:"name"`
+	FullMethod      string `json:"fullMethod"`
+	ClientStreaming bool   `json:"clientStreaming"`
+	ServerStreaming bool   `json:"serverStreaming"`
+	InputType       string `json:"inputType"`
+	OutputType      string `json:"outputType"`
+}
+
+// GrpcServiceInfo describes a gRPC service and its methods.
+type GrpcServiceInfo struct {
+	Name    string           `json:"name"`
+	Methods []GrpcMethodInfo `json:"methods"`
+}
+
 // RequestDefinition is the schema for a *.pebble.json file.
 type RequestDefinition struct {
 	Schema        string            `json:"$schema,omitempty"`
@@ -103,13 +144,15 @@ type RequestDefinition struct {
 	Name          string            `json:"name"`
 	Description   string            `json:"description,omitempty"`
 	Order         int               `json:"order,omitempty"`
-	Tags          []string          `json:"tags,omitempty"` // used for --tag filtering in CLI
+	Tags          []string          `json:"tags,omitempty"`     // used for --tag filtering in CLI
+	Protocol      string            `json:"protocol,omitempty"` // "http" (default) or "grpc"
 	Method        string            `json:"method"`
 	URL           string            `json:"url"`
 	Headers       []KeyValue        `json:"headers,omitempty"`
 	Params        []KeyValue        `json:"params,omitempty"`
 	Auth          AuthDefinition    `json:"auth"`
 	Body          BodyDefinition    `json:"body"`
+	Grpc          *GrpcDefinition   `json:"grpc,omitempty"`
 	Scripts       ScriptDefinition  `json:"scripts"`
 	Settings      SettingDefinition `json:"settings"`
 }
@@ -218,6 +261,11 @@ type ExecutionResult struct {
 	Timing           TimingMetrics         `json:"timing"`
 	RedirectChain    []RedirectHop         `json:"redirectChain,omitempty"` // hops before the final response
 	SentRequest      *SentRequestSummary   `json:"sentRequest,omitempty"`   // the actual request sent over the wire
+	GrpcStatus       *int                  `json:"grpcStatus,omitempty"`
+	GrpcStatusText   string                `json:"grpcStatusText,omitempty"`
+	GrpcMetadata     map[string][]string   `json:"grpcMetadata,omitempty"`
+	GrpcTrailers     map[string][]string   `json:"grpcTrailers,omitempty"`
+	GrpcMessages     []GrpcStreamMessage   `json:"grpcMessages,omitempty"`
 	Tests            []TestAssertionResult `json:"tests"`
 	Logs             []string              `json:"logs"`
 	ConsoleLogs      []ConsoleLogEntry     `json:"consoleLogs,omitempty"`

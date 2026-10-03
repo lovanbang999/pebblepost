@@ -82,6 +82,43 @@ export interface CookieItem {
   sameSite?: string
 }
 
+export interface GrpcDefinition {
+  address: string
+  protoSource: 'reflection' | 'file'
+  protoFiles?: string[]
+  importPaths?: string[]
+  service: string
+  method: string
+  metadata?: KeyValue[]
+  message?: string
+  messages?: string[]
+  useTls: boolean
+  insecureSkipVerify?: boolean
+  rootCaPath?: string
+}
+
+export interface GrpcStreamMessage {
+  index: number
+  direction: 'send' | 'receive'
+  timestamp: string
+  payload: string
+  isError?: boolean
+}
+
+export interface GrpcMethodInfo {
+  name: string
+  fullMethod: string
+  clientStreaming: boolean
+  serverStreaming: boolean
+  inputType: string
+  outputType: string
+}
+
+export interface GrpcServiceInfo {
+  name: string
+  methods: GrpcMethodInfo[]
+}
+
 export interface RequestDefinition {
   $schema?: string
   schemaVersion?: number
@@ -90,12 +127,14 @@ export interface RequestDefinition {
   name: string
   description?: string
   order?: number
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
+  protocol?: 'http' | 'grpc'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'GRPC' | string
   url: string
   headers?: KeyValue[]
   params?: KeyValue[]
   auth: AuthDefinition
   body: BodyDefinition
+  grpc?: GrpcDefinition
   scripts: ScriptDefinition
   settings: SettingDefinition
 }
@@ -193,6 +232,11 @@ export interface ExecutionResult {
   timing: TimingMetrics
   redirectChain?: RedirectHop[]
   sentRequest?: SentRequestSummary
+  grpcStatus?: number
+  grpcStatusText?: string
+  grpcMetadata?: Record<string, string[]>
+  grpcTrailers?: Record<string, string[]>
+  grpcMessages?: GrpcStreamMessage[]
   tests: TestAssertionResult[]
   logs: string[]
   consoleLogs?: ConsoleLogEntry[]

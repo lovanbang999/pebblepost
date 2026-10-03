@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"golang.org/x/net/proxy"
+	"pebblepost/internal/grpcclient"
 	"pebblepost/internal/types"
 )
 
@@ -32,6 +33,7 @@ type Client interface {
 	Execute(ctx context.Context, req *types.RequestDefinition) (*types.ExecutionResult, error)
 	SetWorkspace(wsPath string)
 	GetCookieJar() *PersistentJar
+	GetGrpcClient() *grpcclient.Client
 }
 
 // DefaultClient implements the Client interface using Go's net/http.
@@ -39,6 +41,7 @@ type DefaultClient struct {
 	defaultTimeout time.Duration
 	cookieJar      *PersistentJar
 	oauth2Manager  *OAuth2Manager
+	grpcClient     *grpcclient.Client
 }
 
 // NewClient creates a new HTTP Client instance.
@@ -47,15 +50,21 @@ func NewClient() *DefaultClient {
 		defaultTimeout: 30 * time.Second,
 		cookieJar:      NewPersistentJar(""),
 		oauth2Manager:  GetOAuth2Manager(),
+		grpcClient:     grpcclient.NewClient(""),
 	}
 }
 
-// SetWorkspace updates the workspace path for the client's cookie jar.
+// SetWorkspace updates the workspace path for the client's cookie jar and grpc client.
 func (c *DefaultClient) SetWorkspace(wsPath string) {
 	if c.cookieJar == nil {
 		c.cookieJar = NewPersistentJar(wsPath)
 	} else {
 		c.cookieJar.SetWorkspace(wsPath)
+	}
+	if c.grpcClient == nil {
+		c.grpcClient = grpcclient.NewClient(wsPath)
+	} else {
+		c.grpcClient.SetWorkspace(wsPath)
 	}
 }
 
@@ -64,10 +73,26 @@ func (c *DefaultClient) GetCookieJar() *PersistentJar {
 	return c.cookieJar
 }
 
-// Execute performs the HTTP request based on the provided RequestDefinition.
+// GetGrpcClient returns the dynamic gRPC client.
+func (c *DefaultClient) GetGrpcClient() *grpcclient.Client {
+	return c.grpcClient
+}
+
+// Execute performs the HTTP or gRPC request based on the provided RequestDefinition.
 func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinition) (*types.ExecutionResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request definition cannot be nil")
+	}
+
+	// Dispatch to gRPC dynamic client when protocol is grpc or method is GRPC
+	if req.Protocol == "grpc" || req.Method == "GRPC" || req.Grpc != nil {
+		if req.Grpc == nil {
+			req.Grpc = &types.GrpcDefinition{}
+		}
+		if req.Grpc.Address == "" && req.URL != "" {
+			req.Grpc.Address = req.URL
+		}
+		return c.grpcClient.Execute(ctx, req)
 	}
 
 	// Redirect chain is populated by the CheckRedirect hook in buildHTTPClient.

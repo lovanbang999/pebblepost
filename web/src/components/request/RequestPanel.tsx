@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { GrpcRequestPanel } from "../grpc/GrpcRequestPanel";
+import type { GrpcStreamMessage, ExecutionResult } from "../../types";
 import {
   Send,
   Loader2,
@@ -97,6 +99,7 @@ export function RequestPanel() {
   const [undefinedDialogOpen, setUndefinedDialogOpen] = useState(false);
   const [pendingUndefinedVars, setPendingUndefinedVars] = useState<string[]>([]);
   const [isEnvManagerOpen, setIsEnvManagerOpen] = useState(false);
+  const streamAbortRef = useRef<{ abortController: AbortController; streamId: string } | null>(null);
 
   const { environments, activeEnv } = useWorkspaceStore();
   const availableMap = useMemo(() => {
@@ -227,11 +230,149 @@ export function RequestPanel() {
       </div>
     );
   }
+ 
+  const handleCancelStream = async () => {
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abortController.abort();
+      try {
+        await fetch("/api/grpc/stream/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ streamId: streamAbortRef.current.streamId }),
+        });
+      } catch {
+        // ignore
+      }
+      streamAbortRef.current = null;
+      setIsExecuting(false);
+    }
+  };
 
   const executeRequest = async (isTrusted: boolean) => {
     setIsExecuting(true);
     const { workspacePath, activeEnv } = useWorkspaceStore.getState();
     const startTime = performance.now();
+
+    if (activeRequest.protocol === "grpc" || activeRequest.method === "GRPC") {
+      const streamId = `stream_${Date.now()}`;
+      const abortController = new AbortController();
+      streamAbortRef.current = { abortController, streamId };
+
+      try {
+        const res = await fetch("/api/grpc/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController.signal,
+          body: JSON.stringify({
+            streamId,
+            workspacePath: workspacePath || undefined,
+            environmentName: activeEnv || undefined,
+            path: activeFilePath || undefined,
+            request: activeRequest,
+            trusted: isTrusted,
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `Server responded with ${res.status}`);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("Response body is unreadable");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let currentMessages: GrpcStreamMessage[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+
+          for (const block of lines) {
+            if (!block.trim()) continue;
+            let event = "message";
+            let data = "";
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event: ")) {
+                event = line.slice(7).trim();
+              } else if (line.startsWith("data: ")) {
+                data = line.slice(6).trim();
+              }
+            }
+
+            if (event === "message" && data) {
+              try {
+                const streamMsg: GrpcStreamMessage = JSON.parse(data);
+                currentMessages = [...currentMessages, streamMsg];
+                setLastResult((prev: ExecutionResult | null) => ({
+                  ...(prev || {
+                    statusCode: 200,
+                    statusText: "Streaming",
+                    headers: {},
+                    body: "",
+                    size: 0,
+                    timing: {
+                      dnsLookupMs: 0,
+                      tcpConnectMs: 0,
+                      tlsHandshakeMs: 0,
+                      ttfbMs: 0,
+                      downloadMs: 0,
+                      totalDurationMs: performance.now() - startTime,
+                    },
+                    tests: [],
+                    logs: [],
+                    executedAt: new Date().toISOString(),
+                  }),
+                  grpcMessages: currentMessages,
+                }));
+              } catch {
+                // ignore
+              }
+            } else if (event === "done" && data) {
+              try {
+                const finalResult: ExecutionResult = JSON.parse(data);
+                setLastResult(finalResult);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setLastResult({
+          statusCode: 500,
+          statusText: "Stream Error",
+          headers: {},
+          body: JSON.stringify({ error: errMsg }, null, 2),
+          size: 0,
+          timing: {
+            dnsLookupMs: 0,
+            tcpConnectMs: 0,
+            tlsHandshakeMs: 0,
+            ttfbMs: 0,
+            downloadMs: 0,
+            totalDurationMs: performance.now() - startTime,
+          },
+          tests: [{ name: "gRPC Stream Execution", passed: false, message: errMsg }],
+          logs: ["Error executing gRPC request: " + errMsg],
+          executedAt: new Date().toISOString(),
+          error: errMsg,
+        });
+      } finally {
+        streamAbortRef.current = null;
+        setIsExecuting(false);
+      }
+      return;
+    }
 
     try {
       const res = await fetch("/api/request/execute", {
@@ -433,13 +574,28 @@ export function RequestPanel() {
         {/* HTTP Method Dropdown */}
         <Select
           value={activeRequest.method}
-          onValueChange={(val) =>
-            typeof val === "string" &&
+          onValueChange={(val) => {
+            if (typeof val !== "string") return;
+            const isGrpcVal = val === "GRPC";
             updateActiveRequest((prev) => ({
               ...prev,
               method: val as RequestDefinition["method"],
-            }))
-          }
+              protocol: isGrpcVal ? "grpc" : (prev.protocol === "grpc" ? "http" : prev.protocol),
+              grpc: isGrpcVal
+                ? prev.grpc || {
+                    address: prev.url || "localhost:50051",
+                    protoSource: "reflection",
+                    service: "",
+                    method: "",
+                    message: "{}",
+                    useTls: false,
+                  }
+                : prev.grpc,
+            }));
+            if (isGrpcVal) {
+              setActiveSubTab("grpc");
+            }
+          }}
         >
           <SelectTrigger
             className={`w-26.25 h-8 text-xs font-mono font-bold border transition-colors ${getMethodColor(
@@ -458,6 +614,7 @@ export function RequestPanel() {
                 "DELETE",
                 "HEAD",
                 "OPTIONS",
+                "GRPC",
               ] as const
             ).map((m) => (
               <SelectItem key={m} value={m} className="font-mono font-bold">
@@ -500,59 +657,82 @@ export function RequestPanel() {
           </Button>
         </Tooltip>
 
-        {/* Send Button */}
-        <Button
-          variant="default"
-          size="sm"
-          onClick={handleSend}
-          disabled={isExecuting}
-          className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm"
-        >
-          {isExecuting ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Send className="w-3.5 h-3.5" />
-          )}
-          Send
-        </Button>
+        {/* Send / Cancel Button */}
+        {isExecuting && (activeRequest.method === "GRPC" || activeRequest.protocol === "grpc") ? (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleCancelStream}
+            className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm animate-pulse"
+          >
+            Cancel
+          </Button>
+        ) : (
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleSend}
+            disabled={isExecuting}
+            className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm"
+          >
+            {isExecuting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
+            Send
+          </Button>
+        )}
       </div>
 
       {/* Sub Tabs */}
-      <Tabs
-        value={activeTab}
-        onValueChange={(val) =>
-          setActiveSubTab(val as RequestTab["activeSubTab"])
-        }
-        className="flex-1 overflow-hidden"
-      >
-        <TabsList>
-          {(
-            [
-              "params",
-              "headers",
-              "auth",
-              "body",
-              "scripts",
-              "settings",
-            ] as const
-          ).map((tab) => (
-            <TabsTrigger key={tab} value={tab} className="capitalize">
-              {tab}
-              {tab === "headers" &&
-                (activeRequest.headers?.length || 0) > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className="ml-1.5 px-1 py-0 text-[9px]"
-                  >
-                    {activeRequest.headers?.filter((h) => h.enabled).length}
-                  </Badge>
-                )}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      {(() => {
+        const isGrpc = activeRequest.method === "GRPC" || activeRequest.protocol === "grpc";
+        const subTabs = isGrpc
+          ? (["grpc", "scripts", "settings"] as const)
+          : (["params", "headers", "auth", "body", "scripts", "settings"] as const);
+        const resolvedActiveTab =
+          isGrpc && !(subTabs as readonly string[]).includes(activeTab)
+            ? "grpc"
+            : activeTab;
 
-        {/* Tab Content Panels */}
-        <div className="flex-1 overflow-y-auto p-3">
+        return (
+          <Tabs
+            value={resolvedActiveTab}
+            onValueChange={(val) =>
+              setActiveSubTab(val as RequestTab["activeSubTab"])
+            }
+            className="flex-1 overflow-hidden"
+          >
+            <TabsList>
+              {subTabs.map((tab) => (
+                <TabsTrigger key={tab} value={tab} className="capitalize">
+                  {tab === "grpc" ? "gRPC Config" : tab}
+                  {tab === "headers" &&
+                    (activeRequest.headers?.length || 0) > 0 && (
+                      <Badge
+                        variant="secondary"
+                        className="ml-1.5 px-1 py-0 text-[9px]"
+                      >
+                        {activeRequest.headers?.filter((h) => h.enabled).length}
+                      </Badge>
+                    )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+
+            {/* Tab Content Panels */}
+            <div className="flex-1 overflow-y-auto p-3">
+              {isGrpc && (
+                <TabsContent value="grpc" className="h-[calc(100vh-230px)] min-h-112.5 m-0 -m-3">
+                  <GrpcRequestPanel
+                    request={activeRequest}
+                    onChange={updateActiveRequest}
+                    isExecuting={isExecuting}
+                    onCancel={handleCancelStream}
+                  />
+                </TabsContent>
+              )}
           <TabsContent value="headers">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-zinc-400 mb-2">
@@ -1846,6 +2026,8 @@ export function RequestPanel() {
           </TabsContent>
         </div>
       </Tabs>
+        );
+      })()}
 
       <CookieManagerDialog
         isOpen={isCookieManagerOpen}

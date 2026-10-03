@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package test;
+
+service TestService {
+  rpc UnaryCall (TestRequest) returns (TestResponse);
+  rpc ServerStreamCall (TestRequest) returns (stream TestResponse);
+  rpc ClientStreamCall (stream TestRequest) returns (SummaryResponse);
+  rpc BidiStreamCall (stream TestRequest) returns (stream TestResponse);
+}
+
+message TestRequest {
+  string message = 1;
+  int32 count = 2;
+}
+
+message TestResponse {
+  string reply = 1;
+  string status = 2;
+}
+
+message SummaryResponse {
+  int32 total_received = 1;
+  string summary = 2;
+}

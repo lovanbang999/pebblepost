@@ -347,21 +347,120 @@ func (in *Interpolator) InterpolateRequestWithError(req *types.RequestDefinition
 		}
 	}
 
+	// gRPC
+	var grpcDef *types.GrpcDefinition
+	if req.Grpc != nil {
+		g := req.Grpc
+		addr, err := interp(g.Address)
+		if err != nil {
+			return nil, err
+		}
+		svc, err := interp(g.Service)
+		if err != nil {
+			return nil, err
+		}
+		method, err := interp(g.Method)
+		if err != nil {
+			return nil, err
+		}
+		msg, err := interp(g.Message)
+		if err != nil {
+			return nil, err
+		}
+		rootCA, err := interp(g.RootCAPath)
+		if err != nil {
+			return nil, err
+		}
+		var meta []types.KeyValue
+		if len(g.Metadata) > 0 {
+			meta = make([]types.KeyValue, len(g.Metadata))
+			for i, m := range g.Metadata {
+				k, err := interp(m.Key)
+				if err != nil {
+					return nil, err
+				}
+				v, err := interp(m.Value)
+				if err != nil {
+					return nil, err
+				}
+				meta[i] = types.KeyValue{Key: k, Value: v, Enabled: m.Enabled, Type: m.Type, Secret: m.Secret}
+			}
+		}
+		var messages []string
+		if len(g.Messages) > 0 {
+			messages = make([]string, len(g.Messages))
+			for i, m := range g.Messages {
+				im, err := interp(m)
+				if err != nil {
+					return nil, err
+				}
+				messages[i] = im
+			}
+		}
+		grpcDef = &types.GrpcDefinition{
+			Address:            addr,
+			ProtoSource:        g.ProtoSource,
+			ProtoFiles:         g.ProtoFiles,
+			ImportPaths:        g.ImportPaths,
+			Service:            svc,
+			Method:             method,
+			Metadata:           meta,
+			Message:            msg,
+			Messages:           messages,
+			UseTLS:             g.UseTLS,
+			InsecureSkipVerify: g.InsecureSkipVerify,
+			RootCAPath:         rootCA,
+		}
+	}
+
 	return &types.RequestDefinition{
-		Schema:      req.Schema,
-		Version:     req.Version,
-		ID:          req.ID,
-		Name:        name,
-		Description: desc,
-		Method:      req.Method,
-		URL:         url,
-		Headers:     headers,
-		Params:      params,
-		Auth:        auth,
-		Body:        body,
-		Scripts:     req.Scripts,
-		Settings:    in.InterpolateSettings(req.Settings, vars),
+		Schema:        req.Schema,
+		SchemaVersion: req.SchemaVersion,
+		Version:       req.Version,
+		ID:            req.ID,
+		Name:          name,
+		Description:   desc,
+		Order:         req.Order,
+		Tags:          req.Tags,
+		Protocol:      req.Protocol,
+		Method:        req.Method,
+		URL:           url,
+		Headers:       headers,
+		Params:        params,
+		Auth:          auth,
+		Body:          body,
+		Grpc:          grpcDef,
+		Scripts:       req.Scripts,
+		Settings:      in.InterpolateSettings(req.Settings, vars),
 	}, nil
+}
+
+// InterpolateGrpc interpolates gRPC configuration fields.
+func (in *Interpolator) InterpolateGrpc(g *types.GrpcDefinition, vars map[string]string) *types.GrpcDefinition {
+	if g == nil {
+		return nil
+	}
+	var messages []string
+	if len(g.Messages) > 0 {
+		messages = make([]string, len(g.Messages))
+		for i, m := range g.Messages {
+			messages[i] = in.InterpolateString(m, vars)
+		}
+	}
+	return &types.GrpcDefinition{
+		Address:            in.InterpolateString(g.Address, vars),
+		ProtoSource:        g.ProtoSource,
+		ProtoFiles:         g.ProtoFiles,
+		ImportPaths:        g.ImportPaths,
+		Service:            in.InterpolateString(g.Service, vars),
+		Method:             in.InterpolateString(g.Method, vars),
+		Metadata:           in.InterpolateKeyValues(g.Metadata, vars),
+		Message:            in.InterpolateString(g.Message, vars),
+		Messages:           messages,
+		UseTLS:             g.UseTLS,
+		InsecureSkipVerify: g.InsecureSkipVerify,
+		RootCAPath:         in.InterpolateString(g.RootCAPath, vars),
+	}
 }
 
 // InterpolateRequest produces a deep copy of RequestDefinition with all variables resolved.
@@ -371,19 +470,24 @@ func (in *Interpolator) InterpolateRequest(req *types.RequestDefinition, vars ma
 	}
 
 	return &types.RequestDefinition{
-		Schema:      req.Schema,
-		Version:     req.Version,
-		ID:          req.ID,
-		Name:        in.InterpolateString(req.Name, vars),
-		Description: in.InterpolateString(req.Description, vars),
-		Method:      req.Method,
-		URL:         in.InterpolateString(req.URL, vars),
-		Headers:     in.InterpolateKeyValues(req.Headers, vars),
-		Params:      in.InterpolateKeyValues(req.Params, vars),
-		Auth:        in.InterpolateAuth(req.Auth, vars),
-		Body:        in.InterpolateBody(req.Body, vars),
-		Scripts:     req.Scripts, // Scripts are executed at runtime, not interpolated
-		Settings:    in.InterpolateSettings(req.Settings, vars),
+		Schema:        req.Schema,
+		SchemaVersion: req.SchemaVersion,
+		Version:       req.Version,
+		ID:            req.ID,
+		Name:          in.InterpolateString(req.Name, vars),
+		Description:   in.InterpolateString(req.Description, vars),
+		Order:         req.Order,
+		Tags:          req.Tags,
+		Protocol:      req.Protocol,
+		Method:        req.Method,
+		URL:           in.InterpolateString(req.URL, vars),
+		Headers:       in.InterpolateKeyValues(req.Headers, vars),
+		Params:        in.InterpolateKeyValues(req.Params, vars),
+		Auth:          in.InterpolateAuth(req.Auth, vars),
+		Body:          in.InterpolateBody(req.Body, vars),
+		Grpc:          in.InterpolateGrpc(req.Grpc, vars),
+		Scripts:       req.Scripts, // Scripts are executed at runtime, not interpolated
+		Settings:      in.InterpolateSettings(req.Settings, vars),
 	}
 }
 

@@ -17,7 +17,7 @@ export interface RequestTab {
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
   lastResult: ExecutionResult | null
-  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars'
+  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc'
   scrollPosition?: number
 }
 
@@ -43,7 +43,12 @@ interface TabState {
   updateActiveRequest: (updater: (prev: RequestDefinition) => RequestDefinition) => void
   updateActiveFolder: (updater: (prev: FolderDefinition) => FolderDefinition) => void
   setActiveSubTab: (subTab: RequestTab['activeSubTab']) => void
-  setLastResult: (result: ExecutionResult | null) => void
+  setLastResult: (
+    result:
+      | ExecutionResult
+      | null
+      | ((prev: ExecutionResult | null) => ExecutionResult | null),
+  ) => void
   setScrollPosition: (scroll: number) => void
   saveCurrentTab: () => Promise<boolean>
 
@@ -477,11 +482,21 @@ export const useTabStore = create<TabState>((set, get) => ({
     })
   },
 
-  setLastResult: (result: ExecutionResult | null) => {
+  setLastResult: (
+    result:
+      | ExecutionResult
+      | null
+      | ((prev: ExecutionResult | null) => ExecutionResult | null),
+  ) => {
     const { tabs, activeTabId } = get()
     if (!activeTabId) return
     set({
-      tabs: tabs.map((t) => (t.id === activeTabId ? { ...t, lastResult: result } : t)),
+      tabs: tabs.map((t) => {
+        if (t.id !== activeTabId) return t
+        const nextResult =
+          typeof result === 'function' ? result(t.lastResult || null) : result
+        return { ...t, lastResult: nextResult }
+      }),
     })
   },
 
