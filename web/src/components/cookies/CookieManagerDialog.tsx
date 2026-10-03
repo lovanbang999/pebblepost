@@ -1,5 +1,14 @@
 import { useState, useEffect } from "react";
-import { Cookie, Trash2, Plus, RefreshCw, X, Globe, Shield, Key } from "lucide-react";
+import {
+  Cookie,
+  Trash2,
+  Plus,
+  RefreshCw,
+  X,
+  Globe,
+  Shield,
+  Key,
+} from "lucide-react";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import type { CookieItem } from "../../types";
 import { Button } from "../ui/button";
@@ -12,9 +21,14 @@ interface CookieManagerDialogProps {
   onClose: () => void;
 }
 
-export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProps) {
+export function CookieManagerDialog({
+  isOpen,
+  onClose,
+}: CookieManagerDialogProps) {
   const { workspacePath } = useWorkspaceStore();
-  const [cookiesByDomain, setCookiesByDomain] = useState<Record<string, CookieItem[]>>({});
+  const [cookiesByDomain, setCookiesByDomain] = useState<
+    Record<string, CookieItem[]>
+  >({});
   const [isLoading, setIsLoading] = useState(false);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
 
@@ -88,7 +102,11 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
     }
   };
 
-  const handleDeleteCookie = async (domain: string, path: string, name: string) => {
+  const handleDeleteCookie = async (
+    domain: string,
+    path: string,
+    name: string,
+  ) => {
     if (!workspacePath) return;
     try {
       const url = new URL("/api/cookies", window.location.origin);
@@ -123,7 +141,11 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
   };
 
   const handleClearAll = async () => {
-    if (!workspacePath || !confirm("Are you sure you want to clear ALL workspace cookies?")) return;
+    if (
+      !workspacePath ||
+      !confirm("Are you sure you want to clear ALL workspace cookies?")
+    )
+      return;
     try {
       const url = new URL("/api/cookies", window.location.origin);
       url.searchParams.set("workspacePath", workspacePath);
@@ -141,11 +163,13 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
   if (!isOpen) return null;
 
   const domains = Object.keys(cookiesByDomain).sort();
-  const currentCookies = selectedDomain ? cookiesByDomain[selectedDomain] || [] : [];
+  const currentCookies = selectedDomain
+    ? cookiesByDomain[selectedDomain] || []
+    : [];
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl w-full max-w-4xl h-[650px] flex flex-col overflow-hidden animate-in fade-in-50 zoom-in-95">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl w-full max-w-4xl h-162.5 flex flex-col overflow-hidden animate-in fade-in-50 zoom-in-95">
         {/* Header */}
         <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-900/50">
           <div className="flex items-center gap-3">
@@ -155,12 +179,16 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
             <div>
               <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                 Manage Workspace Cookies
-                <Badge variant="outline" className="text-[10px] font-normal text-zinc-500">
+                <Badge
+                  variant="outline"
+                  className="text-[10px] font-normal text-zinc-500"
+                >
                   .pebble/cookies.json (never tracked in git)
                 </Badge>
               </h2>
               <p className="text-[11px] text-zinc-500">
-                View, add, and delete stored session and persistent cookies by domain.
+                View, add, and delete stored session and persistent cookies by
+                domain.
               </p>
             </div>
           </div>
@@ -173,7 +201,9 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
               disabled={isLoading}
               className="h-8 text-xs gap-1.5 cursor-pointer"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`}
+              />
               Refresh
             </Button>
             <Button
@@ -248,7 +278,10 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
           {/* Cookies Details / Add Form */}
           <div className="flex-1 flex flex-col bg-white dark:bg-zinc-950 overflow-hidden">
             {isAdding ? (
-              <form onSubmit={handleAddCookie} className="p-6 space-y-4 max-w-lg">
+              <form
+                onSubmit={handleAddCookie}
+                className="p-6 space-y-4 max-w-lg"
+              >
                 <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
                   <h3 className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
                     <Plus className="w-4 h-4 text-blue-500" />
@@ -353,7 +386,8 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
                       {selectedDomain}
                     </span>
                     <Badge variant="outline" className="text-[10px]">
-                      {currentCookies.length} cookie{currentCookies.length === 1 ? "" : "s"}
+                      {currentCookies.length} cookie
+                      {currentCookies.length === 1 ? "" : "s"}
                     </Badge>
                   </div>
                   <Button
@@ -403,7 +437,9 @@ export function CookieManagerDialog({ isOpen, onClose }: CookieManagerDialogProp
                             </Badge>
                           )}
                           <button
-                            onClick={() => handleDeleteCookie(c.domain, c.path, c.name)}
+                            onClick={() =>
+                              handleDeleteCookie(c.domain, c.path, c.name)
+                            }
                             className="p-1 text-zinc-400 hover:text-red-500 rounded transition-colors cursor-pointer"
                             title="Delete Cookie"
                           >
