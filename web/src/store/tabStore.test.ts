@@ -353,4 +353,52 @@ describe('useTabStore', () => {
     assert.equal(tab.request.settings.maxRedirects, 5)
     assert.equal(tab.request.settings.connectTimeoutMs, 5000)
   })
+
+  test('tab execution results record structured consoleLogs and assertions', () => {
+    const store = useTabStore.getState()
+    store.openTab('collections/user/get-user.pebble.json', sampleReq, false)
+
+    const execResult = {
+      statusCode: 200,
+      statusText: '200 OK',
+      headers: { 'content-type': ['application/json'] },
+      body: '{"ok":true}',
+      size: 11,
+      timing: {
+        dnsLookupMs: 1,
+        tcpConnectMs: 2,
+        tlsHandshakeMs: 3,
+        ttfbMs: 10,
+        downloadMs: 1,
+        totalDurationMs: 17,
+      },
+      tests: [{ name: 'Status is 200', passed: true }],
+      logs: ['[10:00:00] [Pre-request] [INFO] Request starting'],
+      consoleLogs: [
+        {
+          timestamp: '10:00:00.123',
+          level: 'info' as const,
+          source: 'Pre-request',
+          message: 'Request starting',
+        },
+        {
+          timestamp: '10:00:00.200',
+          level: 'log' as const,
+          source: 'Post-response',
+          message: 'Response received',
+        },
+      ],
+      executedAt: '2026-10-03T10:00:00Z',
+    }
+
+    store.setLastResult(execResult)
+
+    const tab = useTabStore.getState().tabs[0]
+    assert.ok(tab.lastResult)
+    assert.equal(tab.lastResult.statusCode, 200)
+    assert.equal(tab.lastResult.tests.length, 1)
+    assert.equal(tab.lastResult.consoleLogs?.length, 2)
+    assert.equal(tab.lastResult.consoleLogs?.[0].level, 'info')
+    assert.equal(tab.lastResult.consoleLogs?.[1].level, 'log')
+  })
 })

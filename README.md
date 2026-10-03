@@ -218,7 +218,7 @@ pebblepost run ./collections -e staging --report json
 
 - [Architecture & Internals](./docs/architecture.md) - System architecture, Go engines, and frontend design
 - [File & Schema Specification](./docs/specification.md) - `.pebble.json` and workspace format specifications
-- [Scripting API Reference](./docs/scripting-api.md) - Reference for the `pb.*` JavaScript sandbox
+- [Scripting API Reference](./docs/scripting.md) - Reference for the `pb.*` JavaScript sandbox
 - [Import & Code Generation Guide](./docs/import-export.md) - Importing from Postman, OpenAPI, and cURL
 
 ---

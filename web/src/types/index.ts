@@ -156,6 +156,15 @@ export interface TestAssertionResult {
   message?: string
 }
 
+export interface ConsoleLogEntry {
+  timestamp: string
+  level: 'log' | 'info' | 'warn' | 'error'
+  source: string
+  message: string
+  line?: number
+  column?: number
+}
+
 export interface ExecutionResult {
   statusCode: number
   statusText: string
@@ -165,6 +174,7 @@ export interface ExecutionResult {
   timing: TimingMetrics
   tests: TestAssertionResult[]
   logs: string[]
+  consoleLogs?: ConsoleLogEntry[]
   extractedEnvVars?: Record<string, string>
   executedAt: string
   error?: string

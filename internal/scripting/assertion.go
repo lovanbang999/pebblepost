@@ -29,6 +29,110 @@ const AssertionLibraryJS = `
         return true;
     }
 
+    function validateJSONSchema(data, schema, path, errors) {
+        if (!schema || typeof schema !== 'object') return;
+        path = path || 'root';
+
+        // 1. type
+        if (schema.type) {
+            const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+            let matched = false;
+            for (let i = 0; i < types.length; i++) {
+                const t = types[i].toLowerCase();
+                if (t === 'null' && data === null) matched = true;
+                else if (t === 'array' && Array.isArray(data)) matched = true;
+                else if (t === 'integer' && typeof data === 'number' && Math.floor(data) === data) matched = true;
+                else if (t === 'number' && typeof data === 'number') matched = true;
+                else if (t === 'boolean' && typeof data === 'boolean') matched = true;
+                else if (t === 'string' && typeof data === 'string') matched = true;
+                else if (t === 'object' && typeof data === 'object' && data !== null && !Array.isArray(data)) matched = true;
+            }
+            if (!matched) {
+                errors.push(path + ": expected type " + JSON.stringify(schema.type) + ", got " + (data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data));
+                return; // skip further checks on wrong type
+            }
+        }
+
+        // 2. enum
+        if (Array.isArray(schema.enum)) {
+            let inEnum = false;
+            for (let i = 0; i < schema.enum.length; i++) {
+                if (deepEqual(data, schema.enum[i])) {
+                    inEnum = true;
+                    break;
+                }
+            }
+            if (!inEnum) {
+                errors.push(path + ": value " + formatValue(data) + " is not in enum " + JSON.stringify(schema.enum));
+            }
+        }
+
+        // 3. Object checks
+        if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+            // required
+            if (Array.isArray(schema.required)) {
+                for (let i = 0; i < schema.required.length; i++) {
+                    const reqProp = schema.required[i];
+                    if (!Object.prototype.hasOwnProperty.call(data, reqProp)) {
+                        errors.push(path + ": missing required property '" + reqProp + "'");
+                    }
+                }
+            }
+
+            // properties
+            if (schema.properties && typeof schema.properties === 'object') {
+                const propKeys = Object.keys(schema.properties);
+                for (let i = 0; i < propKeys.length; i++) {
+                    const prop = propKeys[i];
+                    if (Object.prototype.hasOwnProperty.call(data, prop)) {
+                        validateJSONSchema(data[prop], schema.properties[prop], path + "." + prop, errors);
+                    }
+                }
+            }
+        }
+
+        // 4. Array checks
+        if (Array.isArray(data)) {
+            if (schema.items) {
+                for (let i = 0; i < data.length; i++) {
+                    validateJSONSchema(data[i], schema.items, path + "[" + i + "]", errors);
+                }
+            }
+            if (typeof schema.minItems === 'number' && data.length < schema.minItems) {
+                errors.push(path + ": array length " + data.length + " is less than minItems " + schema.minItems);
+            }
+            if (typeof schema.maxItems === 'number' && data.length > schema.maxItems) {
+                errors.push(path + ": array length " + data.length + " exceeds maxItems " + schema.maxItems);
+            }
+        }
+
+        // 5. String checks
+        if (typeof data === 'string') {
+            if (typeof schema.minLength === 'number' && data.length < schema.minLength) {
+                errors.push(path + ": string length " + data.length + " is less than minLength " + schema.minLength);
+            }
+            if (typeof schema.maxLength === 'number' && data.length > schema.maxLength) {
+                errors.push(path + ": string length " + data.length + " exceeds maxLength " + schema.maxLength);
+            }
+            if (schema.pattern) {
+                const reg = new RegExp(schema.pattern);
+                if (!reg.test(data)) {
+                    errors.push(path + ": string does not match pattern '" + schema.pattern + "'");
+                }
+            }
+        }
+
+        // 6. Number checks
+        if (typeof data === 'number') {
+            if (typeof schema.minimum === 'number' && data < schema.minimum) {
+                errors.push(path + ": value " + data + " is less than minimum " + schema.minimum);
+            }
+            if (typeof schema.maximum === 'number' && data > schema.maximum) {
+                errors.push(path + ": value " + data + " exceeds maximum " + schema.maximum);
+            }
+        }
+    }
+
     class Assertion {
         constructor(actual, isNegated = false) {
             this.actual = actual;
@@ -59,11 +163,28 @@ const AssertionLibraryJS = `
             return this;
         }
 
+        get which() {
+            return this;
+        }
+
+        get deep() {
+            return this;
+        }
+
         get ok() {
             const pass = Boolean(this.actual);
             const condition = this.isNegated ? !pass : pass;
             if (!condition) {
                 throw new Error("expected " + formatValue(this.actual) + (this.isNegated ? " not to be truthy" : " to be truthy"));
+            }
+            return this;
+        }
+
+        get exist() {
+            const pass = this.actual !== null && this.actual !== undefined;
+            const condition = this.isNegated ? !pass : pass;
+            if (!condition) {
+                throw new Error("expected " + formatValue(this.actual) + (this.isNegated ? " not to exist" : " to exist"));
             }
             return this;
         }
@@ -119,6 +240,21 @@ const AssertionLibraryJS = `
 
         eql(expected) {
             return this.equal(expected);
+        }
+
+        status(expected) {
+            let actualStatus = this.actual;
+            if (this.actual && typeof this.actual === 'object' && typeof this.actual.status === 'number') {
+                actualStatus = this.actual.status;
+            } else if (this.actual && typeof this.actual === 'object' && typeof this.actual.code === 'number') {
+                actualStatus = this.actual.code;
+            }
+            const pass = actualStatus === expected;
+            const condition = this.isNegated ? !pass : pass;
+            if (!condition) {
+                throw new Error("expected response status " + (this.isNegated ? "not to equal " : "to equal ") + expected + " but got " + actualStatus);
+            }
+            return this;
         }
 
         a(typeStr) {
@@ -228,14 +364,18 @@ const AssertionLibraryJS = `
             return this;
         }
 
-        lengthOf(len) {
-            const actualLen = this.actual ? this.actual.length : undefined;
+        length(len) {
+            const actualLen = this.actual !== null && this.actual !== undefined ? this.actual.length : undefined;
             const pass = actualLen === len;
             const condition = this.isNegated ? !pass : pass;
             if (!condition) {
-                throw new Error("expected " + formatValue(this.actual) + " to have length " + len + " but got " + actualLen);
+                throw new Error("expected " + formatValue(this.actual) + (this.isNegated ? " not to have length " : " to have length ") + len + " but got " + actualLen);
             }
             return this;
+        }
+
+        lengthOf(len) {
+            return this.length(len);
         }
 
         oneOf(list) {
@@ -259,6 +399,24 @@ const AssertionLibraryJS = `
                 throw new Error("expected " + formatValue(this.actual) + (this.isNegated ? " not to match " : " to match ") + String(pattern));
             }
             return this;
+        }
+
+        jsonSchema(schema) {
+            const errors = [];
+            validateJSONSchema(this.actual, schema, 'root', errors);
+            const pass = errors.length === 0;
+            const condition = this.isNegated ? !pass : pass;
+            if (!condition) {
+                if (this.isNegated) {
+                    throw new Error("expected data not to match JSON schema");
+                }
+                throw new Error("JSON schema validation failed:\n  • " + errors.join("\n  • "));
+            }
+            return this;
+        }
+
+        matchSchema(schema) {
+            return this.jsonSchema(schema);
         }
     }
 

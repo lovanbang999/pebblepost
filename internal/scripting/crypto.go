@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"strings"
@@ -79,7 +80,54 @@ func (c *CryptoModule) Base64Encode(input string) string {
 func (c *CryptoModule) Base64Decode(input string) (string, error) {
 	decoded, err := base64.StdEncoding.DecodeString(input)
 	if err != nil {
-		return "", err
+		// Try URL unpadded
+		decoded, err = base64.RawURLEncoding.DecodeString(input)
+		if err != nil {
+			return "", err
+		}
 	}
 	return string(decoded), nil
+}
+
+// JWTDecode parses unverified header and payload claims from a JWT string.
+func (c *CryptoModule) JWTDecode(token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid JWT: expected at least 2 dot-separated segments")
+	}
+
+	decodeSegment := func(seg string) (any, error) {
+		seg = strings.TrimSpace(seg)
+		decoded, err := base64.RawURLEncoding.DecodeString(seg)
+		if err != nil {
+			decoded, err = base64.URLEncoding.DecodeString(seg)
+			if err != nil {
+				decoded, err = base64.StdEncoding.DecodeString(seg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to base64-decode segment: %w", err)
+				}
+			}
+		}
+
+		var parsed any
+		if err := json.Unmarshal(decoded, &parsed); err != nil {
+			return string(decoded), nil
+		}
+		return parsed, nil
+	}
+
+	header, err := decodeSegment(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("invalid JWT header: %w", err)
+	}
+
+	payload, err := decodeSegment(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid JWT payload: %w", err)
+	}
+
+	return map[string]any{
+		"header":  header,
+		"payload": payload,
+	}, nil
 }

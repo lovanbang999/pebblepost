@@ -20,8 +20,10 @@ import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
 import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
 import CodeMirror from "@uiw/react-codemirror";
+import { autocompletion } from "@codemirror/autocomplete";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
+import { pebbleScriptCompletions } from "../../lib/codemirror-completions";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { useTabStore } from "../../store/tabStore";
 import { TabBar } from "./TabBar";
@@ -755,7 +757,7 @@ export function RequestPanel() {
                   <CodeMirror
                     value={activeRequest.scripts?.preRequest || ""}
                     height="100%"
-                    extensions={[javascript()]}
+                    extensions={[javascript(), autocompletion({ override: [pebbleScriptCompletions] })]}
                     theme={theme === "dark" ? "dark" : "light"}
                     onChange={(val) =>
                       updateActiveRequest((prev) => ({
@@ -795,7 +797,7 @@ export function RequestPanel() {
                   <CodeMirror
                     value={activeRequest.scripts?.postResponse || ""}
                     height="100%"
-                    extensions={[javascript()]}
+                    extensions={[javascript(), autocompletion({ override: [pebbleScriptCompletions] })]}
                     theme={theme === "dark" ? "dark" : "light"}
                     onChange={(val) =>
                       updateActiveRequest((prev) => ({
