@@ -2,6 +2,7 @@ package scripting
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -24,31 +25,51 @@ const maxLogEntryLen = 4096
 type PreRequestResult struct {
 	Request          *types.RequestDefinition `json:"request"`
 	Logs             []string                 `json:"logs"`
+	ConsoleLogs      []types.ConsoleLogEntry  `json:"consoleLogs"`
 	ExtractedEnvVars map[string]string        `json:"extractedEnvVars"`
+	LocalVars        map[string]string        `json:"localVars,omitempty"`
 }
 
 // PostResponseResult holds test outputs and extracted variables from a post-response script.
 type PostResponseResult struct {
 	Tests            []types.TestAssertionResult `json:"tests"`
 	Logs             []string                    `json:"logs"`
+	ConsoleLogs      []types.ConsoleLogEntry     `json:"consoleLogs"`
 	ExtractedEnvVars map[string]string           `json:"extractedEnvVars"`
+	LocalVars        map[string]string           `json:"localVars,omitempty"`
 }
 
 // Engine executes JavaScript scripts within isolated sandboxes.
 type Engine struct {
-	crypto *CryptoModule
+	crypto    *CryptoModule
+	date      *DateModule
+	random    *RandomModule
+	auxiliary *AuxiliaryClient
 }
 
 // NewEngine creates a new Scripting Engine.
 func NewEngine() *Engine {
 	return &Engine{
-		crypto: NewCryptoModule(),
+		crypto:    NewCryptoModule(),
+		date:      NewDateModule(),
+		random:    NewRandomModule(),
+		auxiliary: NewAuxiliaryClient(),
 	}
 }
 
-// ExecutePreRequest runs a pre-request script and applies mutations to the
-// request definition and environment. timeout=0 uses DefaultScriptTimeout.
+// ExecutePreRequest executes a pre-request script with default source name "Pre-request".
 func (e *Engine) ExecutePreRequest(
+	script string,
+	req *types.RequestDefinition,
+	vars map[string]string,
+	timeout time.Duration,
+) (*PreRequestResult, error) {
+	return e.ExecutePreRequestNamed("Pre-request", script, req, vars, timeout)
+}
+
+// ExecutePreRequestNamed executes a pre-request script with a specific source name.
+func (e *Engine) ExecutePreRequestNamed(
+	sourceName string,
 	script string,
 	req *types.RequestDefinition,
 	vars map[string]string,
@@ -58,8 +79,31 @@ func (e *Engine) ExecutePreRequest(
 		return &PreRequestResult{
 			Request:          req,
 			Logs:             []string{},
+			ConsoleLogs:      []types.ConsoleLogEntry{},
 			ExtractedEnvVars: make(map[string]string),
+			LocalVars:        make(map[string]string),
 		}, nil
+	}
+
+	if sourceName == "" {
+		sourceName = "Pre-request"
+	}
+
+	// 1. Static syntax & Goja limitations validation
+	if err := ValidateScriptSyntax(sourceName, script); err != nil {
+		syntaxErrLog := types.ConsoleLogEntry{
+			Timestamp: time.Now(),
+			Level:     "error",
+			Source:    sourceName,
+			Message:   err.Error(),
+		}
+		return &PreRequestResult{
+			Request:          req,
+			Logs:             []string{fmt.Sprintf("[%s Error] %s", sourceName, err.Error())},
+			ConsoleLogs:      []types.ConsoleLogEntry{syntaxErrLog},
+			ExtractedEnvVars: make(map[string]string),
+			LocalVars:        make(map[string]string),
+		}, fmt.Errorf("pre-request script syntax error: %w", err)
 	}
 
 	if timeout <= 0 {
@@ -69,9 +113,11 @@ func (e *Engine) ExecutePreRequest(
 	vm := goja.New()
 
 	var (
-		logsMutex sync.Mutex
-		logs      = make([]string, 0)
-		envVars   = make(map[string]string)
+		logsMutex   sync.Mutex
+		logs        = make([]string, 0)
+		consoleLogs = make([]types.ConsoleLogEntry, 0)
+		envVars     = make(map[string]string)
+		localVars   = make(map[string]string)
 	)
 
 	// Copy incoming variables
@@ -79,35 +125,35 @@ func (e *Engine) ExecutePreRequest(
 		envVars[k] = v
 	}
 
-	// 1. Setup Console
-	e.setupConsole(vm, &logs, &logsMutex)
+	// 2. Setup Console
+	e.setupConsole(vm, &logs, &consoleLogs, &logsMutex, sourceName)
 
-	// 2. Setup Assertion Library JS
+	// 3. Setup Assertion Library JS
 	if _, err := vm.RunString(AssertionLibraryJS); err != nil {
 		return nil, fmt.Errorf("failed to initialize assertion library: %w", err)
 	}
 
-	// 3. Setup Request Bridge
+	// 4. Setup Bridges
 	reqObj := e.setupRequestBridge(vm, req)
-
-	// 4. Setup Environment Bridge
 	envObj := e.setupEnvironmentBridge(vm, envVars)
-
-	// 5. Setup Crypto Bridge
+	varObj := e.setupVariablesBridge(vm, localVars, envVars)
 	cryptoObj := e.setupCryptoBridge(vm)
 
-	// 6. Bind pb and pm objects
+	// 5. Bind pb and pm objects
 	pbObj := vm.NewObject()
 	_ = pbObj.Set("request", reqObj)
 	_ = pbObj.Set("environment", envObj)
-	_ = pbObj.Set("variables", envObj)
+	_ = pbObj.Set("variables", varObj)
 	_ = pbObj.Set("crypto", cryptoObj)
 	_ = pbObj.Set("expect", vm.Get("expect"))
+
+	// Bind extended pb utilities
+	e.bindExtendedPbAPIs(vm, pbObj, timeout)
 
 	_ = vm.Set("pb", pbObj)
 	_ = vm.Set("pm", pbObj) // Postman compatibility
 
-	// 7. Run Script with Timeout
+	// 6. Run Script with Timeout
 	errChan := make(chan error, 1)
 	go func() {
 		_, runErr := vm.RunString(script)
@@ -117,30 +163,60 @@ func (e *Engine) ExecutePreRequest(
 	select {
 	case err := <-errChan:
 		if err != nil {
+			formattedErr := formatScriptError(sourceName, err)
 			logsMutex.Lock()
-			logs = appendLog(logs, fmt.Sprintf("[Pre-request Error] %s", formatScriptError(err)))
+			logs = appendLog(logs, fmt.Sprintf("[%s Error] %s", sourceName, formattedErr))
+			consoleLogs = append(consoleLogs, types.ConsoleLogEntry{
+				Timestamp: time.Now(),
+				Level:     "error",
+				Source:    sourceName,
+				Message:   formattedErr,
+			})
 			logsMutex.Unlock()
+
 			return &PreRequestResult{
 				Request:          req,
 				Logs:             logs,
+				ConsoleLogs:      consoleLogs,
 				ExtractedEnvVars: envVars,
+				LocalVars:        localVars,
 			}, fmt.Errorf("pre-request script error: %w", err)
 		}
 	case <-time.After(timeout):
 		vm.Interrupt(fmt.Sprintf("Script execution timed out (%s)", timeout))
-		return nil, fmt.Errorf("pre-request script timed out after %s", timeout)
+		timeoutMsg := fmt.Sprintf("[%s] execution timed out after %s", sourceName, timeout)
+		consoleLogs = append(consoleLogs, types.ConsoleLogEntry{
+			Timestamp: time.Now(),
+			Level:     "error",
+			Source:    sourceName,
+			Message:   timeoutMsg,
+		})
+		return nil, errors.New(timeoutMsg)
 	}
 
 	return &PreRequestResult{
 		Request:          req,
 		Logs:             logs,
+		ConsoleLogs:      consoleLogs,
 		ExtractedEnvVars: envVars,
+		LocalVars:        localVars,
 	}, nil
 }
 
-// ExecutePostResponse runs a post-response test script, executing assertions
-// and tests. timeout=0 uses DefaultScriptTimeout.
+// ExecutePostResponse runs a post-response test script with default source "Post-response".
 func (e *Engine) ExecutePostResponse(
+	script string,
+	req *types.RequestDefinition,
+	resp *types.ExecutionResult,
+	vars map[string]string,
+	timeout time.Duration,
+) (*PostResponseResult, error) {
+	return e.ExecutePostResponseNamed("Post-response", script, req, resp, vars, timeout)
+}
+
+// ExecutePostResponseNamed runs a post-response test script with a specific source name.
+func (e *Engine) ExecutePostResponseNamed(
+	sourceName string,
 	script string,
 	req *types.RequestDefinition,
 	resp *types.ExecutionResult,
@@ -151,8 +227,35 @@ func (e *Engine) ExecutePostResponse(
 		return &PostResponseResult{
 			Tests:            make([]types.TestAssertionResult, 0),
 			Logs:             make([]string, 0),
+			ConsoleLogs:      make([]types.ConsoleLogEntry, 0),
 			ExtractedEnvVars: make(map[string]string),
+			LocalVars:        make(map[string]string),
 		}, nil
+	}
+
+	if sourceName == "" {
+		sourceName = "Post-response"
+	}
+
+	// 1. Static syntax validation
+	if err := ValidateScriptSyntax(sourceName, script); err != nil {
+		syntaxErrLog := types.ConsoleLogEntry{
+			Timestamp: time.Now(),
+			Level:     "error",
+			Source:    sourceName,
+			Message:   err.Error(),
+		}
+		return &PostResponseResult{
+			Tests: []types.TestAssertionResult{{
+				Name:    fmt.Sprintf("%s Syntax Validation", sourceName),
+				Passed:  false,
+				Message: err.Error(),
+			}},
+			Logs:             []string{fmt.Sprintf("[%s Error] %s", sourceName, err.Error())},
+			ConsoleLogs:      []types.ConsoleLogEntry{syntaxErrLog},
+			ExtractedEnvVars: make(map[string]string),
+			LocalVars:        make(map[string]string),
+		}, fmt.Errorf("post-response script syntax error: %w", err)
 	}
 
 	if timeout <= 0 {
@@ -162,10 +265,12 @@ func (e *Engine) ExecutePostResponse(
 	vm := goja.New()
 
 	var (
-		logsMutex sync.Mutex
-		logs      = make([]string, 0)
-		tests     = make([]types.TestAssertionResult, 0)
-		envVars   = make(map[string]string)
+		logsMutex   sync.Mutex
+		logs        = make([]string, 0)
+		consoleLogs = make([]types.ConsoleLogEntry, 0)
+		tests       = make([]types.TestAssertionResult, 0)
+		envVars     = make(map[string]string)
+		localVars   = make(map[string]string)
 	)
 
 	// Copy incoming variables
@@ -173,24 +278,21 @@ func (e *Engine) ExecutePostResponse(
 		envVars[k] = v
 	}
 
-	// 1. Setup Console
-	e.setupConsole(vm, &logs, &logsMutex)
+	// 2. Setup Console
+	e.setupConsole(vm, &logs, &consoleLogs, &logsMutex, sourceName)
 
-	// 2. Setup Assertion Library JS
+	// 3. Setup Assertion Library JS
 	if _, err := vm.RunString(AssertionLibraryJS); err != nil {
 		return nil, fmt.Errorf("failed to initialize assertion library: %w", err)
 	}
 
-	// 3. Setup Response Bridge
+	// 4. Setup Bridges
 	respObj := e.setupResponseBridge(vm, resp)
-
-	// 4. Setup Environment Bridge
 	envObj := e.setupEnvironmentBridge(vm, envVars)
-
-	// 5. Setup Crypto Bridge
+	varObj := e.setupVariablesBridge(vm, localVars, envVars)
 	cryptoObj := e.setupCryptoBridge(vm)
 
-	// 6. Setup Test function
+	// 5. Setup Test runner function
 	testFn := func(name string, fn goja.Callable) {
 		if fn == nil {
 			tests = append(tests, types.TestAssertionResult{
@@ -216,19 +318,22 @@ func (e *Engine) ExecutePostResponse(
 		}
 	}
 
-	// 7. Bind pb and pm objects
+	// 6. Bind pb and pm objects
 	pbObj := vm.NewObject()
 	_ = pbObj.Set("response", respObj)
 	_ = pbObj.Set("environment", envObj)
-	_ = pbObj.Set("variables", envObj)
+	_ = pbObj.Set("variables", varObj)
 	_ = pbObj.Set("crypto", cryptoObj)
 	_ = pbObj.Set("test", testFn)
 	_ = pbObj.Set("expect", vm.Get("expect"))
 
+	// Bind extended pb utilities
+	e.bindExtendedPbAPIs(vm, pbObj, timeout)
+
 	_ = vm.Set("pb", pbObj)
 	_ = vm.Set("pm", pbObj)
 
-	// 8. Run Script with Timeout
+	// 7. Run Script with Timeout
 	errChan := make(chan error, 1)
 	go func() {
 		_, runErr := vm.RunString(script)
@@ -238,53 +343,233 @@ func (e *Engine) ExecutePostResponse(
 	select {
 	case err := <-errChan:
 		if err != nil {
+			formattedErr := formatScriptError(sourceName, err)
 			logsMutex.Lock()
-			logs = appendLog(logs, fmt.Sprintf("[Test Script Error] %s", formatScriptError(err)))
+			logs = appendLog(logs, fmt.Sprintf("[%s Error] %s", sourceName, formattedErr))
+			consoleLogs = append(consoleLogs, types.ConsoleLogEntry{
+				Timestamp: time.Now(),
+				Level:     "error",
+				Source:    sourceName,
+				Message:   formattedErr,
+			})
 			logsMutex.Unlock()
+
 			return &PostResponseResult{
 				Tests:            tests,
 				Logs:             logs,
+				ConsoleLogs:      consoleLogs,
 				ExtractedEnvVars: envVars,
+				LocalVars:        localVars,
 			}, fmt.Errorf("post-response script error: %w", err)
 		}
 	case <-time.After(timeout):
 		vm.Interrupt(fmt.Sprintf("Script execution timed out (%s)", timeout))
-		return nil, fmt.Errorf("post-response script timed out after %s", timeout)
+		timeoutMsg := fmt.Sprintf("[%s] execution timed out after %s", sourceName, timeout)
+		consoleLogs = append(consoleLogs, types.ConsoleLogEntry{
+			Timestamp: time.Now(),
+			Level:     "error",
+			Source:    sourceName,
+			Message:   timeoutMsg,
+		})
+		return nil, errors.New(timeoutMsg)
 	}
 
 	return &PostResponseResult{
 		Tests:            tests,
 		Logs:             logs,
+		ConsoleLogs:      consoleLogs,
 		ExtractedEnvVars: envVars,
+		LocalVars:        localVars,
 	}, nil
 }
 
-func (e *Engine) setupConsole(vm *goja.Runtime, logs *[]string, mutex *sync.Mutex) {
+func (e *Engine) setupConsole(
+	vm *goja.Runtime,
+	logs *[]string,
+	consoleLogs *[]types.ConsoleLogEntry,
+	mutex *sync.Mutex,
+	source string,
+) {
 	console := vm.NewObject()
 
-	logFn := func(call goja.FunctionCall) goja.Value {
-		var parts []string
-		for _, arg := range call.Arguments {
-			parts = append(parts, arg.String())
+	makeLogFn := func(level string) func(goja.FunctionCall) goja.Value {
+		return func(call goja.FunctionCall) goja.Value {
+			var parts []string
+			for _, arg := range call.Arguments {
+				if arg == nil || goja.IsUndefined(arg) {
+					parts = append(parts, "undefined")
+				} else if goja.IsNull(arg) {
+					parts = append(parts, "null")
+				} else {
+					parts = append(parts, arg.String())
+				}
+			}
+			msg := strings.Join(parts, " ")
+			now := time.Now()
+
+			mutex.Lock()
+			formattedLog := fmt.Sprintf("[%s] [%s] [%s] %s", now.Format("15:04:05.000"), source, strings.ToUpper(level), msg)
+			*logs = appendLog(*logs, formattedLog)
+			*consoleLogs = append(*consoleLogs, types.ConsoleLogEntry{
+				Timestamp: now,
+				Level:     level,
+				Source:    source,
+				Message:   msg,
+			})
+			mutex.Unlock()
+			return goja.Undefined()
 		}
-		msg := strings.Join(parts, " ")
-		mutex.Lock()
-		*logs = appendLog(*logs, msg)
-		mutex.Unlock()
-		return goja.Undefined()
 	}
 
-	_ = console.Set("log", logFn)
-	_ = console.Set("info", logFn)
-	_ = console.Set("warn", logFn)
-	_ = console.Set("error", logFn)
+	_ = console.Set("log", makeLogFn("log"))
+	_ = console.Set("info", makeLogFn("info"))
+	_ = console.Set("warn", makeLogFn("warn"))
+	_ = console.Set("error", makeLogFn("error"))
 
 	_ = vm.Set("console", console)
 }
 
+func (e *Engine) bindExtendedPbAPIs(vm *goja.Runtime, pbObj *goja.Object, timeout time.Duration) {
+	// 1. pb.uuid()
+	_ = pbObj.Set("uuid", func() string {
+		return e.crypto.UUID()
+	})
+
+	// 2. pb.base64
+	base64Obj := vm.NewObject()
+	_ = base64Obj.Set("encode", func(input string) string {
+		return e.crypto.Base64Encode(input)
+	})
+	_ = base64Obj.Set("decode", func(input string) string {
+		res, err := e.crypto.Base64Decode(input)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("Base64 decode failed: %v", err)))
+		}
+		return res
+	})
+	_ = pbObj.Set("base64", base64Obj)
+
+	// 3. pb.hash
+	hashObj := vm.NewObject()
+	_ = hashObj.Set("sha256", func(input string) string {
+		return e.crypto.SHA256(input)
+	})
+	_ = hashObj.Set("md5", func(input string) string {
+		return e.crypto.MD5(input)
+	})
+	_ = pbObj.Set("hash", hashObj)
+
+	// 4. pb.hmac
+	hmacObj := vm.NewObject()
+	_ = hmacObj.Set("sha256", func(secret, message string) string {
+		res, err := e.crypto.HMAC("sha256", secret, message)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("HMAC SHA256 failed: %v", err)))
+		}
+		return res
+	})
+	_ = pbObj.Set("hmac", hmacObj)
+
+	// 5. pb.jwt
+	jwtObj := vm.NewObject()
+	_ = jwtObj.Set("decode", func(token string) goja.Value {
+		claims, err := e.crypto.JWTDecode(token)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("JWT decode failed: %v", err)))
+		}
+		return vm.ToValue(claims)
+	})
+	_ = pbObj.Set("jwt", jwtObj)
+
+	// 6. pb.date
+	dateObj := vm.NewObject()
+	_ = dateObj.Set("now", func() int64 {
+		return e.date.Now()
+	})
+	_ = dateObj.Set("nowISO", func() string {
+		return e.date.NowISO()
+	})
+	_ = dateObj.Set("format", func(dateVal any, layout string) string {
+		formatted, err := e.date.Format(dateVal, layout)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("Date format failed: %v", err)))
+		}
+		return formatted
+	})
+	_ = dateObj.Set("add", func(dateVal any, amount int64, unit string) string {
+		added, err := e.date.Add(dateVal, amount, unit)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("Date add failed: %v", err)))
+		}
+		return added
+	})
+	_ = pbObj.Set("date", dateObj)
+
+	// 7. pb.random
+	randomObj := vm.NewObject()
+	_ = randomObj.Set("int", func(min, max int64) int64 {
+		val, err := e.random.Int(min, max)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("Random int failed: %v", err)))
+		}
+		return val
+	})
+	_ = randomObj.Set("string", func(length int, charset string) string {
+		val, err := e.random.String(length, charset)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("Random string failed: %v", err)))
+		}
+		return val
+	})
+	_ = pbObj.Set("random", randomObj)
+
+	// 8. pb.sendRequest(config)
+	_ = pbObj.Set("sendRequest", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			panic(vm.ToValue("pb.sendRequest requires a request configuration object"))
+		}
+		cfgVal := call.Arguments[0].Export()
+		cfgMap, ok := cfgVal.(map[string]any)
+		if !ok {
+			// If string URL was provided
+			if urlStr, isStr := cfgVal.(string); isStr {
+				cfgMap = map[string]any{"url": urlStr}
+			} else {
+				panic(vm.ToValue("pb.sendRequest config must be an object or URL string"))
+			}
+		}
+
+		res, err := e.auxiliary.SendRequest(cfgMap, timeout)
+		if err != nil {
+			panic(vm.ToValue(fmt.Sprintf("pb.sendRequest failed: %v", err)))
+		}
+
+		resObj := vm.NewObject()
+		_ = resObj.Set("status", res["status"])
+		_ = resObj.Set("statusCode", res["status"])
+		_ = resObj.Set("statusText", res["statusText"])
+		_ = resObj.Set("duration", res["duration"])
+		_ = resObj.Set("time", res["time"])
+		_ = resObj.Set("body", res["body"])
+		_ = resObj.Set("headers", res["headers"])
+		_ = resObj.Set("text", func() string {
+			return fmt.Sprintf("%v", res["body"])
+		})
+		_ = resObj.Set("json", func() goja.Value {
+			var parsed any
+			bodyStr := fmt.Sprintf("%v", res["body"])
+			if err := json.Unmarshal([]byte(bodyStr), &parsed); err != nil {
+				panic(vm.ToValue(fmt.Sprintf("Failed to parse auxiliary response body as JSON: %v", err)))
+			}
+			return vm.ToValue(parsed)
+		})
+
+		return resObj
+	})
+}
+
 func (e *Engine) setupRequestBridge(vm *goja.Runtime, req *types.RequestDefinition) *goja.Object {
 	reqObj := vm.NewObject()
-
 	if req == nil {
 		return reqObj
 	}
@@ -351,7 +636,6 @@ func (e *Engine) setupRequestBridge(vm *goja.Runtime, req *types.RequestDefiniti
 
 func (e *Engine) setupResponseBridge(vm *goja.Runtime, resp *types.ExecutionResult) *goja.Object {
 	respObj := vm.NewObject()
-
 	if resp == nil {
 		return respObj
 	}
@@ -362,6 +646,7 @@ func (e *Engine) setupResponseBridge(vm *goja.Runtime, resp *types.ExecutionResu
 	_ = respObj.Set("responseTime", resp.Timing.TotalDurationMs)
 	_ = respObj.Set("time", resp.Timing.TotalDurationMs)
 	_ = respObj.Set("duration", resp.Timing.TotalDurationMs)
+	_ = respObj.Set("size", resp.Size)
 	_ = respObj.Set("body", resp.Body)
 
 	_ = respObj.Set("text", func() string {
@@ -405,25 +690,57 @@ func (e *Engine) setupEnvironmentBridge(vm *goja.Runtime, envVars map[string]str
 	_ = envObj.Set("get", func(key string) string {
 		return envVars[key]
 	})
-
 	_ = envObj.Set("set", func(key string, value any) {
 		envVars[key] = fmt.Sprintf("%v", value)
 	})
-
 	_ = envObj.Set("has", func(key string) bool {
 		_, exists := envVars[key]
 		return exists
 	})
-
 	_ = envObj.Set("unset", func(key string) {
 		delete(envVars, key)
 	})
-
 	_ = envObj.Set("toObject", func() map[string]string {
 		return envVars
 	})
 
 	return envObj
+}
+
+func (e *Engine) setupVariablesBridge(vm *goja.Runtime, localVars map[string]string, envVars map[string]string) *goja.Object {
+	varObj := vm.NewObject()
+
+	_ = varObj.Set("get", func(key string) string {
+		if val, exists := localVars[key]; exists {
+			return val
+		}
+		return envVars[key]
+	})
+	_ = varObj.Set("set", func(key string, value any) {
+		localVars[key] = fmt.Sprintf("%v", value)
+	})
+	_ = varObj.Set("has", func(key string) bool {
+		if _, exists := localVars[key]; exists {
+			return true
+		}
+		_, exists := envVars[key]
+		return exists
+	})
+	_ = varObj.Set("unset", func(key string) {
+		delete(localVars, key)
+	})
+	_ = varObj.Set("toObject", func() map[string]string {
+		merged := make(map[string]string)
+		for k, v := range envVars {
+			merged[k] = v
+		}
+		for k, v := range localVars {
+			merged[k] = v
+		}
+		return merged
+	})
+
+	return varObj
 }
 
 func (e *Engine) setupCryptoBridge(vm *goja.Runtime) *goja.Object {
@@ -465,11 +782,9 @@ func (e *Engine) setupCryptoBridge(vm *goja.Runtime) *goja.Object {
 	return cryptoObj
 }
 
-// appendLog adds msg to logs, capping at maxConsoleLogs entries and
-// truncating each entry to maxLogEntryLen characters.
 func appendLog(logs []string, msg string) []string {
 	if len(logs) >= maxConsoleLogs {
-		return logs // silently drop once cap is reached
+		return logs
 	}
 	if len(msg) > maxLogEntryLen {
 		msg = msg[:maxLogEntryLen] + "…[truncated]"
@@ -477,12 +792,36 @@ func appendLog(logs []string, msg string) []string {
 	return append(logs, msg)
 }
 
-// formatScriptError extracts a readable message from a goja exception
-// (which includes script name, line, and column) or falls back to err.Error().
-func formatScriptError(err error) string {
+// formatScriptError extracts a clean, concise script error message with script name, line, column, and stack.
+func formatScriptError(source string, err error) string {
 	if err == nil {
 		return ""
 	}
-	// goja.Exception.Error() already contains "at <file>:<line>:<col>" info.
-	return err.Error()
+
+	var gojaEx *goja.Exception
+	if errors.As(err, &gojaEx) {
+		val := gojaEx.Value()
+		msg := gojaEx.Error()
+		if val != nil {
+			msg = val.String()
+		}
+
+		var stackLines []string
+		for _, frame := range gojaEx.Stack() {
+			src := frame.SrcName()
+			line := frame.Position().Line
+			col := frame.Position().Column
+			if src == "" || src == "<native>" || strings.HasPrefix(src, "native") {
+				continue
+			}
+			stackLines = append(stackLines, fmt.Sprintf("    at %s (%s:%d:%d)", frame.FuncName(), src, line, col))
+		}
+
+		if len(stackLines) > 0 {
+			return fmt.Sprintf("[%s] %s\n%s", source, msg, strings.Join(stackLines, "\n"))
+		}
+		return fmt.Sprintf("[%s] %s", source, msg)
+	}
+
+	return fmt.Sprintf("[%s] %s", source, err.Error())
 }

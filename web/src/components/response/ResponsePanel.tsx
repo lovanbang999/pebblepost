@@ -1,5 +1,16 @@
 import { useState, useMemo } from 'react'
-import { CheckCircle2, XCircle, Clock, Database, Copy, Check, Terminal } from 'lucide-react'
+import {
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Database,
+  Copy,
+  Check,
+  Terminal,
+  AlertCircle,
+  Search,
+  FileCode,
+} from 'lucide-react'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
@@ -7,6 +18,7 @@ import { xml } from '@codemirror/lang-xml'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
 import { formatBytes, formatDuration } from '../../lib/utils'
+import type { ConsoleLogEntry } from '../../types'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs'
@@ -37,11 +49,68 @@ export function ResponsePanel() {
 
   const [activeSubTab, setActiveSubTab] = useState<'body' | 'headers' | 'tests' | 'timing' | 'console'>('body')
   const [copied, setCopied] = useState(false)
+  const [consoleFilterLevel, setConsoleFilterLevel] = useState<'all' | 'log' | 'info' | 'warn' | 'error'>('all')
+  const [consoleSearch, setConsoleSearch] = useState('')
 
   const langExtensions = useMemo(
     () => lastResult ? detectLanguageExtension(lastResult.headers || {}) : [json()],
     [lastResult]
   )
+
+  const consoleEntries = useMemo(() => {
+    if (!lastResult) return []
+    if (lastResult.consoleLogs && lastResult.consoleLogs.length > 0) {
+      return lastResult.consoleLogs
+    }
+    // Fallback: parse string logs if structured consoleLogs not provided
+    return (lastResult.logs || []).map((l): ConsoleLogEntry => {
+      let level: 'log' | 'info' | 'warn' | 'error' = 'log'
+      let source = 'Script'
+      let msg = l
+      if (l.includes('[WARN]')) level = 'warn'
+      else if (l.includes('[INFO]')) level = 'info'
+      else if (l.includes('[ERROR]') || l.includes('Error]')) level = 'error'
+
+      const match = l.match(/^\[(.*?)\]\s*\[(.*?)\]\s*\[(.*?)\]\s*(.*)$/)
+      if (match) {
+        return {
+          timestamp: match[1],
+          source: match[2],
+          level: match[3].toLowerCase() as any,
+          message: match[4],
+        }
+      }
+      return {
+        timestamp: '',
+        level,
+        source,
+        message: msg,
+      }
+    })
+  }, [lastResult])
+
+  const filteredConsoleEntries = useMemo(() => {
+    return consoleEntries.filter((entry) => {
+      if (consoleFilterLevel !== 'all' && entry.level !== consoleFilterLevel) {
+        return false
+      }
+      if (consoleSearch.trim()) {
+        const q = consoleSearch.toLowerCase()
+        return entry.message.toLowerCase().includes(q) || entry.source.toLowerCase().includes(q)
+      }
+      return true
+    })
+  }, [consoleEntries, consoleFilterLevel, consoleSearch])
+
+  const consoleCounts = useMemo(() => {
+    return {
+      all: consoleEntries.length,
+      log: consoleEntries.filter((e) => e.level === 'log').length,
+      info: consoleEntries.filter((e) => e.level === 'info').length,
+      warn: consoleEntries.filter((e) => e.level === 'warn').length,
+      error: consoleEntries.filter((e) => e.level === 'error').length,
+    }
+  }, [consoleEntries])
 
   if (isExecuting) {
     return (
@@ -275,24 +344,160 @@ export function ResponsePanel() {
           </TabsContent>
 
           <TabsContent value="console">
-            <div className="space-y-1.5">
-              {lastResult.logs && lastResult.logs.length > 0 ? (
-                lastResult.logs.map((log, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-start gap-2 font-mono text-[11px] bg-zinc-100 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800/50 rounded px-2.5 py-1.5"
-                  >
-                    <span className="text-zinc-400 dark:text-zinc-600 shrink-0 select-none">{String(idx + 1).padStart(2, '0')}</span>
-                    <span className="text-zinc-800 dark:text-zinc-300 break-all">{log}</span>
+            <div className="flex flex-col h-full space-y-3">
+              {/* Console Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-zinc-200 dark:border-zinc-800">
+                {/* Level Filter Chips */}
+                <div className="flex items-center gap-1">
+                  {(['all', 'log', 'info', 'warn', 'error'] as const).map((lvl) => {
+                    const count = consoleCounts[lvl]
+                    const isActive = consoleFilterLevel === lvl
+                    return (
+                      <button
+                        key={lvl}
+                        onClick={() => setConsoleFilterLevel(lvl)}
+                        className={`text-[11px] px-2 py-0.5 rounded-full font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+                          isActive
+                            ? lvl === 'error'
+                              ? 'bg-rose-500 text-white dark:bg-rose-600'
+                              : lvl === 'warn'
+                              ? 'bg-amber-500 text-white dark:bg-amber-600'
+                              : lvl === 'info'
+                              ? 'bg-blue-500 text-white dark:bg-blue-600'
+                              : 'bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900'
+                            : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800'
+                        }`}
+                      >
+                        <span className="capitalize">{lvl}</span>
+                        <span className="text-[10px] opacity-80">({count})</span>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Search Bar */}
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Filter console..."
+                      value={consoleSearch}
+                      onChange={(e) => setConsoleSearch(e.target.value)}
+                      className="h-6.5 text-[11px] pl-7 pr-2 rounded bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-800 dark:text-zinc-200 focus:outline-hidden focus:border-zinc-400 dark:focus:border-zinc-600 w-36"
+                    />
                   </div>
-                ))
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-zinc-500 text-xs">
-                  <Terminal className="w-7 h-7 mb-2 opacity-30" />
-                  <span>No console output from scripts.</span>
-                  <span className="text-zinc-600 dark:text-zinc-500 mt-1">Use <code className="font-mono">console.log()</code> in your scripts to see output here.</span>
+                  {consoleEntries.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const text = consoleEntries
+                          .map((e) => `[${e.timestamp || 'N/A'}] [${e.source}] [${e.level.toUpperCase()}] ${e.message}`)
+                          .join('\n')
+                        navigator.clipboard.writeText(text)
+                      }}
+                      className="h-6.5 px-2 text-[10px] gap-1 text-zinc-600 dark:text-zinc-400 cursor-pointer"
+                      title="Copy all console output"
+                    >
+                      <Copy className="w-3 h-3" />
+                      Copy
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Dedicated Error Alert if script failed */}
+              {lastResult.error && (
+                <div className="p-3 rounded-md bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 text-rose-800 dark:text-rose-300 text-xs">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                    <div className="flex-1 font-mono">
+                      <div className="font-semibold text-rose-900 dark:text-rose-200 mb-1 flex items-center gap-2">
+                        Script Execution Error
+                      </div>
+                      <pre className="text-[11px] whitespace-pre-wrap break-all opacity-90">{lastResult.error}</pre>
+                    </div>
+                  </div>
                 </div>
               )}
+
+              {/* Console Entries List */}
+              <div className="space-y-1.5 overflow-y-auto">
+                {filteredConsoleEntries.length > 0 ? (
+                  filteredConsoleEntries.map((entry, idx) => {
+                    const isError = entry.level === 'error'
+                    const isWarn = entry.level === 'warn'
+                    const isInfo = entry.level === 'info'
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`flex items-start gap-2 font-mono text-[11px] p-2 rounded border transition-colors ${
+                          isError
+                            ? 'bg-rose-50/60 dark:bg-rose-950/20 border-rose-200/70 dark:border-rose-900/40 text-rose-900 dark:text-rose-300'
+                            : isWarn
+                            ? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200/70 dark:border-amber-900/40 text-amber-900 dark:text-amber-300'
+                            : isInfo
+                            ? 'bg-blue-50/60 dark:bg-blue-950/20 border-blue-200/70 dark:border-blue-900/40 text-blue-900 dark:text-blue-300'
+                            : 'bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800/60 text-zinc-800 dark:text-zinc-200'
+                        }`}
+                      >
+                        {/* Timestamp */}
+                        {entry.timestamp && (
+                          <span className="text-zinc-400 dark:text-zinc-500 text-[10px] shrink-0 select-none">
+                            {entry.timestamp}
+                          </span>
+                        )}
+
+                        {/* Level Badge */}
+                        <span
+                          className={`text-[9px] uppercase px-1.5 py-0.2 rounded font-bold shrink-0 ${
+                            isError
+                              ? 'bg-rose-500 text-white dark:bg-rose-600'
+                              : isWarn
+                              ? 'bg-amber-500 text-white dark:bg-amber-600'
+                              : isInfo
+                              ? 'bg-blue-500 text-white dark:bg-blue-600'
+                              : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
+                          }`}
+                        >
+                          {entry.level}
+                        </span>
+
+                        {/* Script Source Badge */}
+                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-sans px-1 py-0.2 bg-zinc-200/60 dark:bg-zinc-800/60 rounded shrink-0 flex items-center gap-1">
+                          <FileCode className="w-2.5 h-2.5" />
+                          {entry.source}
+                          {entry.line ? `:${entry.line}` : ''}
+                        </span>
+
+                        {/* Message content */}
+                        <div className="flex-1 min-w-0">
+                          <pre className="whitespace-pre-wrap break-all text-[11px] font-mono leading-relaxed">
+                            {entry.message}
+                          </pre>
+                        </div>
+                      </div>
+                    )
+                  })
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-10 text-zinc-500 text-xs">
+                    <Terminal className="w-7 h-7 mb-2 opacity-30" />
+                    <span>
+                      {consoleEntries.length > 0
+                        ? 'No console entries match the active filter.'
+                        : 'No console output from scripts.'}
+                    </span>
+                    <span className="text-zinc-600 dark:text-zinc-500 mt-1">
+                      Use <code className="font-mono">console.log(...)</code>,{' '}
+                      <code className="font-mono">console.info(...)</code>,{' '}
+                      <code className="font-mono">console.warn(...)</code>, or{' '}
+                      <code className="font-mono">console.error(...)</code> in scripts.
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </TabsContent>
         </div>

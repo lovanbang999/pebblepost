@@ -1,6 +1,9 @@
 package scripting
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -285,3 +288,256 @@ func TestEngine_SandboxNoRequire(t *testing.T) {
 		})
 	}
 }
+
+// TestEngine_ConsoleLevels verifies console.log/info/warn/error generate structured ConsoleLogEntry records.
+func TestEngine_ConsoleLevels(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	script := `
+		console.log("This is a log message", 123);
+		console.info("This is an info message");
+		console.warn("This is a warning");
+		console.error("This is an error message");
+	`
+
+	res, err := engine.ExecutePreRequestNamed("CustomScript", script, req, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(res.ConsoleLogs) != 4 {
+		t.Fatalf("expected 4 ConsoleLog entries, got %d", len(res.ConsoleLogs))
+	}
+
+	levels := []string{"log", "info", "warn", "error"}
+	for i, entry := range res.ConsoleLogs {
+		if entry.Level != levels[i] {
+			t.Errorf("entry %d: expected level %s, got %s", i, levels[i], entry.Level)
+		}
+		if entry.Source != "CustomScript" {
+			t.Errorf("entry %d: expected source 'CustomScript', got %s", i, entry.Source)
+		}
+		if entry.Timestamp.IsZero() {
+			t.Errorf("entry %d: expected non-zero timestamp", i)
+		}
+	}
+}
+
+// TestEngine_ExtendedPbAPIs verifies pb.uuid, pb.base64, pb.hash, pb.hmac, pb.jwt, pb.date, pb.random, pb.variables.
+func TestEngine_ExtendedPbAPIs(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	script := `
+		// 1. UUID
+		const id = pb.uuid();
+		console.log("UUID:", id);
+		if (!id || id.length < 32) throw new Error("invalid UUID");
+
+		// 2. Base64
+		const b64 = pb.base64.encode("hello world");
+		const raw = pb.base64.decode(b64);
+		if (raw !== "hello world") throw new Error("base64 mismatch: " + raw);
+
+		// 3. Hash
+		const sha = pb.hash.sha256("test-data");
+		const md5 = pb.hash.md5("test-data");
+		if (sha.length !== 64 || md5.length !== 32) throw new Error("hash length mismatch");
+
+		// 4. HMAC
+		const hmac = pb.hmac.sha256("secret", "message");
+		if (hmac.length !== 64) throw new Error("hmac length mismatch");
+
+		// 5. JWT
+		// Example JWT header={"alg":"HS256","typ":"JWT"} payload={"sub":"1234567890","name":"John Doe","admin":true}
+		const fakeJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+		const jwt = pb.jwt.decode(fakeJwt);
+		if (!jwt.header || jwt.header.alg !== "HS256") throw new Error("jwt header mismatch");
+		if (!jwt.payload || jwt.payload.name !== "John Doe" || !jwt.payload.admin) throw new Error("jwt payload mismatch");
+
+		// 6. Date
+		const nowMs = pb.date.now();
+		if (typeof nowMs !== "number" || nowMs <= 0) throw new Error("invalid date now");
+		const formatted = pb.date.format(1700000000000, "YYYY-MM-DD");
+		if (formatted !== "2023-11-14") throw new Error("date format mismatch: " + formatted);
+		const added = pb.date.add("2023-11-14T00:00:00Z", 2, "days");
+		if (!added.startsWith("2023-11-16")) throw new Error("date add mismatch: " + added);
+
+		// 7. Random
+		const rInt = pb.random.int(10, 20);
+		if (rInt < 10 || rInt > 20) throw new Error("random int out of range: " + rInt);
+		const rStr = pb.random.string(8, "ABCDEF");
+		if (rStr.length !== 8) throw new Error("random string length mismatch: " + rStr);
+
+		// 8. Variables (run-local)
+		pb.variables.set("runVar", "tempValue");
+		if (pb.variables.get("runVar") !== "tempValue") throw new Error("variables get mismatch");
+		if (!pb.variables.has("runVar")) throw new Error("variables has mismatch");
+		pb.variables.unset("runVar");
+		if (pb.variables.has("runVar")) throw new Error("variables unset failed");
+	`
+
+	res, err := engine.ExecutePreRequest(script, req, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v, logs: %v", err, res.Logs)
+	}
+}
+
+// TestEngine_SendRequest verifies pb.sendRequest auxiliary HTTP execution.
+func TestEngine_SendRequest(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Custom-Auth") != "secret-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"received":true,"method":"` + r.Method + `"}`))
+	}))
+	defer ts.Close()
+
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+
+	script := fmt.Sprintf(`
+		const res = pb.sendRequest({
+			url: "%s",
+			method: "POST",
+			headers: { "X-Custom-Auth": "secret-token" },
+			body: JSON.stringify({ ping: "pong" }),
+			timeoutMs: 3000
+		});
+
+		console.log("Auxiliary response status:", res.status);
+		if (res.status !== 200) throw new Error("expected status 200, got " + res.status);
+		const data = res.json();
+		if (!data.received || data.method !== "POST") throw new Error("json parse failed: " + JSON.stringify(data));
+		if (!res.text().includes("received")) throw new Error("text() failed: " + res.text());
+	`, ts.URL)
+
+	res, err := engine.ExecutePreRequest(script, req, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v, logs: %v", err, res.Logs)
+	}
+}
+
+// TestEngine_NewMatchers verifies status, have.length, deep.equal, exist, oneOf, jsonSchema.
+func TestEngine_NewMatchers(t *testing.T) {
+	engine := NewEngine()
+	req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+	resp := &types.ExecutionResult{
+		StatusCode: 200,
+		StatusText: "OK",
+		Headers:    map[string][]string{"content-type": {"application/json"}},
+		Body:       `{"id": 42, "user": {"name": "Alice", "tags": ["admin", "staff"]}}`,
+		Timing:     types.TimingMetrics{TotalDurationMs: 45.0},
+	}
+
+	script := `
+		// Status matcher
+		pb.test("Status is 200", function() {
+			pb.expect(pb.response).to.have.status(200);
+			pb.expect(pb.response.status).to.have.status(200);
+			pb.expect(pb.response).to.not.have.status(404);
+		});
+
+		// Property matcher
+		pb.test("Property checks", function() {
+			const data = pb.response.json();
+			pb.expect(data).to.have.property("id", 42);
+			pb.expect(data.user).to.have.property("name", "Alice");
+			pb.expect(data).to.not.have.property("nonexistent");
+		});
+
+		// Length matcher
+		pb.test("Length checks", function() {
+			const data = pb.response.json();
+			pb.expect(data.user.tags).to.have.length(2);
+			pb.expect("hello").to.have.length(5);
+			pb.expect(data.user.tags).to.not.have.length(10);
+		});
+
+		// Deep equal matcher
+		pb.test("Deep equal checks", function() {
+			pb.expect({ a: 1, b: [2, 3] }).to.deep.equal({ a: 1, b: [2, 3] });
+			pb.expect({ a: 1 }).to.not.deep.equal({ a: 2 });
+		});
+
+		// Exist matcher
+		pb.test("Exist checks", function() {
+			pb.expect("something").to.exist;
+			pb.expect(0).to.exist;
+			pb.expect(false).to.exist;
+			pb.expect(null).to.not.exist;
+			pb.expect(undefined).to.not.exist;
+		});
+
+		// OneOf matcher
+		pb.test("OneOf checks", function() {
+			pb.expect(200).to.be.oneOf([200, 201, 204]);
+			pb.expect(404).to.not.be.oneOf([200, 201, 204]);
+		});
+
+		// JSON Schema matcher
+		pb.test("JSON schema checks", function() {
+			const data = pb.response.json();
+			const schema = {
+				type: "object",
+				required: ["id", "user"],
+				properties: {
+					id: { type: "integer", minimum: 1 },
+					user: {
+						type: "object",
+						required: ["name", "tags"],
+						properties: {
+							name: { type: "string", minLength: 2 },
+							tags: { type: "array", minItems: 1, items: { type: "string" } }
+						}
+					}
+				}
+			};
+			pb.expect(data).to.have.jsonSchema(schema);
+		});
+	`
+
+	res, err := engine.ExecutePostResponse(script, req, resp, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, test := range res.Tests {
+		if !test.Passed {
+			t.Errorf("test '%s' failed: %s", test.Name, test.Message)
+		}
+	}
+}
+
+// TestEngine_StaticSyntaxValidation verifies static detection of unsupported Goja syntax.
+func TestEngine_StaticSyntaxValidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		script        string
+		expectedErrSub string
+	}{
+		{"async function", "async function getData() { return 1; }", "'async' functions are not supported"},
+		{"await expression", "const data = await pb.sendRequest('http://example.com');", "'await' expressions are not supported"},
+		{"require call", "const fs = require('fs');", "'require()' is not available"},
+		{"import statement", "import axios from 'axios';", "ES module 'import' statements are not supported"},
+		{"export statement", "export const foo = 123;", "ES module 'export' statements are not supported"},
+		{"generator function", "function* myGen() { yield 1; }", "Generator functions"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateScriptSyntax("testScript", tt.script)
+			if err == nil {
+				t.Fatalf("expected error containing '%s', got nil", tt.expectedErrSub)
+			}
+			if !strings.Contains(err.Error(), tt.expectedErrSub) {
+				t.Errorf("expected error to contain '%s', got: %v", tt.expectedErrSub, err)
+			}
+		})
+	}
+}
+

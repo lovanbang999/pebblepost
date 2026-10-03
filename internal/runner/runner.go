@@ -198,7 +198,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 		if r.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
 			for _, s := range preScripts {
-				preResult, preErr := r.scriptEngine.ExecutePreRequest(s.Script, interpolatedReq, currentVarMap, scriptTimeout)
+				preResult, preErr := r.scriptEngine.ExecutePreRequestNamed(s.Source, s.Script, interpolatedReq, currentVarMap, scriptTimeout)
 				if preResult != nil {
 					for k, v := range preResult.ExtractedEnvVars {
 						currentVarMap[k] = v
@@ -269,10 +269,11 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 		if r.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
 			for _, s := range postScripts {
-				postResult, _ := r.scriptEngine.ExecutePostResponse(s.Script, interpolatedReq, execResult, currentVarMap, scriptTimeout)
+				postResult, _ := r.scriptEngine.ExecutePostResponseNamed(s.Source, s.Script, interpolatedReq, execResult, currentVarMap, scriptTimeout)
 				if postResult != nil {
 					execResult.Tests = append(execResult.Tests, postResult.Tests...)
 					execResult.Logs = append(execResult.Logs, postResult.Logs...)
+					execResult.ConsoleLogs = append(execResult.ConsoleLogs, postResult.ConsoleLogs...)
 					for k, v := range postResult.ExtractedEnvVars {
 						currentVarMap[k] = v
 						varMap[k] = v

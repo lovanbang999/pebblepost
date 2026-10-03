@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { Folder, Save, Plus, Trash2, Check, ShieldCheck, Key, Terminal, Variable } from 'lucide-react'
 import CodeMirror from '@uiw/react-codemirror'
+import { autocompletion } from '@codemirror/autocomplete'
 import { javascript } from '@codemirror/lang-javascript'
+import { pebbleScriptCompletions } from '../../lib/codemirror-completions'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore, type RequestTab } from '../../store/tabStore'
 import { cn } from '../../lib/utils'
@@ -650,7 +652,7 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
               <CodeMirror
                 value={folder.scripts?.preRequest || ''}
                 height="150px"
-                extensions={[javascript()]}
+                extensions={[javascript(), autocompletion({ override: [pebbleScriptCompletions] })]}
                 theme={theme === 'dark' ? 'dark' : 'light'}
                 onChange={(val) => updateScripts('preRequest', val)}
                 className="text-xs font-mono"
@@ -673,7 +675,7 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
               <CodeMirror
                 value={folder.scripts?.postResponse || ''}
                 height="150px"
-                extensions={[javascript()]}
+                extensions={[javascript(), autocompletion({ override: [pebbleScriptCompletions] })]}
                 theme={theme === 'dark' ? 'dark' : 'light'}
                 onChange={(val) => updateScripts('postResponse', val)}
                 className="text-xs font-mono"

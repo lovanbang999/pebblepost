@@ -138,17 +138,27 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var preConsoleLogs []types.ConsoleLogEntry
+
 	// 2. Pre-request Script Sandbox Execution (Root-to-Leaf)
 	for _, s := range preScripts {
 		if !scriptsAllowed {
-			preLogs = append(preLogs, fmt.Sprintf("[WARN] Pre-request script (%s) blocked: workspace is not trusted", s.Source))
+			warnMsg := fmt.Sprintf("[WARN] Pre-request script (%s) blocked: workspace is not trusted", s.Source)
+			preLogs = append(preLogs, warnMsg)
+			preConsoleLogs = append(preConsoleLogs, types.ConsoleLogEntry{
+				Timestamp: time.Now(),
+				Level:     "warn",
+				Source:    s.Source,
+				Message:   "Pre-request script blocked: workspace is not trusted",
+			})
 			continue
 		}
 		if h.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
-			preResult, preErr := h.scriptEngine.ExecutePreRequest(s.Script, reqToExecute, varMap, scriptTimeout)
+			preResult, preErr := h.scriptEngine.ExecutePreRequestNamed(s.Source, s.Script, reqToExecute, varMap, scriptTimeout)
 			if preResult != nil {
 				preLogs = append(preLogs, preResult.Logs...)
+				preConsoleLogs = append(preConsoleLogs, preResult.ConsoleLogs...)
 				for k, v := range preResult.ExtractedEnvVars {
 					varMap[k] = v
 				}
@@ -157,9 +167,10 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 			if preErr != nil {
 				// Abort immediately with pre-request error
 				h.jsonResponse(w, &types.ExecutionResult{
-					Error: fmt.Sprintf("[%s] Pre-request script error: %v", s.Source, preErr),
-					Logs:  preLogs,
-					Tests: []types.TestAssertionResult{},
+					Error:       fmt.Sprintf("[%s] Pre-request script error: %v", s.Source, preErr),
+					Logs:        preLogs,
+					ConsoleLogs: preConsoleLogs,
+					Tests:       []types.TestAssertionResult{},
 				})
 				return
 			}
@@ -179,19 +190,33 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if len(preLogs) > 0 {
 		result.Logs = append(preLogs, result.Logs...)
 	}
+	if result.ConsoleLogs == nil {
+		result.ConsoleLogs = make([]types.ConsoleLogEntry, 0)
+	}
+	if len(preConsoleLogs) > 0 {
+		result.ConsoleLogs = append(preConsoleLogs, result.ConsoleLogs...)
+	}
 
 	// 4. Post-response / Test Script Sandbox Execution (Leaf-to-Root)
 	for _, s := range postScripts {
 		if !scriptsAllowed {
-			result.Logs = append(result.Logs, fmt.Sprintf("[WARN] Post-response script (%s) blocked: workspace is not trusted", s.Source))
+			warnMsg := fmt.Sprintf("[WARN] Post-response script (%s) blocked: workspace is not trusted", s.Source)
+			result.Logs = append(result.Logs, warnMsg)
+			result.ConsoleLogs = append(result.ConsoleLogs, types.ConsoleLogEntry{
+				Timestamp: time.Now(),
+				Level:     "warn",
+				Source:    s.Source,
+				Message:   "Post-response script blocked: workspace is not trusted",
+			})
 			continue
 		}
 		if h.scriptEngine != nil {
 			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
-			postResult, _ := h.scriptEngine.ExecutePostResponse(s.Script, reqToExecute, result, varMap, scriptTimeout)
+			postResult, _ := h.scriptEngine.ExecutePostResponseNamed(s.Source, s.Script, reqToExecute, result, varMap, scriptTimeout)
 			if postResult != nil {
 				result.Tests = append(result.Tests, postResult.Tests...)
 				result.Logs = append(result.Logs, postResult.Logs...)
+				result.ConsoleLogs = append(result.ConsoleLogs, postResult.ConsoleLogs...)
 				if result.ExtractedEnvVars == nil {
 					result.ExtractedEnvVars = make(map[string]string)
 				}
@@ -226,6 +251,9 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if len(secretValues) > 0 {
 		for i, log := range result.Logs {
 			result.Logs[i] = security.MaskSecrets(log, secretValues)
+		}
+		for i, cl := range result.ConsoleLogs {
+			result.ConsoleLogs[i].Message = security.MaskSecrets(cl.Message, secretValues)
 		}
 		if result.Error != "" {
 			result.Error = security.MaskSecrets(result.Error, secretValues)
