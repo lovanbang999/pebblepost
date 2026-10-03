@@ -162,6 +162,22 @@ type ResolvedRequestResult struct {
 	FolderPostScripts []string                     `json:"folderPostScripts,omitempty"` // folder names with post-response scripts
 }
 
+// RedirectHop captures a single step in an HTTP redirect chain.
+type RedirectHop struct {
+	StatusCode int               `json:"statusCode"`
+	Method     string            `json:"method"`
+	URL        string            `json:"url"`
+	Headers    map[string]string `json:"headers,omitempty"` // relevant response headers (Location, etc.)
+}
+
+// SentRequestSummary captures the final, fully-resolved HTTP request that was sent over the wire.
+type SentRequestSummary struct {
+	Method  string              `json:"method"`
+	URL     string              `json:"url"`
+	Headers map[string][]string `json:"headers"`
+	Body    string              `json:"body,omitempty"`
+}
+
 // TimingMetrics records detailed network roundtrip breakdown in milliseconds.
 type TimingMetrics struct {
 	DNSLookupMs     float64 `json:"dnsLookupMs"`
@@ -195,8 +211,13 @@ type ExecutionResult struct {
 	StatusText       string                `json:"statusText"`
 	Headers          map[string][]string   `json:"headers"`
 	Body             string                `json:"body"`
+	BodyTruncated    bool                  `json:"bodyTruncated,omitempty"` // true when body exceeded the display threshold
+	BodySizeBytes    int64                 `json:"bodySizeBytes,omitempty"` // actual byte length of the full body
+	TempBodyFile     string                `json:"tempBodyFile,omitempty"`  // OS temp file path when body is large
 	Size             int64                 `json:"size"`
 	Timing           TimingMetrics         `json:"timing"`
+	RedirectChain    []RedirectHop         `json:"redirectChain,omitempty"` // hops before the final response
+	SentRequest      *SentRequestSummary   `json:"sentRequest,omitempty"`   // the actual request sent over the wire
 	Tests            []TestAssertionResult `json:"tests"`
 	Logs             []string              `json:"logs"`
 	ConsoleLogs      []ConsoleLogEntry     `json:"consoleLogs,omitempty"`

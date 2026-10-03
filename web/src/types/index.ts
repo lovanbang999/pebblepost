@@ -167,13 +167,32 @@ export interface ConsoleLogEntry {
   column?: number
 }
 
+export interface RedirectHop {
+  statusCode: number
+  method: string
+  url: string
+  headers?: Record<string, string>
+}
+
+export interface SentRequestSummary {
+  method: string
+  url: string
+  headers: Record<string, string[]>
+  body?: string
+}
+
 export interface ExecutionResult {
   statusCode: number
   statusText: string
   headers: Record<string, string[]>
   body: string
+  bodyTruncated?: boolean
+  bodySizeBytes?: number
+  tempBodyFile?: string
   size: number
   timing: TimingMetrics
+  redirectChain?: RedirectHop[]
+  sentRequest?: SentRequestSummary
   tests: TestAssertionResult[]
   logs: string[]
   consoleLogs?: ConsoleLogEntry[]
