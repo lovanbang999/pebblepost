@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FolderOpen, Layers, Search, Sun, Moon, Folder } from "lucide-react";
+import { FolderOpen, Layers, Search, Sun, Moon, Folder, Cookie } from "lucide-react";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -18,6 +18,7 @@ import { Input } from "../ui/input";
 
 interface TitleBarProps {
   onOpenQuickSearch?: () => void
+  onOpenCookieManager?: () => void
 }
 
 function isWails(): boolean {
@@ -30,7 +31,7 @@ function wailsCall(method: string) {
   }
 }
 
-export function TitleBar({ onOpenQuickSearch }: TitleBarProps) {
+export function TitleBar({ onOpenQuickSearch, onOpenCookieManager }: TitleBarProps) {
   const [isMaximised, setIsMaximised] = useState(true);
   const [isOpenWorkspaceModalOpen, setIsOpenWorkspaceModalOpen] = useState(false);
   const [inputWorkspacePath, setInputWorkspacePath] = useState("");
@@ -128,6 +129,20 @@ export function TitleBar({ onOpenQuickSearch }: TitleBarProps) {
             ))}
           </SelectContent>
         </Select>
+
+        {/* Manage Cookies */}
+        <Tooltip content="Workspace Cookies (.pebble/cookies.json)" side="bottom" sideOffset={6}>
+          <Button
+            id="manage-cookies-btn"
+            variant="ghost"
+            size="sm"
+            onClick={onOpenCookieManager}
+            className="h-7 px-2 text-xs gap-1.5 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-200/70 dark:hover:bg-zinc-900 transition-colors cursor-pointer"
+          >
+            <Cookie className="w-3.5 h-3.5 text-amber-500" />
+            <span className="hidden sm:inline">Cookies</span>
+          </Button>
+        </Tooltip>
 
         {/* Theme Toggle (Sun / Moon) */}
         <Tooltip content={theme === 'dark' ? 'Switch to Light Theme' : 'Switch to Dark Theme'} side="bottom" sideOffset={6}>

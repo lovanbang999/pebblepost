@@ -6,12 +6,14 @@ import { ResponsePanel } from './components/response/ResponsePanel'
 import { QuickSearch } from './components/common/QuickSearch'
 import { ConflictDialog } from './components/common/ConflictDialog'
 import { CloseTabConfirmDialog } from './components/common/CloseTabConfirmDialog'
+import { CookieManagerDialog } from './components/cookies/CookieManagerDialog'
 import { TooltipProvider } from './components/ui/tooltip'
 import { useWorkspaceStore } from './store/workspaceStore'
 import { useTabStore } from './store/tabStore'
 
 export default function App() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
+  const [cookieManagerOpen, setCookieManagerOpen] = useState(false)
   const { loadWorkspace, workspacePath, initWatcher, cleanupWatcher } = useWorkspaceStore()
   const { restoreTabs, saveCurrentTab } = useTabStore()
 
@@ -76,7 +78,10 @@ export default function App() {
     <TooltipProvider delay={150}>
       <div className="flex flex-col h-screen w-screen overflow-hidden bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 select-none transition-colors duration-150">
         {/* Frameless / Web Titlebar */}
-        <TitleBar onOpenQuickSearch={() => setQuickSearchOpen(true)} />
+        <TitleBar
+          onOpenQuickSearch={() => setQuickSearchOpen(true)}
+          onOpenCookieManager={() => setCookieManagerOpen(true)}
+        />
 
         {/* Main Workspace Layout */}
         <div className="flex-1 flex overflow-hidden">
@@ -103,6 +108,12 @@ export default function App() {
 
         {/* Unsaved Tab Close Confirmation Dialog */}
         <CloseTabConfirmDialog />
+
+        {/* Workspace Cookie Manager Dialog */}
+        <CookieManagerDialog
+          isOpen={cookieManagerOpen}
+          onClose={() => setCookieManagerOpen(false)}
+        />
       </div>
     </TooltipProvider>
   )

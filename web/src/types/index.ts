@@ -6,13 +6,35 @@ export interface KeyValue {
 }
 
 export interface AuthDefinition {
-  type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey' | 'oauth2'
+  type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey' | 'digest' | 'oauth2' | 'awsSigV4'
   token?: string
   username?: string
   password?: string
   key?: string
   value?: string
   addTo?: 'header' | 'query'
+
+  // Digest
+  realm?: string
+
+  // OAuth2
+  grantType?: 'authorization_code' | 'client_credentials'
+  authUrl?: string
+  tokenUrl?: string
+  clientId?: string
+  clientSecret?: string
+  scope?: string
+  redirectUrl?: string
+  codeVerifier?: string
+  refreshToken?: string
+  tokenExpiresAt?: number
+
+  // AWS Signature v4
+  accessKey?: string
+  secretKey?: string
+  region?: string
+  service?: string
+  sessionToken?: string
 }
 
 export interface GraphQLDefinition {
@@ -38,6 +60,25 @@ export interface SettingDefinition {
   followRedirects: boolean
   verifySSL: boolean
   timeoutMs: number
+  connectTimeoutMs?: number
+  maxRedirects?: number
+  enableCookies?: boolean
+  userAgent?: string
+  proxyUrl?: string
+  clientCertPath?: string
+  clientKeyPath?: string
+}
+
+export interface CookieItem {
+  name: string
+  value: string
+  domain: string
+  path: string
+  expires?: string
+  maxAge?: number
+  secure: boolean
+  httpOnly: boolean
+  sameSite?: string
 }
 
 export interface RequestDefinition {

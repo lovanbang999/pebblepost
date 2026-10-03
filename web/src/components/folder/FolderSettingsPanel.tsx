@@ -337,7 +337,9 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
                 <SelectItem value="bearer">Bearer Token</SelectItem>
                 <SelectItem value="basic">Basic Auth</SelectItem>
                 <SelectItem value="apiKey">API Key</SelectItem>
+                <SelectItem value="digest">Digest Auth</SelectItem>
                 <SelectItem value="oauth2">OAuth 2.0</SelectItem>
+                <SelectItem value="awsSigV4">AWS Signature v4</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -434,6 +436,41 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
             </div>
           )}
 
+          {currentAuthType === 'digest' && (
+            <div className="space-y-3 pt-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Username</label>
+                  <Input
+                    placeholder="username or {{VARIABLE}}"
+                    value={folder.auth?.username || ''}
+                    onChange={(e) => updateAuth({ username: e.target.value })}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Password</label>
+                  <Input
+                    type="password"
+                    placeholder="password or {{VARIABLE}}"
+                    value={folder.auth?.password || ''}
+                    onChange={(e) => updateAuth({ password: e.target.value })}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Realm (optional)</label>
+                <Input
+                  placeholder="Realm (leave empty to auto-negotiate)"
+                  value={folder.auth?.realm || ''}
+                  onChange={(e) => updateAuth({ realm: e.target.value })}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+          )}
+
           {currentAuthType === 'oauth2' && (
             <div className="space-y-3 pt-2">
               <div className="space-y-1">
@@ -447,6 +484,72 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
                   onChange={(e) => updateAuth({ token: e.target.value })}
                   className="h-8 text-xs font-mono"
                 />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Token URL</label>
+                  <Input
+                    placeholder="https://.../oauth/token"
+                    value={folder.auth?.tokenUrl || ''}
+                    onChange={(e) => updateAuth({ tokenUrl: e.target.value })}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Client ID</label>
+                  <Input
+                    placeholder="client-id"
+                    value={folder.auth?.clientId || ''}
+                    onChange={(e) => updateAuth({ clientId: e.target.value })}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {currentAuthType === 'awsSigV4' && (
+            <div className="space-y-3 pt-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Access Key</label>
+                  <Input
+                    placeholder="AKIA..."
+                    value={folder.auth?.accessKey || ''}
+                    onChange={(e) => updateAuth({ accessKey: e.target.value })}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Secret Key</label>
+                  <Input
+                    type="password"
+                    placeholder="secret-key"
+                    value={folder.auth?.secretKey || ''}
+                    onChange={(e) => updateAuth({ secretKey: e.target.value })}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Region</label>
+                  <Input
+                    placeholder="us-east-1"
+                    value={folder.auth?.region || ''}
+                    onChange={(e) => updateAuth({ region: e.target.value })}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Service</label>
+                  <Input
+                    placeholder="s3 or execute-api"
+                    value={folder.auth?.service || ''}
+                    onChange={(e) => updateAuth({ service: e.target.value })}
+                    className="h-8 text-xs"
+                  />
+                </div>
               </div>
             </div>
           )}
