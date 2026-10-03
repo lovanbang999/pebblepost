@@ -28,6 +28,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Ensure web/dist placeholder for go:embed
+        shell: bash
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
       - name: go vet
         run: go vet ./...
 
@@ -82,6 +86,9 @@ jobs:
       - name: node:test (tabStore)
         run: npm test
 
+      - name: Build frontend bundle
+        run: npm run build
+
   # ─── Go build (smoke test binary compiles) ───────────────────────────────────
   build:
     name: Go build smoke (${{ matrix.os }})
@@ -100,6 +107,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Ensure web/dist placeholder for go:embed
+        shell: bash
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
 
       - name: Build CLI
         run: go build -v ./cmd/cli/...
