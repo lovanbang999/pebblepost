@@ -31,6 +31,8 @@ export function getMethodColor(method: string) {
       return 'text-violet-700 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/60 border-violet-300 dark:border-violet-800/60'
     case 'DELETE':
       return 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800/60'
+    case 'GRPC':
+      return 'text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-800/60'
     default:
       return 'text-zinc-700 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700'
   }
@@ -51,6 +53,8 @@ export function getMethodTextColor(method: string) {
     case 'HEAD':
     case 'OPTIONS':
       return 'text-teal-600 dark:text-teal-400'
+    case 'GRPC':
+      return 'text-indigo-600 dark:text-indigo-400'
     default:
       return 'text-zinc-600 dark:text-zinc-400'
   }

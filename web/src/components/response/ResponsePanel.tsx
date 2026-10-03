@@ -17,7 +17,9 @@ import {
   ChevronRight,
   Terminal as CurlIcon,
   Link,
+  Radio,
 } from 'lucide-react'
+import { GrpcStreamTimeline } from '../grpc/GrpcStreamTimeline'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
@@ -262,7 +264,7 @@ function RedirectChainView({ hops }: { hops: RedirectHop[] }) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type SubTab = 'body' | 'headers' | 'tests' | 'timing' | 'console'
+type SubTab = 'body' | 'stream' | 'headers' | 'trailers' | 'tests' | 'timing' | 'console'
 
 export function ResponsePanel() {
   const { theme, lastResult: wsLastResult, isExecuting } = useWorkspaceStore()
@@ -287,7 +289,10 @@ export function ResponsePanel() {
     setLoadOffset(0)
     setSearchOpen(false)
     setShowJsonPath(false)
-  }, [lastResult])
+    if (lastResult?.grpcMessages && lastResult.grpcMessages.length > 0) {
+      setActiveSubTab('stream')
+    }
+  }, [lastResult?.executedAt, lastResult?.grpcMessages])
 
   // Ctrl+F shortcut
   useEffect(() => {
@@ -433,6 +438,17 @@ export function ResponsePanel() {
             <span className="font-normal font-sans opacity-90">{lastResult.statusText}</span>
           </Badge>
 
+          {/* gRPC Status Badge */}
+          {lastResult.grpcStatus !== undefined && (
+            <Badge
+              variant={lastResult.grpcStatus === 0 ? 'success' : 'destructive'}
+              className="text-xs py-1 px-2.5 gap-1.5 font-bold font-mono"
+            >
+              {lastResult.grpcStatus === 0 ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+              <span>gRPC: {lastResult.grpcStatus} {lastResult.grpcStatusText}</span>
+            </Badge>
+          )}
+
           {/* Timing */}
           <MetaBadge icon={Clock} label={formatDuration(lastResult.timing.totalDurationMs)} tooltip="Total Roundtrip Duration" />
 
@@ -497,7 +513,34 @@ export function ResponsePanel() {
         className="flex-1 overflow-hidden flex flex-col"
       >
         <TabsList>
-          {(['body', 'headers', 'tests', 'timing', 'console'] as const).map((tab) => (
+          {/* Stream Tab if gRPC stream messages present */}
+          {lastResult.grpcMessages && lastResult.grpcMessages.length > 0 && (
+            <TabsTrigger value="stream" className="gap-1.5">
+              <Radio className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Stream</span>
+              <Badge variant="secondary" className="ml-1 px-1 py-0 text-[9px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold">
+                {lastResult.grpcMessages.length}
+              </Badge>
+            </TabsTrigger>
+          )}
+
+          {(['body', 'headers'] as const).map((tab) => (
+            <TabsTrigger key={tab} value={tab} className="capitalize">
+              {tab === 'headers' && (lastResult.grpcMetadata ? 'Metadata / Headers' : 'Headers')}
+            </TabsTrigger>
+          ))}
+
+          {/* Trailers Tab if gRPC trailers present */}
+          {lastResult.grpcTrailers && Object.keys(lastResult.grpcTrailers).length > 0 && (
+            <TabsTrigger value="trailers" className="gap-1.5">
+              <span>Trailers</span>
+              <Badge variant="secondary" className="ml-1 px-1 py-0 text-[9px]">
+                {Object.keys(lastResult.grpcTrailers).length}
+              </Badge>
+            </TabsTrigger>
+          )}
+
+          {(['tests', 'timing', 'console'] as const).map((tab) => (
             <TabsTrigger key={tab} value={tab} className="capitalize">
               {tab === 'console' ? <><Terminal className="w-3 h-3 mr-1" />Console</> : tab}
               {tab === 'tests' && lastResult.tests && lastResult.tests.length > 0 && (
@@ -630,6 +673,40 @@ export function ResponsePanel() {
               )}
             </div>
           </TabsContent>
+
+          {/* ── STREAM TIMELINE TAB ── */}
+          {lastResult.grpcMessages && lastResult.grpcMessages.length > 0 && (
+            <TabsContent value="stream" className="h-[calc(100vh-230px)] min-h-100 m-0 -m-3">
+              <GrpcStreamTimeline messages={lastResult.grpcMessages} isLive={isExecuting} />
+            </TabsContent>
+          )}
+
+          {/* ── TRAILERS TAB ── */}
+          {lastResult.grpcTrailers && Object.keys(lastResult.grpcTrailers).length > 0 && (
+            <TabsContent value="trailers">
+              <div className="border border-zinc-200 dark:border-zinc-800 rounded-md overflow-hidden bg-white dark:bg-zinc-950">
+                <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
+                  gRPC Response Trailers
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-1/3">Trailer</TableHead>
+                      <TableHead>Value</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.entries(lastResult.grpcTrailers).map(([key, vals]) => (
+                      <TableRow key={key}>
+                        <TableCell className="text-zinc-800 dark:text-zinc-300 font-semibold font-mono">{key}</TableCell>
+                        <TableCell className="text-zinc-600 dark:text-zinc-400 font-mono">{vals.join(', ')}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+          )}
 
           {/* ── HEADERS TAB ── */}
           <TabsContent value="headers">

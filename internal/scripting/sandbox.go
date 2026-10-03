@@ -663,6 +663,12 @@ func (e *Engine) setupResponseBridge(vm *goja.Runtime, resp *types.ExecutionResu
 
 	// Response Headers manager
 	headersObj := vm.NewObject()
+	for hKey, values := range resp.Headers {
+		if len(values) > 0 {
+			_ = headersObj.Set(strings.ToLower(hKey), values[0])
+			_ = headersObj.Set(hKey, values[0])
+		}
+	}
 	_ = headersObj.Set("get", func(key string) string {
 		for hKey, values := range resp.Headers {
 			if strings.EqualFold(hKey, key) && len(values) > 0 {
