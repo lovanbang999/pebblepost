@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"pebblepost/internal/scripting"
@@ -12,12 +13,12 @@ import (
 	"pebblepost/internal/workspace"
 )
 
-// Handler exposes HTTP API endpoints for executing HTTP requests with scripting support.
+// Handler exposes HTTP API endpoints for executing HTTP requests, cookie management, and OAuth2.
 type Handler struct {
-	client         Client
-	workspaceSvc   *workspace.WorkspaceService
-	environmentSvc *workspace.EnvironmentService
-	interpolator   *workspace.Interpolator
+	client              Client
+	workspaceSvc        *workspace.WorkspaceService
+	environmentSvc      *workspace.EnvironmentService
+	interpolator        *workspace.Interpolator
 	scriptEngine        *scripting.Engine
 	inheritanceResolver *workspace.InheritanceResolver
 }
@@ -40,9 +41,12 @@ func NewHandler(
 	}
 }
 
-// RegisterRoutes registers execution endpoints on the provided HTTP ServeMux.
+// RegisterRoutes registers execution and auth/cookie endpoints on the provided HTTP ServeMux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/request/execute", h.handleExecute)
+	mux.HandleFunc("/api/cookies", h.handleCookies)
+	mux.HandleFunc("/api/oauth2/authorize", h.handleOAuth2Authorize)
+	mux.HandleFunc("/api/oauth2/token", h.handleOAuth2Token)
 }
 
 // ExecutePayload defines the JSON body for the /api/request/execute endpoint.
@@ -70,6 +74,10 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	if payload.Request == nil {
 		h.jsonError(w, "Request definition is required", http.StatusBadRequest)
 		return
+	}
+
+	if payload.WorkspacePath != "" {
+		h.client.SetWorkspace(payload.WorkspacePath)
 	}
 
 	var folderChain []workspace.FolderChainItem
@@ -103,6 +111,7 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		reqToExecute.Auth = resolvedAuth
 	}
 
+	// Interpolate request fields (URL, headers, params, body, auth, settings)
 	if h.interpolator != nil {
 		reqToExecute = h.interpolator.InterpolateRequest(reqToExecute, varMap)
 	}
@@ -203,6 +212,17 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Never print auth secrets in logs
+	auth := reqToExecute.Auth
+	for _, sec := range []string{auth.Token, auth.Password, auth.SecretKey, auth.ClientSecret, auth.RefreshToken} {
+		if strings.TrimSpace(sec) != "" {
+			secretValues = append(secretValues, sec)
+		}
+	}
+	if strings.EqualFold(auth.Type, "apiKey") && strings.TrimSpace(auth.Value) != "" {
+		secretValues = append(secretValues, auth.Value)
+	}
+
 	if len(secretValues) > 0 {
 		for i, log := range result.Logs {
 			result.Logs[i] = security.MaskSecrets(log, secretValues)
@@ -213,6 +233,118 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonResponse(w, result)
+}
+
+
+
+// handleCookies handles GET, POST, DELETE for workspace cookies.
+func (h *Handler) handleCookies(w http.ResponseWriter, r *http.Request) {
+	wsPath := r.URL.Query().Get("workspacePath")
+	jar := h.client.GetCookieJar()
+	if jar == nil {
+		h.jsonError(w, "Cookie jar not available", http.StatusInternalServerError)
+		return
+	}
+	if wsPath != "" {
+		jar.SetWorkspace(wsPath)
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		grouped := jar.GetCookiesByDomain()
+		h.jsonResponse(w, grouped)
+
+	case http.MethodPost:
+		var payload struct {
+			WorkspacePath string           `json:"workspacePath"`
+			Cookie        types.CookieItem `json:"cookie"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			h.jsonError(w, "Invalid cookie payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if payload.WorkspacePath != "" {
+			jar.SetWorkspace(payload.WorkspacePath)
+		}
+		if err := jar.SetCookie(payload.Cookie); err != nil {
+			h.jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		h.jsonResponse(w, map[string]any{"success": true})
+
+	case http.MethodDelete:
+		domain := r.URL.Query().Get("domain")
+		path := r.URL.Query().Get("path")
+		name := r.URL.Query().Get("name")
+
+		if domain == "" {
+			// Clear all cookies
+			_ = jar.ClearAll()
+			h.jsonResponse(w, map[string]any{"success": true, "cleared": "all"})
+			return
+		}
+
+		if name != "" {
+			_ = jar.DeleteCookie(domain, path, name)
+			h.jsonResponse(w, map[string]any{"success": true, "deleted": name})
+			return
+		}
+
+		// Clear domain
+		_ = jar.ClearDomain(domain)
+		h.jsonResponse(w, map[string]any{"success": true, "clearedDomain": domain})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleOAuth2Authorize initiates Authorization Code + PKCE flow with loopback listener and browser.
+func (h *Handler) handleOAuth2Authorize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Auth types.AuthDefinition `json:"auth"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	token, err := GetOAuth2Manager().AuthorizeCodePKCE(r.Context(), &payload.Auth)
+	if err != nil {
+		h.jsonError(w, "Authorization failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, token)
+}
+
+// handleOAuth2Token retrieves or refreshes an OAuth2 token without opening a browser.
+func (h *Handler) handleOAuth2Token(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		Auth types.AuthDefinition `json:"auth"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	token, err := GetOAuth2Manager().GetToken(r.Context(), &payload.Auth)
+	if err != nil {
+		h.jsonError(w, "Failed to get token: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, token)
 }
 
 func (h *Handler) jsonResponse(w http.ResponseWriter, data any) {

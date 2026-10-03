@@ -82,6 +82,9 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 
 	// 2. Locate workspace root & initialize variable map
 	wsRoot := r.findWorkspaceRoot(targetPath)
+	if wsRoot != "" && r.client != nil {
+		r.client.SetWorkspace(wsRoot)
+	}
 	varMap := make(map[string]string)
 	var secretValues []string
 

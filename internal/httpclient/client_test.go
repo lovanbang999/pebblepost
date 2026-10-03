@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -541,5 +542,330 @@ func TestClient_TimingMetrics(t *testing.T) {
 	}
 	if res.Size != int64(len("response payload with timing")) {
 		t.Errorf("expected size %d, got %d", len("response payload with timing"), res.Size)
+	}
+}
+
+func TestClient_DigestAuth(t *testing.T) {
+	client := NewClient()
+
+	const (
+		expectedUser = "admin"
+		expectedPass = "secret123"
+		realm        = "pebble-secure"
+		nonce        = "dcd98b7102dd2f0e8b11d0f600bfb0c093"
+		opaque       = "5ccc069c403ebaf9f0171e9517f40e41"
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Digest ") {
+			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Digest realm="%s", nonce="%s", qop="auth", opaque="%s", algorithm="MD5"`, realm, nonce, opaque))
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("Unauthorized"))
+			return
+		}
+
+		// Verify digest response
+		if !strings.Contains(authHeader, `username="admin"`) || !strings.Contains(authHeader, `realm="pebble-secure"`) {
+			t.Errorf("digest header missing username or realm: %s", authHeader)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("Digest Auth Success"))
+	}))
+	defer server.Close()
+
+	req := &types.RequestDefinition{
+		Method: "GET",
+		URL:    server.URL + "/digest-endpoint",
+		Auth: types.AuthDefinition{
+			Type:     "digest",
+			Username: expectedUser,
+			Password: expectedPass,
+		},
+	}
+
+	result, err := client.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("digest auth request failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200 after digest retry, got %d (body: %s)", result.StatusCode, result.Body)
+	}
+	if result.Body != "Digest Auth Success" {
+		t.Errorf("expected body 'Digest Auth Success', got '%s'", result.Body)
+	}
+}
+
+func TestClient_OAuth2ClientCredentials(t *testing.T) {
+	client := NewClient()
+
+	// Fake OAuth2 Token & Resource Server
+	var issuedToken = "test-token-xyz-123"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/token" {
+			_ = r.ParseForm()
+			if r.FormValue("grant_type") != "client_credentials" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"unsupported_grant_type"}`))
+				return
+			}
+			if r.FormValue("client_id") != "test-client" || r.FormValue("client_secret") != "test-secret" {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"invalid_client"}`))
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": issuedToken,
+				"token_type":   "Bearer",
+				"expires_in":   3600,
+			})
+			return
+		}
+
+		if r.URL.Path == "/api/resource" {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "Bearer "+issuedToken {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("Unauthorized resource"))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"data":"protected-resource"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	req := &types.RequestDefinition{
+		Method: "GET",
+		URL:    server.URL + "/api/resource",
+		Auth: types.AuthDefinition{
+			Type:         "oauth2",
+			GrantType:    "client_credentials",
+			TokenURL:     server.URL + "/oauth/token",
+			ClientID:     "test-client",
+			ClientSecret: "test-secret",
+			Scope:        "read",
+		},
+	}
+
+	result, err := client.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("oauth2 request failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d (body: %s)", result.StatusCode, result.Body)
+	}
+	if !strings.Contains(result.Body, "protected-resource") {
+		t.Errorf("expected resource data, got: %s", result.Body)
+	}
+}
+
+func TestClient_OAuth2ExchangeCodePKCE(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("grant_type") != "authorization_code" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.FormValue("code") != "valid-auth-code" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.FormValue("code_verifier") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token":  "pkce-access-token-999",
+			"refresh_token": "pkce-refresh-token-888",
+			"expires_in":    3600,
+		})
+	}))
+	defer server.Close()
+
+	mgr := GetOAuth2Manager()
+	token, err := mgr.ExchangeCodePKCE(
+		context.Background(),
+		server.URL,
+		"client-123",
+		"secret-123",
+		"valid-auth-code",
+		"http://127.0.0.1:8080/callback",
+		"test-verifier-abcdef",
+	)
+	if err != nil {
+		t.Fatalf("exchange code failed: %v", err)
+	}
+	if token.AccessToken != "pkce-access-token-999" {
+		t.Errorf("expected access token pkce-access-token-999, got %s", token.AccessToken)
+	}
+	if token.RefreshToken != "pkce-refresh-token-888" {
+		t.Errorf("expected refresh token pkce-refresh-token-888, got %s", token.RefreshToken)
+	}
+}
+
+func TestClient_AWSSigV4(t *testing.T) {
+	client := NewClient()
+
+	var receivedAuthHeader string
+	var receivedDateHeader string
+	var receivedContentSha string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuthHeader = r.Header.Get("Authorization")
+		receivedDateHeader = r.Header.Get("X-Amz-Date")
+		receivedContentSha = r.Header.Get("X-Amz-Content-Sha256")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("AWS OK"))
+	}))
+	defer server.Close()
+
+	req := &types.RequestDefinition{
+		Method: "POST",
+		URL:    server.URL + "/items",
+		Auth: types.AuthDefinition{
+			Type:      "awsSigV4",
+			AccessKey: "AKIAIOSFODNN7EXAMPLE",
+			SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			Region:    "us-west-2",
+			Service:   "s3",
+		},
+		Body: types.BodyDefinition{
+			Type: "json",
+			Raw:  `{"name":"pebble"}`,
+		},
+	}
+
+	result, err := client.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("aws sigv4 request failed: %v", err)
+	}
+	if result.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", result.StatusCode)
+	}
+	if !strings.HasPrefix(receivedAuthHeader, "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/") {
+		t.Errorf("invalid AWS Authorization header: %s", receivedAuthHeader)
+	}
+	if !strings.Contains(receivedAuthHeader, "us-west-2/s3/aws4_request") {
+		t.Errorf("AWS Authorization header missing region/service scope: %s", receivedAuthHeader)
+	}
+	if receivedDateHeader == "" {
+		t.Errorf("missing X-Amz-Date header")
+	}
+	if receivedContentSha == "" {
+		t.Errorf("missing X-Amz-Content-Sha256 header")
+	}
+}
+
+func TestClient_CookieJar(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "pebble-cookies-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	client := NewClient()
+	client.SetWorkspace(tempDir)
+
+	var requestCount int
+	var receivedCookie string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		receivedCookie = r.Header.Get("Cookie")
+		if requestCount == 1 {
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session_token",
+				Value: "token_abc123",
+				Path:  "/",
+			})
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("cookie ok"))
+	}))
+	defer server.Close()
+
+	// 1. First request receives Set-Cookie
+	req1 := &types.RequestDefinition{
+		Method: "GET",
+		URL:    server.URL + "/login",
+	}
+	_, err = client.Execute(context.Background(), req1)
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+
+	// 2. Second request should automatically send stored Cookie
+	req2 := &types.RequestDefinition{
+		Method: "GET",
+		URL:    server.URL + "/profile",
+	}
+	_, err = client.Execute(context.Background(), req2)
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+	if !strings.Contains(receivedCookie, "session_token=token_abc123") {
+		t.Errorf("expected session_token cookie sent on second request, got: %q", receivedCookie)
+	}
+
+	// 3. Verify cookie persistence in .pebble/cookies.json
+	cookieFile := filepath.Join(tempDir, ".pebble", "cookies.json")
+	if _, err := os.Stat(cookieFile); os.IsNotExist(err) {
+		t.Errorf("expected .pebble/cookies.json to exist on disk")
+	}
+
+	// 4. Per-request cookie toggle: when disabled, cookie must NOT be sent
+	falseVal := false
+	req3 := &types.RequestDefinition{
+		Method: "GET",
+		URL:    server.URL + "/no-cookies",
+		Settings: types.SettingDefinition{
+			EnableCookies: &falseVal,
+		},
+	}
+	receivedCookie = ""
+	_, err = client.Execute(context.Background(), req3)
+	if err != nil {
+		t.Fatalf("third request failed: %v", err)
+	}
+	if receivedCookie != "" {
+		t.Errorf("expected no cookies when EnableCookies is false, got: %q", receivedCookie)
+	}
+}
+
+func TestClient_CustomUserAgentAndSettings(t *testing.T) {
+	client := NewClient()
+
+	var receivedUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedUA = r.Header.Get("User-Agent")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	req := &types.RequestDefinition{
+		Method: "GET",
+		URL:    server.URL,
+		Settings: types.SettingDefinition{
+			UserAgent: "CustomAgent/2.5",
+		},
+	}
+
+	_, err := client.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if receivedUA != "CustomAgent/2.5" {
+		t.Errorf("expected custom user agent 'CustomAgent/2.5', got %q", receivedUA)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"pebblepost/internal/scripting"
@@ -143,3 +144,117 @@ func TestHandler_ExecuteEndpoint_InvalidPayload(t *testing.T) {
 		t.Errorf("expected 400 Bad Request, got %d", w.Code)
 	}
 }
+
+func TestHandler_CookiesEndpoint(t *testing.T) {
+	tempDir := t.TempDir()
+	client := NewClient()
+	client.SetWorkspace(tempDir)
+	handler := NewHandler(client, nil, nil, nil, nil)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1. POST cookie
+	cookiePayload := map[string]any{
+		"workspacePath": tempDir,
+		"cookie": types.CookieItem{
+			Name:   "auth_token",
+			Value:  "val_12345",
+			Domain: "example.com",
+			Path:   "/",
+		},
+	}
+	body, _ := json.Marshal(cookiePayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/cookies", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/cookies, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 2. GET cookies
+	req = httptest.NewRequest(http.MethodGet, "/api/cookies?workspacePath="+tempDir, nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from GET /api/cookies, got %d", w.Code)
+	}
+
+	var grouped map[string][]types.CookieItem
+	if err := json.NewDecoder(w.Body).Decode(&grouped); err != nil {
+		t.Fatalf("failed to decode cookies: %v", err)
+	}
+
+	if len(grouped["example.com"]) == 0 {
+		t.Errorf("expected cookies for example.com")
+	} else if grouped["example.com"][0].Value != "val_12345" {
+		t.Errorf("expected cookie value 'val_12345', got '%s'", grouped["example.com"][0].Value)
+	}
+
+	// 3. DELETE cookie
+	req = httptest.NewRequest(http.MethodDelete, "/api/cookies?workspacePath="+tempDir+"&domain=example.com&name=auth_token", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from DELETE /api/cookies, got %d", w.Code)
+	}
+
+	// Verify deleted
+	req = httptest.NewRequest(http.MethodGet, "/api/cookies?workspacePath="+tempDir, nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	var groupedAfter map[string][]types.CookieItem
+	_ = json.NewDecoder(w.Body).Decode(&groupedAfter)
+	if len(groupedAfter["example.com"]) != 0 {
+		t.Errorf("expected empty cookies after deletion, got %v", groupedAfter["example.com"])
+	}
+}
+
+func TestHandler_SecretMaskingInLogs(t *testing.T) {
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer targetServer.Close()
+
+	client := NewClient()
+	scriptEngine := scripting.NewEngine()
+	handler := NewHandler(client, nil, nil, workspace.NewInterpolator(), scriptEngine)
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Pre-request script logs secret
+	secretPass := "SuperSecretPassword123"
+	payload := ExecutePayload{
+		Request: &types.RequestDefinition{
+			Method: "GET",
+			URL:    targetServer.URL,
+			Auth: types.AuthDefinition{
+				Type:     "basic",
+				Username: "user",
+				Password: secretPass,
+			},
+			Scripts: types.ScriptDefinition{
+				PreRequest: `pb.console.log("Connecting with password: " + pb.request.auth.password);`,
+			},
+		},
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/request/execute", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var result types.ExecutionResult
+	_ = json.NewDecoder(w.Body).Decode(&result)
+
+	for _, log := range result.Logs {
+		if strings.Contains(log, secretPass) {
+			t.Errorf("secret password leaked in logs: %q", log)
+		}
+	}
+}
+

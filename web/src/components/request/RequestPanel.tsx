@@ -1,8 +1,24 @@
 import { useState, useEffect } from "react";
-import { Send, Loader2, Plus, Trash2, Save, Check, Folder } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  Plus,
+  Trash2,
+  Save,
+  Check,
+  Folder,
+  Cookie,
+  ShieldAlert,
+  Key,
+  Globe,
+  Shield,
+  RefreshCw,
+  Lock,
+} from "lucide-react";
 import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
+import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { javascript } from "@codemirror/lang-javascript";
@@ -52,6 +68,41 @@ export function RequestPanel() {
 
   const [isSaved, setIsSaved] = useState(false);
   const [resolvedInfo, setResolvedInfo] = useState<ResolvedRequestResult | null>(null);
+  const [isCookieManagerOpen, setIsCookieManagerOpen] = useState(false);
+  const [isOAuthAuthorizing, setIsOAuthAuthorizing] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+
+  const handleFetchOAuthToken = async () => {
+    if (!activeRequest) return;
+    setIsOAuthAuthorizing(true);
+    setOauthError(null);
+    try {
+      const isAuthCode = activeRequest.auth.grantType === "authorization_code";
+      const endpoint = isAuthCode ? "/api/oauth2/authorize" : "/api/oauth2/token";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auth: activeRequest.auth }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to retrieve OAuth2 token");
+      }
+      updateActiveRequest((prev) => ({
+        ...prev,
+        auth: {
+          ...prev.auth,
+          token: data.access_token,
+          refreshToken: data.refresh_token || prev.auth.refreshToken,
+          tokenExpiresAt: data.expires_at,
+        },
+      }));
+    } catch (err: any) {
+      setOauthError(err.message || String(err));
+    } finally {
+      setIsOAuthAuthorizing(false);
+    }
+  };
 
   useEffect(() => {
     if (!activeFilePath || currentTab?.type === "folder") {
@@ -847,7 +898,7 @@ export function RequestPanel() {
           </TabsContent>
 
           <TabsContent value="auth">
-            <div className="space-y-3 text-xs">
+            <div className="space-y-4 text-xs">
               <div className="flex items-center gap-3">
                 <span className="font-semibold text-zinc-700 dark:text-zinc-300 shrink-0">
                   Auth Type:
@@ -858,7 +909,7 @@ export function RequestPanel() {
                     typeof val === "string" &&
                     updateActiveRequest((prev) => ({
                       ...prev,
-                      auth: { type: val as any },
+                      auth: { ...prev.auth, type: val as any },
                     }))
                   }
                 >
@@ -869,10 +920,11 @@ export function RequestPanel() {
                     <SelectItem value="inherit">Inherit from parent</SelectItem>
                     <SelectItem value="none">No Auth</SelectItem>
                     <SelectItem value="bearer">Bearer Token</SelectItem>
-                    <SelectItem value="basic">
-                      Basic Auth (Username / Password)
-                    </SelectItem>
+                    <SelectItem value="basic">Basic Auth (Username / Password)</SelectItem>
                     <SelectItem value="apiKey">API Key</SelectItem>
+                    <SelectItem value="digest">Digest Auth</SelectItem>
+                    <SelectItem value="oauth2">OAuth 2.0</SelectItem>
+                    <SelectItem value="awsSigV4">AWS Signature v4</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -886,6 +938,7 @@ export function RequestPanel() {
                 )}
               </div>
 
+              {/* Inherited Auth Info */}
               {(!activeRequest.auth.type || activeRequest.auth.type === "inherit") && (
                 <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-4 bg-zinc-50/50 dark:bg-zinc-900/30">
                   <div className="flex items-center justify-between">
@@ -917,30 +970,6 @@ export function RequestPanel() {
                           {resolvedInfo.request.auth.type}
                         </span>
                       </div>
-                      {resolvedInfo.request.auth.type === "bearer" && (
-                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-                          <span className="text-zinc-500">Token:</span>
-                          <code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-900 px-1.5 py-0.5 rounded">
-                            {resolvedInfo.request.auth.token || "(empty)"}
-                          </code>
-                        </div>
-                      )}
-                      {resolvedInfo.request.auth.type === "basic" && (
-                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-                          <span className="text-zinc-500">Username:</span>
-                          <code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-900 px-1.5 py-0.5 rounded">
-                            {resolvedInfo.request.auth.username || "(empty)"}
-                          </code>
-                        </div>
-                      )}
-                      {resolvedInfo.request.auth.type === "apiKey" && (
-                        <div className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
-                          <span className="text-zinc-500">Key:</span>
-                          <code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-900 px-1.5 py-0.5 rounded">
-                            {resolvedInfo.request.auth.key}={resolvedInfo.request.auth.value} ({resolvedInfo.request.auth.addTo || "header"})
-                          </code>
-                        </div>
-                      )}
                       <p className="text-[11px] text-zinc-400 pt-1 border-t border-zinc-100 dark:border-zinc-900">
                         This request automatically uses authentication configured in <span className="font-semibold text-zinc-700 dark:text-zinc-300">{resolvedInfo.inheritedAuth.sourceFolder}</span>.
                       </p>
@@ -953,6 +982,7 @@ export function RequestPanel() {
                 </div>
               )}
 
+              {/* Bearer Token */}
               {activeRequest.auth.type === "bearer" && (
                 <div className="space-y-2 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">
                   <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
@@ -968,17 +998,15 @@ export function RequestPanel() {
                       }))
                     }
                     placeholder="Enter token or {{TOKEN_VAR}}"
-                    className="w-full bg-white dark:bg-zinc-950"
+                    className="w-full bg-white dark:bg-zinc-950 font-mono"
                   />
                   <p className="text-[10px] text-zinc-500">
-                    Sent as:{" "}
-                    <code className="font-mono">
-                      Authorization: Bearer &lt;token&gt;
-                    </code>
+                    Sent as: <code className="font-mono">Authorization: Bearer &lt;token&gt;</code>
                   </p>
                 </div>
               )}
 
+              {/* Basic Auth */}
               {activeRequest.auth.type === "basic" && (
                 <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">
                   <div>
@@ -1016,14 +1044,12 @@ export function RequestPanel() {
                     />
                   </div>
                   <p className="text-[10px] text-zinc-500">
-                    Sent as:{" "}
-                    <code className="font-mono">
-                      Authorization: Basic base64(user:pass)
-                    </code>
+                    Sent as: <code className="font-mono">Authorization: Basic base64(user:pass)</code>
                   </p>
                 </div>
               )}
 
+              {/* API Key */}
               {activeRequest.auth.type === "apiKey" && (
                 <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-3 bg-zinc-50/50 dark:bg-zinc-900/30">
                   <div className="grid grid-cols-2 gap-2">
@@ -1040,7 +1066,7 @@ export function RequestPanel() {
                             auth: { ...prev.auth, key: e.target.value },
                           }))
                         }
-                        placeholder="X-API-KEY"
+                        placeholder="X-API-KEY or {{API_KEY_NAME}}"
                         className="w-full bg-white dark:bg-zinc-950"
                       />
                     </div>
@@ -1049,7 +1075,7 @@ export function RequestPanel() {
                         Value
                       </label>
                       <Input
-                        type="text"
+                        type="password"
                         value={activeRequest.auth.value || ""}
                         onChange={(e) =>
                           updateActiveRequest((prev) => ({
@@ -1057,7 +1083,7 @@ export function RequestPanel() {
                             auth: { ...prev.auth, value: e.target.value },
                           }))
                         }
-                        placeholder="api-key-value or {{API_KEY}}"
+                        placeholder="secret-key or {{API_KEY_VALUE}}"
                         className="w-full bg-white dark:bg-zinc-950"
                       />
                     </div>
@@ -1088,8 +1114,343 @@ export function RequestPanel() {
                 </div>
               )}
 
+              {/* Digest Auth */}
+              {activeRequest.auth.type === "digest" && (
+                <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-4 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div className="flex items-center gap-2 text-zinc-800 dark:text-zinc-200 font-medium">
+                    <Lock className="w-4 h-4 text-blue-500" />
+                    <span>Digest Authentication (RFC 7616 / RFC 2617)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500">
+                    Automatically responds to 401 Unauthorized challenges with MD5 / SHA-256 digest responses.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Username</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.username || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, username: e.target.value },
+                          }))
+                        }
+                        placeholder="username or {{DIGEST_USER}}"
+                        className="h-8 bg-white dark:bg-zinc-950"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Password</label>
+                      <Input
+                        type="password"
+                        value={activeRequest.auth.password || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, password: e.target.value },
+                          }))
+                        }
+                        placeholder="password or {{DIGEST_PASS}}"
+                        className="h-8 bg-white dark:bg-zinc-950"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-zinc-500 mb-1">Realm (Optional)</label>
+                    <Input
+                      type="text"
+                      value={activeRequest.auth.realm || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          auth: { ...prev.auth, realm: e.target.value },
+                        }))
+                      }
+                      placeholder="Leave empty to auto-negotiate with server challenge"
+                      className="h-8 bg-white dark:bg-zinc-950"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* OAuth 2.0 */}
+              {activeRequest.auth.type === "oauth2" && (
+                <div className="space-y-4 border border-zinc-200 dark:border-zinc-800 rounded-md p-4 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-zinc-800 dark:text-zinc-200 font-medium">
+                      <Key className="w-4 h-4 text-emerald-500" />
+                      <span>OAuth 2.0 Configuration</span>
+                    </div>
+                    {activeRequest.auth.token && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                      >
+                        Token Active
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Grant Type</label>
+                      <Select
+                        value={activeRequest.auth.grantType || "client_credentials"}
+                        onValueChange={(val) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, grantType: val as any },
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="h-8 bg-white dark:bg-zinc-950">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="client_credentials">Client Credentials</SelectItem>
+                          <SelectItem value="authorization_code">
+                            Authorization Code (with PKCE)
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Token URL *</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.tokenUrl || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, tokenUrl: e.target.value },
+                          }))
+                        }
+                        placeholder="https://oauth2.example.com/token or {{TOKEN_URL}}"
+                        className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {activeRequest.auth.grantType === "authorization_code" && (
+                    <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded text-xs space-y-2">
+                      <label className="block font-medium text-amber-700 dark:text-amber-400">
+                        Authorization URL * (PKCE S256)
+                      </label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.authUrl || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, authUrl: e.target.value },
+                          }))
+                        }
+                        placeholder="https://oauth2.example.com/authorize"
+                        className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
+                      />
+                      <p className="text-[10px] text-zinc-500">
+                        Clicking "Authorize" opens your system browser and catches the loopback callback automatically.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Client ID</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.clientId || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, clientId: e.target.value },
+                          }))
+                        }
+                        placeholder="client-id or {{CLIENT_ID}}"
+                        className="h-8 bg-white dark:bg-zinc-950 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Client Secret</label>
+                      <Input
+                        type="password"
+                        value={activeRequest.auth.clientSecret || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, clientSecret: e.target.value },
+                          }))
+                        }
+                        placeholder="client-secret or {{CLIENT_SECRET}}"
+                        className="h-8 bg-white dark:bg-zinc-950 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-zinc-500 mb-1">Scope (Optional)</label>
+                    <Input
+                      type="text"
+                      value={activeRequest.auth.scope || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          auth: { ...prev.auth, scope: e.target.value },
+                        }))
+                      }
+                      placeholder="read write email or {{OAUTH_SCOPE}}"
+                      className="h-8 bg-white dark:bg-zinc-950 text-xs"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex items-center gap-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleFetchOAuthToken}
+                      disabled={isOAuthAuthorizing}
+                      className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isOAuthAuthorizing ? "animate-spin" : ""}`} />
+                      {isOAuthAuthorizing
+                        ? "Authorizing..."
+                        : activeRequest.auth.grantType === "authorization_code"
+                        ? "Authorize in Browser"
+                        : "Fetch Token"}
+                    </Button>
+
+                    {activeRequest.auth.token && (
+                      <span className="text-[11px] text-zinc-500">
+                        Token stored & will auto-refresh before expiration.
+                      </span>
+                    )}
+                  </div>
+
+                  {oauthError && (
+                    <div className="p-2.5 rounded bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs">
+                      {oauthError}
+                    </div>
+                  )}
+
+                  {activeRequest.auth.token && (
+                    <div className="pt-2 space-y-1">
+                      <label className="block text-zinc-500 text-[11px]">Current Access Token</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.token}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, token: e.target.value },
+                          }))
+                        }
+                        className="h-8 font-mono text-[11px] bg-white dark:bg-zinc-950"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AWS Signature v4 */}
+              {activeRequest.auth.type === "awsSigV4" && (
+                <div className="space-y-3 border border-zinc-200 dark:border-zinc-800 rounded-md p-4 bg-zinc-50/50 dark:bg-zinc-900/30">
+                  <div className="flex items-center gap-2 text-zinc-800 dark:text-zinc-200 font-medium">
+                    <Shield className="w-4 h-4 text-amber-500" />
+                    <span>AWS Signature v4</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500">
+                    Calculates HMAC-SHA256 request signatures, X-Amz-Date, and canonical headers on send.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Access Key ID *</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.accessKey || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, accessKey: e.target.value },
+                          }))
+                        }
+                        placeholder="AKIAIOSFODNN7EXAMPLE"
+                        className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-500 mb-1">Secret Access Key *</label>
+                      <Input
+                        type="password"
+                        value={activeRequest.auth.secretKey || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, secretKey: e.target.value },
+                          }))
+                        }
+                        placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                        className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-zinc-500 mb-1">AWS Region</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.region || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, region: e.target.value },
+                          }))
+                        }
+                        placeholder="us-east-1"
+                        className="h-8 bg-white dark:bg-zinc-950 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-zinc-500 mb-1">AWS Service</label>
+                      <Input
+                        type="text"
+                        value={activeRequest.auth.service || ""}
+                        onChange={(e) =>
+                          updateActiveRequest((prev) => ({
+                            ...prev,
+                            auth: { ...prev.auth, service: e.target.value },
+                          }))
+                        }
+                        placeholder="s3 or execute-api"
+                        className="h-8 bg-white dark:bg-zinc-950 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-zinc-500 mb-1">Session Token (Optional)</label>
+                    <Input
+                      type="password"
+                      value={activeRequest.auth.sessionToken || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          auth: { ...prev.auth, sessionToken: e.target.value },
+                        }))
+                      }
+                      placeholder="Security STS token or {{AWS_SESSION_TOKEN}}"
+                      className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* No Auth */}
               {activeRequest.auth.type === "none" && (
-                <div className="text-zinc-500 border border-dashed border-zinc-800 rounded-md p-4 text-center">
+                <div className="text-zinc-500 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-md p-4 text-center">
                   No authentication configured for this request.
                 </div>
               )}
@@ -1097,68 +1458,296 @@ export function RequestPanel() {
           </TabsContent>
 
           <TabsContent value="settings">
-            <div className="p-4 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50/50 dark:bg-zinc-900/30 divide-y divide-zinc-200/80 dark:divide-zinc-800/80 max-w-2xl">
-              <label
-                htmlFor="setting-follow-redirects"
-                className="flex items-start gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer group select-none"
-              >
-                <div className="pt-0.5">
-                  <Checkbox
-                    id="setting-follow-redirects"
-                    checked={activeRequest.settings.followRedirects}
-                    onCheckedChange={(checked) =>
-                      updateActiveRequest((prev) => ({
-                        ...prev,
-                        settings: {
-                          ...prev.settings,
-                          followRedirects: !!checked,
-                        },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                    Follow HTTP Redirects
-                  </span>
-                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Automatically follow 3xx redirect status codes returned by the server.
-                  </span>
-                </div>
-              </label>
+            <div className="p-4 border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50/50 dark:bg-zinc-900/30 divide-y divide-zinc-200/80 dark:divide-zinc-800/80 max-w-2xl text-xs space-y-4">
+              {/* SSL/TLS Verification Toggle + Warning */}
+              <div className="pt-2 first:pt-0 space-y-3">
+                <label
+                  htmlFor="setting-verify-ssl"
+                  className="flex items-start gap-3 cursor-pointer group select-none"
+                >
+                  <div className="pt-0.5">
+                    <Checkbox
+                      id="setting-verify-ssl"
+                      checked={activeRequest.settings.verifySSL}
+                      onCheckedChange={(checked) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          settings: {
+                            ...prev.settings,
+                            verifySSL: !!checked,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                      Verify SSL/TLS Certificates
+                    </span>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Validate remote SSL/TLS certificates when sending HTTPS requests.
+                    </span>
+                  </div>
+                </label>
 
-              <label
-                htmlFor="setting-verify-ssl"
-                className="flex items-start gap-3 py-3 first:pt-0 last:pb-0 cursor-pointer group select-none"
-              >
-                <div className="pt-0.5">
-                  <Checkbox
-                    id="setting-verify-ssl"
-                    checked={activeRequest.settings.verifySSL}
-                    onCheckedChange={(checked) =>
+                {!activeRequest.settings.verifySSL && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-md flex items-start gap-2.5 text-amber-700 dark:text-amber-400">
+                    <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold block">Warning: SSL Verification Disabled</span>
+                      <span className="text-[11px]">
+                        Requests will accept self-signed and invalid certificates. This makes network connections vulnerable to Man-in-the-Middle (MITM) attacks.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Redirects */}
+              <div className="pt-3 space-y-3">
+                <label
+                  htmlFor="setting-follow-redirects"
+                  className="flex items-start gap-3 cursor-pointer group select-none"
+                >
+                  <div className="pt-0.5">
+                    <Checkbox
+                      id="setting-follow-redirects"
+                      checked={activeRequest.settings.followRedirects}
+                      onCheckedChange={(checked) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          settings: {
+                            ...prev.settings,
+                            followRedirects: !!checked,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                      Follow HTTP Redirects
+                    </span>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Automatically follow 3xx redirect status codes returned by the server. Sensitive auth credentials are automatically stripped across origins.
+                    </span>
+                  </div>
+                </label>
+
+                {activeRequest.settings.followRedirects && (
+                  <div className="pl-7 flex items-center gap-2">
+                    <span className="text-zinc-500 text-[11px]">Max Redirect Hops:</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={activeRequest.settings.maxRedirects || 10}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          settings: {
+                            ...prev.settings,
+                            maxRedirects: parseInt(e.target.value, 10) || 10,
+                          },
+                        }))
+                      }
+                      className="w-20 h-7 text-xs bg-white dark:bg-zinc-950"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Cookie Jar Toggle & Management */}
+              <div className="pt-3 flex items-start justify-between gap-4">
+                <label
+                  htmlFor="setting-enable-cookies"
+                  className="flex items-start gap-3 cursor-pointer group select-none flex-1"
+                >
+                  <div className="pt-0.5">
+                    <Checkbox
+                      id="setting-enable-cookies"
+                      checked={activeRequest.settings.enableCookies !== false}
+                      onCheckedChange={(checked) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          settings: {
+                            ...prev.settings,
+                            enableCookies: !!checked,
+                          },
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-1.5">
+                      <Cookie className="w-3.5 h-3.5 text-amber-500" />
+                      Enable Workspace Cookie Jar
+                    </span>
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Automatically store Set-Cookie headers and send matching cookies for this domain. Never tracked in Git.
+                    </span>
+                  </div>
+                </label>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsCookieManagerOpen(true)}
+                  className="h-7 text-xs gap-1.5 shrink-0 cursor-pointer"
+                >
+                  <Cookie className="w-3.5 h-3.5 text-amber-500" />
+                  Manage Cookies
+                </Button>
+              </div>
+
+              {/* Timeouts */}
+              <div className="pt-3 grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-medium mb-1">
+                    Request Timeout (ms)
+                  </label>
+                  <Input
+                    type="number"
+                    value={activeRequest.settings.timeoutMs}
+                    onChange={(e) =>
                       updateActiveRequest((prev) => ({
                         ...prev,
                         settings: {
                           ...prev.settings,
-                          verifySSL: !!checked,
+                          timeoutMs: parseInt(e.target.value, 10) || 0,
                         },
                       }))
                     }
+                    placeholder="30000"
+                    className="h-8 bg-white dark:bg-zinc-950"
                   />
+                  <span className="text-[10px] text-zinc-400">0 = use client default (30s)</span>
                 </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                    Verify SSL/TLS Certificates
-                  </span>
-                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Validate SSL/TLS certificates when sending HTTPS requests. Disable only when testing with self-signed development certificates.
-                  </span>
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-medium mb-1">
+                    Connect Timeout (ms)
+                  </label>
+                  <Input
+                    type="number"
+                    value={activeRequest.settings.connectTimeoutMs || ""}
+                    onChange={(e) =>
+                      updateActiveRequest((prev) => ({
+                        ...prev,
+                        settings: {
+                          ...prev.settings,
+                          connectTimeoutMs: parseInt(e.target.value, 10) || 0,
+                        },
+                      }))
+                    }
+                    placeholder="10000"
+                    className="h-8 bg-white dark:bg-zinc-950"
+                  />
+                  <span className="text-[10px] text-zinc-400">0 = use default (10s)</span>
                 </div>
-              </label>
+              </div>
+
+              {/* User-Agent */}
+              <div className="pt-3">
+                <label className="block text-zinc-700 dark:text-zinc-300 font-medium mb-1">
+                  Custom User-Agent
+                </label>
+                <Input
+                  type="text"
+                  value={activeRequest.settings.userAgent || ""}
+                  onChange={(e) =>
+                    updateActiveRequest((prev) => ({
+                      ...prev,
+                      settings: {
+                        ...prev.settings,
+                        userAgent: e.target.value,
+                      },
+                    }))
+                  }
+                  placeholder="PebblePost/1.0"
+                  className="h-8 bg-white dark:bg-zinc-950"
+                />
+              </div>
+
+              {/* Proxy */}
+              <div className="pt-3">
+                <label className="block text-zinc-700 dark:text-zinc-300 font-medium mb-1 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-zinc-400" />
+                  Proxy Configuration
+                </label>
+                <Input
+                  type="text"
+                  value={activeRequest.settings.proxyUrl || ""}
+                  onChange={(e) =>
+                    updateActiveRequest((prev) => ({
+                      ...prev,
+                      settings: {
+                        ...prev.settings,
+                        proxyUrl: e.target.value,
+                      },
+                    }))
+                  }
+                  placeholder="http://127.0.0.1:8080 or socks5://user:pass@127.0.0.1:1080"
+                  className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
+                />
+                <span className="text-[10px] text-zinc-400">
+                  Supports HTTP, HTTPS, and SOCKS5 proxy URLs. Leave empty to use system environment proxies.
+                </span>
+              </div>
+
+              {/* Client Certificate (mTLS) */}
+              <div className="pt-3 space-y-2">
+                <label className="block text-zinc-700 dark:text-zinc-300 font-medium flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-zinc-400" />
+                  Client Certificate (mTLS)
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block mb-1">Certificate Path (.pem / .crt)</span>
+                    <Input
+                      type="text"
+                      value={activeRequest.settings.clientCertPath || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          settings: {
+                            ...prev.settings,
+                            clientCertPath: e.target.value,
+                          },
+                        }))
+                      }
+                      placeholder="/path/to/client.crt or {{CERT_PATH}}"
+                      className="h-8 bg-white dark:bg-zinc-950 font-mono text-[11px]"
+                    />
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block mb-1">Private Key Path (.key)</span>
+                    <Input
+                      type="text"
+                      value={activeRequest.settings.clientKeyPath || ""}
+                      onChange={(e) =>
+                        updateActiveRequest((prev) => ({
+                          ...prev,
+                          settings: {
+                            ...prev.settings,
+                            clientKeyPath: e.target.value,
+                          },
+                        }))
+                      }
+                      placeholder="/path/to/client.key or {{KEY_PATH}}"
+                      className="h-8 bg-white dark:bg-zinc-950 font-mono text-[11px]"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </TabsContent>
         </div>
       </Tabs>
+
+      <CookieManagerDialog
+        isOpen={isCookieManagerOpen}
+        onClose={() => setIsCookieManagerOpen(false)}
+      />
     </div>
   );
 }

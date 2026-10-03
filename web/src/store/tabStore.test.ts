@@ -262,4 +262,95 @@ describe('useTabStore', () => {
     assert.equal(state.tabs[0].isDirty, true)
     assert.equal(state.tabs[0].folder?.headers?.[0].key, 'X-Payment-Gateway')
   })
+
+  test('updateActiveRequest configures new Auth types (Digest, OAuth2, AWSSigV4)', () => {
+    const store = useTabStore.getState()
+    store.openTab('collections/auth-req.pebble.json', sampleReq, true)
+
+    // 1. Digest Auth
+    store.updateActiveRequest((prev) => ({
+      ...prev,
+      auth: {
+        type: 'digest',
+        username: 'digest_user',
+        password: 'digest_password',
+        realm: 'my_realm',
+      },
+    }))
+
+    let tab = useTabStore.getState().tabs[0]
+    assert.equal(tab.isDirty, true)
+    assert.ok(tab.request)
+    assert.equal(tab.request.auth.type, 'digest')
+    assert.equal(tab.request.auth.username, 'digest_user')
+    assert.equal(tab.request.auth.realm, 'my_realm')
+
+    // 2. OAuth 2.0 Auth
+    store.updateActiveRequest((prev) => ({
+      ...prev,
+      auth: {
+        type: 'oauth2',
+        grantType: 'authorization_code',
+        authUrl: 'https://oauth.example.com/auth',
+        tokenUrl: 'https://oauth.example.com/token',
+        clientId: 'client_id_123',
+        token: 'active_access_token',
+      },
+    }))
+
+    tab = useTabStore.getState().tabs[0]
+    assert.ok(tab.request)
+    assert.equal(tab.request.auth.type, 'oauth2')
+    assert.equal(tab.request.auth.grantType, 'authorization_code')
+    assert.equal(tab.request.auth.token, 'active_access_token')
+
+    // 3. AWS SigV4
+    store.updateActiveRequest((prev) => ({
+      ...prev,
+      auth: {
+        type: 'awsSigV4',
+        accessKey: 'AKIA123',
+        secretKey: 'SECRET123',
+        region: 'eu-central-1',
+        service: 's3',
+      },
+    }))
+
+    tab = useTabStore.getState().tabs[0]
+    assert.ok(tab.request)
+    assert.equal(tab.request.auth.type, 'awsSigV4')
+    assert.equal(tab.request.auth.region, 'eu-central-1')
+    assert.equal(tab.request.auth.service, 's3')
+  })
+
+  test('updateActiveRequest configures Settings (cookies, proxy, mTLS, TLS verify)', () => {
+    const store = useTabStore.getState()
+    store.openTab('collections/settings-req.pebble.json', sampleReq, true)
+
+    store.updateActiveRequest((prev) => ({
+      ...prev,
+      settings: {
+        ...prev.settings,
+        verifySSL: false,
+        enableCookies: false,
+        proxyUrl: 'socks5://127.0.0.1:1080',
+        clientCertPath: '/certs/client.pem',
+        clientKeyPath: '/certs/client.key',
+        userAgent: 'CustomAgent/3.0',
+        maxRedirects: 5,
+        connectTimeoutMs: 5000,
+      },
+    }))
+
+    const tab = useTabStore.getState().tabs[0]
+    assert.equal(tab.isDirty, true)
+    assert.ok(tab.request)
+    assert.equal(tab.request.settings.verifySSL, false)
+    assert.equal(tab.request.settings.enableCookies, false)
+    assert.equal(tab.request.settings.proxyUrl, 'socks5://127.0.0.1:1080')
+    assert.equal(tab.request.settings.clientCertPath, '/certs/client.pem')
+    assert.equal(tab.request.settings.userAgent, 'CustomAgent/3.0')
+    assert.equal(tab.request.settings.maxRedirects, 5)
+    assert.equal(tab.request.settings.connectTimeoutMs, 5000)
+  })
 })

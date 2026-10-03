@@ -129,13 +129,46 @@ func (in *Interpolator) InterpolateKeyValues(kvs []types.KeyValue, vars map[stri
 // InterpolateAuth interpolates authentication tokens and credentials.
 func (in *Interpolator) InterpolateAuth(auth types.AuthDefinition, vars map[string]string) types.AuthDefinition {
 	return types.AuthDefinition{
-		Type:     auth.Type,
-		Token:    in.InterpolateString(auth.Token, vars),
-		Username: in.InterpolateString(auth.Username, vars),
-		Password: in.InterpolateString(auth.Password, vars),
-		Key:      in.InterpolateString(auth.Key, vars),
-		Value:    in.InterpolateString(auth.Value, vars),
-		AddTo:    auth.AddTo,
+		Type:           auth.Type,
+		Token:          in.InterpolateString(auth.Token, vars),
+		Username:       in.InterpolateString(auth.Username, vars),
+		Password:       in.InterpolateString(auth.Password, vars),
+		Key:            in.InterpolateString(auth.Key, vars),
+		Value:          in.InterpolateString(auth.Value, vars),
+		AddTo:          auth.AddTo,
+		Realm:          in.InterpolateString(auth.Realm, vars),
+		GrantType:      auth.GrantType,
+		AuthURL:        in.InterpolateString(auth.AuthURL, vars),
+		TokenURL:       in.InterpolateString(auth.TokenURL, vars),
+		ClientID:       in.InterpolateString(auth.ClientID, vars),
+		ClientSecret:   in.InterpolateString(auth.ClientSecret, vars),
+		Scope:          in.InterpolateString(auth.Scope, vars),
+		RedirectURL:    in.InterpolateString(auth.RedirectURL, vars),
+		CodeVerifier:   in.InterpolateString(auth.CodeVerifier, vars),
+		RefreshToken:   in.InterpolateString(auth.RefreshToken, vars),
+		TokenExpiresAt: auth.TokenExpiresAt,
+		AccessKey:      in.InterpolateString(auth.AccessKey, vars),
+		SecretKey:      in.InterpolateString(auth.SecretKey, vars),
+		Region:         in.InterpolateString(auth.Region, vars),
+		Service:        in.InterpolateString(auth.Service, vars),
+		SessionToken:   in.InterpolateString(auth.SessionToken, vars),
+	}
+}
+
+// InterpolateSettings interpolates variable placeholders inside string settings.
+func (in *Interpolator) InterpolateSettings(settings types.SettingDefinition, vars map[string]string) types.SettingDefinition {
+	return types.SettingDefinition{
+		FollowRedirects:  settings.FollowRedirects,
+		VerifySSL:        settings.VerifySSL,
+		TimeoutMs:        settings.TimeoutMs,
+		ScriptTimeoutMs:  settings.ScriptTimeoutMs,
+		ConnectTimeoutMs: settings.ConnectTimeoutMs,
+		MaxRedirects:     settings.MaxRedirects,
+		EnableCookies:    settings.EnableCookies,
+		UserAgent:        in.InterpolateString(settings.UserAgent, vars),
+		ProxyURL:         in.InterpolateString(settings.ProxyURL, vars),
+		ClientCertPath:   in.InterpolateString(settings.ClientCertPath, vars),
+		ClientKeyPath:    in.InterpolateString(settings.ClientKeyPath, vars),
 	}
 }
 
@@ -177,7 +210,7 @@ func (in *Interpolator) InterpolateRequest(req *types.RequestDefinition, vars ma
 		Auth:        in.InterpolateAuth(req.Auth, vars),
 		Body:        in.InterpolateBody(req.Body, vars),
 		Scripts:     req.Scripts, // Scripts are executed at runtime, not interpolated
-		Settings:    req.Settings,
+		Settings:    in.InterpolateSettings(req.Settings, vars),
 	}
 }
 
