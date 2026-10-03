@@ -12,12 +12,12 @@ import (
 	"pebblepost/internal/runner"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
-		os.Exit(1)
+		os.Exit(runner.ExitConfigError)
 	}
 
 	switch os.Args[1] {
@@ -30,37 +30,89 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", os.Args[1])
 		printUsage()
-		os.Exit(1)
+		os.Exit(runner.ExitConfigError)
 	}
 }
 
+// multiFlag is a flag.Value implementation for repeatable flags (e.g. --reporter, --var).
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ", ") }
+func (m *multiFlag) Set(v string) error {
+	*m = append(*m, v)
+	return nil
+}
+
 func handleRun(args []string) {
-	runCmd := flag.NewFlagSet("run", flag.ExitOnError)
-	envFlag := runCmd.String("e", "", "Environment name (e.g. dev, staging, prod)")
-	bailFlag := runCmd.Bool("bail", false, "Stop execution immediately on first failed request or assertion")
-	ciFlag := runCmd.Bool("ci", false, "CI/CD mode (synonym for strict non-zero exit codes)")
-	reportFlag := runCmd.String("report", "terminal", "Output format: terminal or json")
+	fs := newFlagSet()
+
+	var (
+		envFlag     = fs.String("e", "", "Environment name (e.g. dev, staging, prod)")
+		bailFlag    = fs.Bool("bail", false, "Stop execution immediately on first failure")
+		dryRunFlag  = fs.Bool("dry-run", false, "Print request order without sending any HTTP requests")
+		timeoutFlag = fs.Int("timeout", 0, "Global request timeout in milliseconds (0 = per-request setting)")
+		retryFlag   = fs.Int("retry", 0, "Number of retries on network errors (not assertion failures)")
+		delayFlag   = fs.Int("delay", 0, "Delay between requests in milliseconds")
+		envFileFlag = fs.String("env-file", "", "Path to additional environment variable file (KEY=VALUE format)")
+		folderFlag  = fs.String("folder", "", "Glob pattern to filter requests by folder path")
+		requestFlag = fs.String("request", "", "Glob pattern to filter requests by name or path")
+		tagFlag     = fs.String("tag", "", "Filter requests by tag (exact match)")
+		outFlag     = fs.String("out", "", "Output file path for the last --reporter (shorthand for reporter:path)")
+		ciFlag      = fs.Bool("ci", false, "CI/CD mode (alias for --bail, preserved for backward compatibility)")
+	)
+
+	var reporterFlags multiFlag
+	var varFlags multiFlag
+	fs.Var(&reporterFlags, "reporter", "Reporter format: cli, json, junit, html. Repeatable. Append :path to write to file (e.g. junit:results.xml).")
+	fs.Var(&varFlags, "var", "Extra variable KEY=VALUE (repeatable, highest precedence).")
 
 	reordered := reorderArgs(args)
-	_ = runCmd.Parse(reordered)
+	if err := fs.Parse(reordered); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
 
+	// ── Target path ───────────────────────────────────────────────────────────
 	targetPath := "."
-	if runCmd.NArg() >= 1 {
-		targetPath = runCmd.Arg(0)
+	if fs.NArg() >= 1 {
+		targetPath = fs.Arg(0)
 	} else {
-		// If ./collections exists, default to it
 		if fi, err := os.Stat("collections"); err == nil && fi.IsDir() {
 			targetPath = "collections"
 		}
 	}
 
-	bail := *bailFlag
-	_ = ciFlag // ciFlag enforces exit codes, which runner already does
+	// ── Parse --var flags ─────────────────────────────────────────────────────
+	extraVars, err := runner.ParseVarFlags(varFlags)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(runner.ExitConfigError)
+	}
 
+	// ── Parse --reporter flags ────────────────────────────────────────────────
+	if len(reporterFlags) == 0 {
+		reporterFlags = []string{"cli"}
+	}
+	reporters, err := runner.ReporterConfigsFromFlags(reporterFlags)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	// Apply --out to the last reporter if it has no path yet
+	if *outFlag != "" && len(reporters) > 0 {
+		last := &reporters[len(reporters)-1]
+		if last.OutPath == "" {
+			last.OutPath = *outFlag
+		}
+	}
+
+	// --ci is a legacy alias for --bail
+	bail := *bailFlag || *ciFlag
+
+	// ── Signal handling ───────────────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	// Handle graceful shutdown on Ctrl+C / SIGTERM
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -68,25 +120,32 @@ func handleRun(args []string) {
 		cancel()
 	}()
 
+	// ── Run ───────────────────────────────────────────────────────────────────
 	r := runner.NewRunner()
-	summary, err := r.Run(ctx, runner.RunOptions{
+	summary, runErr := r.Run(ctx, runner.RunOptions{
 		TargetPath:      targetPath,
 		EnvironmentName: *envFlag,
 		Bail:            bail,
-		ReportFormat:    *reportFlag,
-		Writer:          os.Stdout,
+		DryRun:          *dryRunFlag,
+		TimeoutMs:       *timeoutFlag,
+		RetryCount:      *retryFlag,
+		DelayMs:         *delayFlag,
+		EnvFile:         *envFileFlag,
+		ExtraVars:       extraVars,
+		Reporters:       reporters,
+		Filter: runner.FilterOptions{
+			Folder:  *folderFlag,
+			Request: *requestFlag,
+			Tag:     *tagFlag,
+		},
 	})
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Execution error: %v\n", err)
-		os.Exit(1)
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "Execution error: %v\n", runErr)
+		os.Exit(runner.ExitConfigError)
 	}
 
-	if !summary.Success {
-		os.Exit(1)
-	}
-
-	os.Exit(0)
+	os.Exit(summary.ExitCode)
 }
 
 func printUsage() {
@@ -104,21 +163,54 @@ Commands:
   help         Print this help message
 
 Flags for 'run':
-  -e <name>            Environment configuration name (e.g. dev, staging, prod)
-  --bail               Stop immediately on the first failed assertion or request error
-  --ci                 Run in continuous integration mode (exits 1 on any failure)
-  --report <format>    Report format: 'terminal' (default) or 'json'
+  -e <name>                 Environment configuration name (e.g. dev, staging, prod)
+  --reporter <format>       Reporter: cli (default), json, junit, html. Repeatable.
+                            Append :<path> to write to file: --reporter junit:results.xml
+  --out <path>              Output file path for the last --reporter
+  --var KEY=VALUE           Extra variable (repeatable, overrides all other variable sources)
+  --env-file <path>         Path to KEY=VALUE env file (lower precedence than --var)
+  --folder <glob>           Filter: run only requests in matching folder path
+  --request <glob>          Filter: run only requests matching name or path
+  --tag <tag>               Filter: run only requests with the given tag
+  --timeout <ms>            Global request timeout in milliseconds
+  --retry <n>               Retry count for network errors (not assertion failures)
+  --delay <ms>              Delay between requests in milliseconds
+  --bail                    Stop immediately on the first failure
+  --dry-run                 Print request order without sending HTTP requests
+  --ci                      CI/CD mode (alias for --bail)
+
+Exit Codes:
+  0   All requests passed
+  1   One or more assertion failures
+  2   Configuration or parse error
+  3   Network error or timeout
 
 Examples:
   pebblepost run ./collections -e dev
-  pebblepost run ./collections/auth/login.pebble.json -e staging
-  pebblepost run ./collections -e prod --bail
-  pebblepost run ./collections -e ci --report json > test-results.json
+  pebblepost run ./collections -e prod --bail --reporter junit:results.xml
+  pebblepost run ./collections --reporter cli --reporter html:report.html
+  pebblepost run ./collections --var BASE_URL=https://api.example.com --env-file .env
+  pebblepost run ./collections --folder auth --tag smoke --retry 3 --timeout 5000
+  pebblepost run ./collections --dry-run
 `, version)
 }
 
-// reorderArgs ensures flags placed after positional arguments are parsed correctly by flag.FlagSet.
+// newFlagSet creates a FlagSet in ContinueOnError mode so we can handle errors ourselves.
+func newFlagSet() *flag.FlagSet {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	return fs
+}
+
+// reorderArgs moves flag arguments before positional arguments for flag.FlagSet compatibility.
 func reorderArgs(args []string) []string {
+	// Known flags that consume the next argument as their value
+	valueFlags := map[string]bool{
+		"-e": true, "--reporter": true, "--out": true, "--var": true,
+		"--env-file": true, "--folder": true, "--request": true, "--tag": true,
+		"--timeout": true, "--retry": true, "--delay": true,
+	}
+
 	var flags []string
 	var pos []string
 	i := 0
@@ -126,8 +218,7 @@ func reorderArgs(args []string) []string {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			flags = append(flags, arg)
-			// If flag takes a value and value is in the next arg (e.g. -e dev, --report json)
-			if (arg == "-e" || arg == "--report" || arg == "-r") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if valueFlags[arg] && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				flags = append(flags, args[i+1])
 				i++
 			}
