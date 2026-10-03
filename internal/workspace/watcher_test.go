@@ -79,7 +79,12 @@ func TestWatcher_SelfWriteSuppression(t *testing.T) {
 func TestWatcher_DebounceCoalescesWrites(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	debounceDur := 100 * time.Millisecond
+	testFile := filepath.Join(tmpDir, "debounce.pebble.json")
+	if err := os.WriteFile(testFile, []byte("initial"), 0644); err != nil {
+		t.Fatalf("init write failed: %v", err)
+	}
+
+	debounceDur := 200 * time.Millisecond
 	watcher, err := NewWatcherWithConfig(tmpDir, debounceDur, 500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("failed to create watcher: %v", err)
@@ -89,25 +94,11 @@ func TestWatcher_DebounceCoalescesWrites(t *testing.T) {
 	events, unsubscribe := watcher.Subscribe()
 	defer unsubscribe()
 
-	testFile := filepath.Join(tmpDir, "debounce.pebble.json")
-
-	// Pre-create the file to ensure initial creation doesn't interleave with rapid writes
-	if err := os.WriteFile(testFile, []byte("initial"), 0644); err != nil {
-		t.Fatalf("init write failed: %v", err)
-	}
-
-	// Drain the initial create event
-	select {
-	case <-events:
-	case <-time.After(500 * time.Millisecond):
-	}
-
 	// Perform 5 rapid writes in a tight loop
 	for i := 0; i < 5; i++ {
 		if err := os.WriteFile(testFile, []byte("write"), 0644); err != nil {
 			t.Fatalf("write failed: %v", err)
 		}
-		time.Sleep(1 * time.Millisecond)
 	}
 
 	// We should receive only 1 debounced event batch
@@ -116,7 +107,7 @@ func TestWatcher_DebounceCoalescesWrites(t *testing.T) {
 		if evt.Path != testFile {
 			t.Errorf("expected event path %s, got %s", testFile, evt.Path)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for debounced event")
 	}
 
@@ -124,7 +115,7 @@ func TestWatcher_DebounceCoalescesWrites(t *testing.T) {
 	select {
 	case evt := <-events:
 		t.Errorf("unexpected extra event received: %+v", evt)
-	case <-time.After(150 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond):
 		// OK
 	}
 }

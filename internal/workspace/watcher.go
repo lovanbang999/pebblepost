@@ -32,18 +32,18 @@ type FileChangeEvent struct {
 // Watcher watches a workspace directory recursively for external changes,
 // with debouncing (~200ms) and self-write suppression.
 type Watcher struct {
-	rootPath     string
-	fsWatcher    *fsnotify.Watcher
-	debounceDur  time.Duration
-	suppressTTL  time.Duration
-	suppressMap  sync.Map // normalized path -> time.Time (expiry)
-	listenersMu  sync.RWMutex
-	listeners    map[chan FileChangeEvent]struct{}
-	pendingMu    sync.Mutex
-	pending      map[string]FileChangeEvent
-	timer        *time.Timer
-	stopChan     chan struct{}
-	closeOnce    sync.Once
+	rootPath    string
+	fsWatcher   *fsnotify.Watcher
+	debounceDur time.Duration
+	suppressTTL time.Duration
+	suppressMap sync.Map // normalized path -> time.Time (expiry)
+	listenersMu sync.RWMutex
+	listeners   map[chan FileChangeEvent]struct{}
+	pendingMu   sync.Mutex
+	pending     map[string]FileChangeEvent
+	timer       *time.Timer
+	stopChan    chan struct{}
+	closeOnce   sync.Once
 }
 
 // NewWatcher creates a new Watcher monitoring rootPath with default 200ms debounce and 1000ms suppression TTL.
@@ -233,6 +233,7 @@ func (w *Watcher) handleFSEvent(event fsnotify.Event) {
 
 func (w *Watcher) flushPending() {
 	w.pendingMu.Lock()
+	w.timer = nil
 	batch := make([]FileChangeEvent, 0, len(w.pending))
 	for _, evt := range w.pending {
 		batch = append(batch, evt)
