@@ -13,22 +13,24 @@ import (
 
 // Handler exposes HTTP API endpoints for workspace and collection management.
 type Handler struct {
-	workspaceSvc   *WorkspaceService
-	environmentSvc *EnvironmentService
-	interpolator   *Interpolator
-	importSvc      *ImportService
-	watchersMu     sync.Mutex
-	watchers       map[string]*Watcher
+	workspaceSvc        *WorkspaceService
+	environmentSvc      *EnvironmentService
+	interpolator        *Interpolator
+	inheritanceResolver *InheritanceResolver
+	importSvc           *ImportService
+	watchersMu          sync.Mutex
+	watchers            map[string]*Watcher
 }
 
 // NewHandler creates a new Handler instance.
 func NewHandler(ws *WorkspaceService, env *EnvironmentService, in *Interpolator) *Handler {
 	return &Handler{
-		workspaceSvc:   ws,
-		environmentSvc: env,
-		interpolator:   in,
-		importSvc:      NewImportService(),
-		watchers:       make(map[string]*Watcher),
+		workspaceSvc:        ws,
+		environmentSvc:      env,
+		interpolator:        in,
+		inheritanceResolver: NewInheritanceResolver(ws),
+		importSvc:           NewImportService(),
+		watchers:            make(map[string]*Watcher),
 	}
 }
 
@@ -43,7 +45,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/duplicate", h.handleDuplicate)
 	mux.HandleFunc("/api/workspace/gitignore/ensure", h.handleEnsureGitignore)
 	mux.HandleFunc("/api/workspace/events", h.handleEvents)
+	mux.HandleFunc("/api/folder", h.handleFolder)
+	mux.HandleFunc("/api/folder/save", h.handleSaveFolder)
 	mux.HandleFunc("/api/request", h.handleGetRequest)
+	mux.HandleFunc("/api/request/resolved", h.handleResolvedRequest)
 	mux.HandleFunc("/api/request/save", h.handleSaveRequest)
 	mux.HandleFunc("/api/request/delete", h.handleDeleteRequest)
 	mux.HandleFunc("/api/request/interpolate", h.handleInterpolate)
@@ -176,6 +181,127 @@ func (h *Handler) handleGetRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonResponse(w, reqDef)
+}
+
+func (h *Handler) handleFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	folderPath := r.URL.Query().Get("path")
+	if folderPath == "" {
+		http.Error(w, "Query parameter 'path' is required", http.StatusBadRequest)
+		return
+	}
+
+	if workspacePath := r.URL.Query().Get("workspacePath"); workspacePath != "" {
+		if _, err := security.SafeAbsolute(workspacePath, folderPath); err != nil {
+			h.jsonError(w, "invalid folder path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(folderPath); err != nil {
+		h.jsonError(w, "invalid folder path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	folderDef, err := h.workspaceSvc.ReadFolder(folderPath)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, folderDef)
+}
+
+func (h *Handler) handleSaveFolder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath string                 `json:"workspacePath"`
+		Path          string                 `json:"path"`
+		Folder        *types.FolderDefinition `json:"folder"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Folder == nil {
+		h.jsonError(w, "Folder definition cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid folder path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid folder path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := h.workspaceSvc.SaveFolder(payload.Path, payload.Folder); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"success": true,
+		"path":    payload.Path,
+	})
+}
+
+func (h *Handler) handleResolvedRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	filePath := r.URL.Query().Get("path")
+	if filePath == "" {
+		http.Error(w, "Query parameter 'path' is required", http.StatusBadRequest)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspacePath")
+	if workspacePath != "" {
+		if _, err := security.SafeAbsolute(workspacePath, filePath); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(filePath); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	reqDef, err := h.workspaceSvc.ReadRequest(filePath)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	var baseEnvVars map[string]string
+	if workspacePath != "" {
+		envName := r.URL.Query().Get("environmentName")
+		if envName != "" {
+			if env, _ := h.environmentSvc.GetEnvironment(workspacePath, envName); env != nil {
+				baseEnvVars = h.interpolator.BuildVariableMap(env, nil)
+			}
+		}
+	}
+
+	resolved, _, _, _, err := h.inheritanceResolver.ResolveRequest(workspacePath, filePath, reqDef, baseEnvVars, nil)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, resolved)
 }
 
 func (h *Handler) handleSaveRequest(w http.ResponseWriter, r *http.Request) {

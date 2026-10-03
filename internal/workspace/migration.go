@@ -19,6 +19,11 @@ func MigrateRequest(req *types.RequestDefinition) (*types.RequestDefinition, boo
 	if req.SchemaVersion < DefaultSchemaVersion {
 		req.SchemaVersion = DefaultSchemaVersion
 		wasMigrated = true
+		if req.Auth.Type == "" {
+			req.Auth.Type = "none"
+		}
+	} else if req.Auth.Type == "" {
+		req.Auth.Type = "inherit"
 	}
 
 	if req.Schema == "" {

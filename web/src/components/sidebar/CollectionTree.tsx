@@ -15,6 +15,7 @@ import {
   Files,
   ExternalLink,
   AlertTriangle,
+  Settings,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
@@ -126,7 +127,7 @@ export function CollectionTree() {
     createNewRequest,
   } = useWorkspaceStore()
 
-  const { openTab, onFileRenamed, onFileDeleted } = useTabStore()
+  const { openTab, openFolderTab, onFileRenamed, onFileDeleted } = useTabStore()
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     collections: true,
@@ -663,7 +664,14 @@ export function CollectionTree() {
               </div>
             ) : (
               <button
-                onClick={() => toggleFolder(node.path)}
+                onClick={() => {
+                  toggleFolder(node.path)
+                  openFolderTab(node.path, undefined, true)
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation()
+                  openFolderTab(node.path, undefined, false)
+                }}
                 className="flex-1 flex items-center gap-1.5 py-0.5 text-xs rounded truncate cursor-pointer text-left"
               >
                 {isExpanded ? (
@@ -684,6 +692,18 @@ export function CollectionTree() {
 
             {/* Quick folder action buttons on hover */}
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+              <Tooltip content="Folder Settings">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openFolderTab(node.path, undefined, false)
+                  }}
+                  className="h-5 w-5 flex items-center justify-center rounded text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/80 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                </button>
+              </Tooltip>
               <Tooltip content={`New Request in ${node.name}`}>
                 <button
                   type="button"
@@ -885,6 +905,18 @@ export function CollectionTree() {
         >
           {contextMenu.node.isDir ? (
             <>
+              <button
+                type="button"
+                onClick={() => {
+                  openFolderTab(contextMenu.node.path, undefined, false)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-left cursor-pointer font-medium"
+              >
+                <Folder className="w-3.5 h-3.5 text-amber-500" />
+                <span>Folder Settings</span>
+              </button>
+              <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
               <button
                 type="button"
                 onClick={() => {

@@ -6,7 +6,7 @@ export interface KeyValue {
 }
 
 export interface AuthDefinition {
-  type: 'none' | 'bearer' | 'basic' | 'apiKey' | 'oauth2'
+  type: 'inherit' | 'none' | 'bearer' | 'basic' | 'apiKey' | 'oauth2'
   token?: string
   username?: string
   password?: string
@@ -77,6 +77,27 @@ export interface FolderDefinition {
   description?: string
   order?: number
   itemOrder?: string[]
+  headers?: KeyValue[]
+  auth?: AuthDefinition
+  variables?: KeyValue[]
+  scripts?: ScriptDefinition
+}
+
+export interface InheritedItemInfo {
+  sourceFolder: string
+  sourcePath: string
+}
+
+export interface ResolvedRequestResult {
+  request: RequestDefinition
+  inheritedHeaders?: Record<string, InheritedItemInfo>
+  overriddenHeaders?: Record<string, InheritedItemInfo>
+  inheritedAuth?: InheritedItemInfo
+  parentAuth?: AuthDefinition
+  parentAuthSource?: InheritedItemInfo
+  inheritedVars?: Record<string, InheritedItemInfo>
+  folderPreScripts?: string[]
+  folderPostScripts?: string[]
 }
 
 export interface TimingMetrics {

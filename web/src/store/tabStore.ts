@@ -1,17 +1,21 @@
 import { create } from 'zustand'
-import type { RequestDefinition, ExecutionResult } from '../types'
+import type { RequestDefinition, ExecutionResult, FolderDefinition } from '../types'
+
+export type TabType = 'request' | 'folder'
 
 export interface RequestTab {
-  id: string // Unique identifier, equal to filePath
+  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders)
   filePath: string
   title: string
-  method: RequestDefinition['method']
+  type?: TabType
+  method?: RequestDefinition['method']
   isPreview: boolean // true when opened via single click; replaced by next preview tab
   isDirty: boolean
-  request: RequestDefinition
+  request?: RequestDefinition
+  folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
   lastResult: ExecutionResult | null
-  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings'
+  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars'
   scrollPosition?: number
 }
 
@@ -23,6 +27,7 @@ interface TabState {
 
   // Tab management actions
   openTab: (filePath: string, request: RequestDefinition, isPreview?: boolean) => void
+  openFolderTab: (folderPath: string, folder?: FolderDefinition, isPreview?: boolean) => Promise<void>
   pinTab: (tabId: string) => void
   closeTab: (tabId: string, force?: boolean) => boolean
   confirmCloseTab: (choice: 'save' | 'discard' | 'cancel') => Promise<void>
@@ -32,6 +37,7 @@ interface TabState {
 
   // Active tab state actions
   updateActiveRequest: (updater: (prev: RequestDefinition) => RequestDefinition) => void
+  updateActiveFolder: (updater: (prev: FolderDefinition) => FolderDefinition) => void
   setActiveSubTab: (subTab: RequestTab['activeSubTab']) => void
   setLastResult: (result: ExecutionResult | null) => void
   setScrollPosition: (scroll: number) => void
@@ -83,6 +89,7 @@ export const useTabStore = create<TabState>((set, get) => ({
       id: cleanPath,
       filePath: cleanPath,
       title: cleanTitle,
+      type: 'request',
       method: request.method || 'GET',
       isPreview: isPreview,
       isDirty: false,
@@ -94,6 +101,87 @@ export const useTabStore = create<TabState>((set, get) => ({
     }
 
     // If opening as a preview tab, replace any existing unpinned clean preview tab
+    if (isPreview) {
+      const previewIndex = tabs.findIndex((t) => t.isPreview && !t.isDirty)
+      if (previewIndex !== -1) {
+        const nextTabs = [...tabs]
+        nextTabs[previewIndex] = newTab
+        set({ tabs: nextTabs, activeTabId: newTab.id })
+        get().persistTabs(localStorage.getItem('pebblepost-workspace-path') || '.')
+        return
+      }
+    }
+
+    set((state) => ({
+      tabs: [...state.tabs, newTab],
+      activeTabId: newTab.id,
+    }))
+    get().persistTabs(localStorage.getItem('pebblepost-workspace-path') || '.')
+  },
+
+  openFolderTab: async (folderPath: string, folderDef?: FolderDefinition, isPreview = false) => {
+    const { tabs } = get()
+    const cleanPath = folderPath.replace(/^\.\//, '')
+    const folderTabId = `folder:${cleanPath}`
+
+    const existingIndex = tabs.findIndex(
+      (t) => t.id === folderTabId || (t.type === 'folder' && t.filePath.replace(/^\.\//, '') === cleanPath)
+    )
+
+    if (existingIndex !== -1) {
+      const existing = tabs[existingIndex]
+      if (!isPreview && existing.isPreview) {
+        set({
+          tabs: tabs.map((t, idx) => (idx === existingIndex ? { ...t, isPreview: false } : t)),
+          activeTabId: existing.id,
+        })
+      } else {
+        set({ activeTabId: existing.id })
+      }
+      get().persistTabs(localStorage.getItem('pebblepost-workspace-path') || '.')
+      return
+    }
+
+    let loadedFolder = folderDef
+    if (!loadedFolder && typeof window !== 'undefined') {
+      try {
+        const ws = localStorage.getItem('pebblepost-workspace-path') || '.'
+        const res = await fetch(
+          `/api/folder?workspacePath=${encodeURIComponent(ws)}&path=${encodeURIComponent(cleanPath)}`
+        )
+        if (res.ok) {
+          loadedFolder = await res.json()
+        }
+      } catch (err) {
+        console.error('Failed to load folder settings:', err)
+      }
+    }
+
+    const dirName = cleanPath.split('/').pop() || 'Folder'
+    const finalFolder: FolderDefinition = loadedFolder || {
+      schemaVersion: 1,
+      name: dirName,
+      auth: { type: 'inherit' },
+      headers: [],
+      variables: [],
+    }
+
+    const cleanTitle = finalFolder.name || dirName
+
+    const newTab: RequestTab = {
+      id: folderTabId,
+      filePath: cleanPath,
+      title: cleanTitle,
+      type: 'folder',
+      isPreview: isPreview,
+      isDirty: false,
+      folder: finalFolder,
+      savedSnapshot: JSON.stringify(finalFolder),
+      lastResult: null,
+      activeSubTab: 'headers',
+      scrollPosition: 0,
+    }
+
     if (isPreview) {
       const previewIndex = tabs.findIndex((t) => t.isPreview && !t.isDirty)
       if (previewIndex !== -1) {
@@ -190,7 +278,11 @@ export const useTabStore = create<TabState>((set, get) => ({
     if (closedTabsHistory.length === 0) return
     const [lastClosed, ...rest] = closedTabsHistory
     set({ closedTabsHistory: rest })
-    get().openTab(lastClosed.filePath, lastClosed.request, false)
+    if (lastClosed.type === 'folder' && lastClosed.folder) {
+      get().openFolderTab(lastClosed.filePath, lastClosed.folder, false)
+    } else if (lastClosed.request) {
+      get().openTab(lastClosed.filePath, lastClosed.request, false)
+    }
   },
 
   setActiveTabId: (tabId: string) => {
@@ -216,7 +308,7 @@ export const useTabStore = create<TabState>((set, get) => ({
 
     set({
       tabs: tabs.map((tab) => {
-        if (tab.id !== activeTabId) return tab
+        if (tab.id !== activeTabId || !tab.request) return tab
         const updatedReq = updater(tab.request)
         const isDirty = JSON.stringify(updatedReq) !== tab.savedSnapshot
         return {
@@ -226,6 +318,26 @@ export const useTabStore = create<TabState>((set, get) => ({
           method: updatedReq.method || tab.method,
           isDirty,
           isPreview: false, // Any edit automatically promotes to a pinned tab
+        }
+      }),
+    })
+  },
+
+  updateActiveFolder: (updater: (prev: FolderDefinition) => FolderDefinition) => {
+    const { tabs, activeTabId } = get()
+    if (!activeTabId) return
+
+    set({
+      tabs: tabs.map((tab) => {
+        if (tab.id !== activeTabId || tab.type !== 'folder' || !tab.folder) return tab
+        const updatedFolder = updater(tab.folder)
+        const isDirty = JSON.stringify(updatedFolder) !== tab.savedSnapshot
+        return {
+          ...tab,
+          folder: updatedFolder,
+          title: updatedFolder.name || tab.title,
+          isDirty,
+          isPreview: false,
         }
       }),
     })
@@ -259,6 +371,48 @@ export const useTabStore = create<TabState>((set, get) => ({
     const { tabs, activeTabId } = get()
     const activeTab = tabs.find((t) => t.id === activeTabId)
     if (!activeTab) return false
+    const ws = (typeof window !== 'undefined' ? localStorage.getItem('pebblepost-workspace-path') : null) || '.'
+
+    if (activeTab.type === 'folder' && activeTab.folder) {
+      const folderToSave: FolderDefinition = {
+        ...activeTab.folder,
+        schemaVersion: 1,
+      }
+      try {
+        const res = await fetch('/api/folder/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspacePath: ws,
+            path: activeTab.filePath,
+            folder: folderToSave,
+          }),
+        })
+        if (res.ok) {
+          set({
+            tabs: tabs.map((t) =>
+              t.id === activeTab.id
+                ? {
+                    ...t,
+                    folder: folderToSave,
+                    savedSnapshot: JSON.stringify(folderToSave),
+                    isDirty: false,
+                    title: folderToSave.name || t.title,
+                  }
+                : t
+            ),
+          })
+          get().persistTabs(ws)
+          return true
+        }
+        return false
+      } catch (err) {
+        console.error('Failed to save folder settings:', err)
+        return false
+      }
+    }
+
+    if (!activeTab.request) return false
 
     const reqToSave: RequestDefinition = {
       ...activeTab.request,
@@ -266,7 +420,6 @@ export const useTabStore = create<TabState>((set, get) => ({
     }
 
     try {
-      const ws = localStorage.getItem('pebblepost-workspace-path') || '.'
       const res = await fetch('/api/request/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -378,6 +531,7 @@ export const useTabStore = create<TabState>((set, get) => ({
         tabSummaries: get().tabs.map((t) => ({
           filePath: t.filePath,
           isPreview: t.isPreview,
+          type: t.type || 'request',
         })),
       }
       localStorage.setItem(`pebblepost-tabs-${ws}`, JSON.stringify(data))
@@ -397,12 +551,16 @@ export const useTabStore = create<TabState>((set, get) => ({
 
       for (const item of parsed.tabSummaries) {
         try {
-          const res = await fetch(
-            `/api/request?path=${encodeURIComponent(item.filePath)}&workspacePath=${encodeURIComponent(ws)}`
-          )
-          if (res.ok) {
-            const req: RequestDefinition = await res.json()
-            get().openTab(item.filePath, req, item.isPreview)
+          if (item.type === 'folder') {
+            await get().openFolderTab(item.filePath, undefined, item.isPreview)
+          } else {
+            const res = await fetch(
+              `/api/request?path=${encodeURIComponent(item.filePath)}&workspacePath=${encodeURIComponent(ws)}`
+            )
+            if (res.ok) {
+              const req: RequestDefinition = await res.json()
+              get().openTab(item.filePath, req, item.isPreview)
+            }
           }
         } catch (err) {
           console.warn(`Could not restore tab ${item.filePath}:`, err)

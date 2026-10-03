@@ -17,23 +17,26 @@ import (
 
 // Runner manages CLI collection test executions.
 type Runner struct {
-	workspaceSvc   *workspace.WorkspaceService
-	environmentSvc *workspace.EnvironmentService
-	interpolator   *workspace.Interpolator
-	client         httpclient.Client
-	scriptEngine   *scripting.Engine
-	formatter      *Formatter
+	workspaceSvc        *workspace.WorkspaceService
+	environmentSvc      *workspace.EnvironmentService
+	interpolator        *workspace.Interpolator
+	inheritanceResolver *workspace.InheritanceResolver
+	client              httpclient.Client
+	scriptEngine        *scripting.Engine
+	formatter           *Formatter
 }
 
 // NewRunner creates a fully initialized CLI Runner.
 func NewRunner() *Runner {
+	wsSvc := workspace.NewWorkspaceService()
 	return &Runner{
-		workspaceSvc:   workspace.NewWorkspaceService(),
-		environmentSvc: workspace.NewEnvironmentService(),
-		interpolator:   workspace.NewInterpolator(),
-		client:         httpclient.NewClient(),
-		scriptEngine:   scripting.NewEngine(),
-		formatter:      NewFormatter(),
+		workspaceSvc:        wsSvc,
+		environmentSvc:      workspace.NewEnvironmentService(),
+		interpolator:        workspace.NewInterpolator(),
+		inheritanceResolver: workspace.NewInheritanceResolver(wsSvc),
+		client:              httpclient.NewClient(),
+		scriptEngine:        scripting.NewEngine(),
+		formatter:           NewFormatter(),
 	}
 }
 
@@ -46,12 +49,13 @@ func NewCustomRunner(
 	scriptEngine *scripting.Engine,
 ) *Runner {
 	return &Runner{
-		workspaceSvc:   wsSvc,
-		environmentSvc: envSvc,
-		interpolator:   interpolator,
-		client:         client,
-		scriptEngine:   scriptEngine,
-		formatter:      NewFormatter(),
+		workspaceSvc:        wsSvc,
+		environmentSvc:      envSvc,
+		interpolator:        interpolator,
+		inheritanceResolver: workspace.NewInheritanceResolver(wsSvc),
+		client:              client,
+		scriptEngine:        scriptEngine,
+		formatter:           NewFormatter(),
 	}
 }
 
@@ -145,46 +149,93 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			continue
 		}
 
-		// Interpolate request with current chained environment variables
-		reqToExecute := r.interpolator.InterpolateRequest(req, varMap)
+		// 1. Resolve folder chain for inheritance
+		var folderChain []workspace.FolderChainItem
+		if r.inheritanceResolver != nil {
+			folderChain, _ = r.inheritanceResolver.DiscoverFolderChain(wsRoot, filePath)
+		}
 
-		// Execute Pre-Request script
-		if r.scriptEngine != nil && reqToExecute.Scripts.PreRequest != "" {
-			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
-			preResult, preErr := r.scriptEngine.ExecutePreRequest(reqToExecute.Scripts.PreRequest, reqToExecute, varMap, scriptTimeout)
-			if preResult != nil {
-				for k, v := range preResult.ExtractedEnvVars {
-					varMap[k] = v
-				}
-				reqToExecute = preResult.Request
+		// 2. Merge folder variables with current chained environment variables
+		currentVarMap := make(map[string]string)
+		for k, v := range varMap {
+			currentVarMap[k] = v
+		}
+		if r.inheritanceResolver != nil && len(folderChain) > 0 {
+			currentVarMap, _ = r.inheritanceResolver.MergeVariables(currentVarMap, folderChain, nil)
+		}
+
+		// 3. Merge headers and resolve auth
+		reqToExecute := *req
+		if r.inheritanceResolver != nil && len(folderChain) > 0 {
+			mergedHeaders, _ := r.inheritanceResolver.MergeHeaders(folderChain, req.Headers)
+			reqToExecute.Headers = mergedHeaders
+			resolvedAuth, _ := r.inheritanceResolver.ResolveAuth(folderChain, req.Auth)
+			reqToExecute.Auth = resolvedAuth
+		}
+
+		// 4. Interpolate request with current chained environment variables + folder variables
+		interpolatedReq := r.interpolator.InterpolateRequest(&reqToExecute, currentVarMap)
+
+		// 5. Build script chains
+		var preScripts []workspace.ScriptChainItem
+		var postScripts []workspace.ScriptChainItem
+		if r.inheritanceResolver != nil && len(folderChain) > 0 {
+			preScripts, postScripts = r.inheritanceResolver.ResolveScripts(folderChain, interpolatedReq.Scripts)
+		} else {
+			if interpolatedReq.Scripts.PreRequest != "" {
+				preScripts = append(preScripts, workspace.ScriptChainItem{Source: "request", Script: interpolatedReq.Scripts.PreRequest})
 			}
-			if preErr != nil {
-				reqResult := RequestRunResult{
-					FilePath: filePath,
-					RelPath:  relPath,
-					Request:  req,
-					Passed:   false,
-					Error:    fmt.Sprintf("Pre-request script error: %v", preErr),
-					Duration: time.Since(reqStart),
-				}
-				summary.TotalRequests++
-				summary.FailedRequests++
-				summary.Results = append(summary.Results, reqResult)
-
-				if opts.ReportFormat != "json" {
-					r.formatter.PrintRequestFailure(out, relPath, req.Method, reqResult.Error, reqResult.Duration)
-				}
-
-				if opts.Bail {
-					summary.Bailed = true
-					break
-				}
-				continue
+			if interpolatedReq.Scripts.PostResponse != "" {
+				postScripts = append(postScripts, workspace.ScriptChainItem{Source: "request", Script: interpolatedReq.Scripts.PostResponse})
 			}
 		}
 
-		// Execute HTTP request
-		execResult, execErr := r.client.Execute(ctx, reqToExecute)
+		// 6. Execute Pre-Request scripts (Root-to-Leaf)
+		var preErrOccurred error
+		if r.scriptEngine != nil {
+			scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
+			for _, s := range preScripts {
+				preResult, preErr := r.scriptEngine.ExecutePreRequest(s.Script, interpolatedReq, currentVarMap, scriptTimeout)
+				if preResult != nil {
+					for k, v := range preResult.ExtractedEnvVars {
+						currentVarMap[k] = v
+						varMap[k] = v // propagate to subsequent requests
+					}
+					interpolatedReq = preResult.Request
+				}
+				if preErr != nil {
+					preErrOccurred = fmt.Errorf("[%s] Pre-request script error: %w", s.Source, preErr)
+					break
+				}
+			}
+		}
+
+		if preErrOccurred != nil {
+			reqResult := RequestRunResult{
+				FilePath: filePath,
+				RelPath:  relPath,
+				Request:  req,
+				Passed:   false,
+				Error:    preErrOccurred.Error(),
+				Duration: time.Since(reqStart),
+			}
+			summary.TotalRequests++
+			summary.FailedRequests++
+			summary.Results = append(summary.Results, reqResult)
+
+			if opts.ReportFormat != "json" {
+				r.formatter.PrintRequestFailure(out, relPath, req.Method, reqResult.Error, reqResult.Duration)
+			}
+
+			if opts.Bail {
+				summary.Bailed = true
+				break
+			}
+			continue
+		}
+
+		// 7. Execute HTTP request
+		execResult, execErr := r.client.Execute(ctx, interpolatedReq)
 		reqDuration := time.Since(reqStart)
 
 		if execErr != nil && execResult == nil {
@@ -211,14 +262,18 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			continue
 		}
 
-		// Execute Post-Response test script
-		if r.scriptEngine != nil && reqToExecute.Scripts.PostResponse != "" {
-			scriptTimeout := scriptTimeoutFor(reqToExecute.Settings.ScriptTimeoutMs)
-			postResult, _ := r.scriptEngine.ExecutePostResponse(reqToExecute.Scripts.PostResponse, reqToExecute, execResult, varMap, scriptTimeout)
-			if postResult != nil {
-				execResult.Tests = postResult.Tests
-				for k, v := range postResult.ExtractedEnvVars {
-					varMap[k] = v
+		// 8. Execute Post-Response test scripts (Leaf-to-Root)
+		if r.scriptEngine != nil {
+			scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
+			for _, s := range postScripts {
+				postResult, _ := r.scriptEngine.ExecutePostResponse(s.Script, interpolatedReq, execResult, currentVarMap, scriptTimeout)
+				if postResult != nil {
+					execResult.Tests = append(execResult.Tests, postResult.Tests...)
+					execResult.Logs = append(execResult.Logs, postResult.Logs...)
+					for k, v := range postResult.ExtractedEnvVars {
+						currentVarMap[k] = v
+						varMap[k] = v
+					}
 				}
 			}
 		}

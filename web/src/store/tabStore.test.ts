@@ -1,7 +1,8 @@
+/// <reference types="node" />
 import { test, describe, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { useTabStore } from './tabStore.ts'
-import type { RequestDefinition } from '../types.ts'
+import type { RequestDefinition } from '../types/index.ts'
 
 // Provide minimal browser polyfills for headless node:test environment
 const mockStorage: Record<string, string> = {}
@@ -29,7 +30,10 @@ const sampleReq: RequestDefinition = {
   url: 'https://api.example.com/user',
   headers: [],
   params: [],
+  body: { type: 'none' },
   auth: { type: 'none' },
+  scripts: {},
+  settings: { followRedirects: true, verifySSL: true, timeoutMs: 30000 },
 }
 
 const sampleReq2: RequestDefinition = {
@@ -40,7 +44,10 @@ const sampleReq2: RequestDefinition = {
   url: 'https://api.example.com/user',
   headers: [],
   params: [],
+  body: { type: 'none' },
   auth: { type: 'none' },
+  scripts: {},
+  settings: { followRedirects: true, verifySSL: true, timeoutMs: 30000 },
 }
 
 describe('useTabStore', () => {
@@ -210,5 +217,49 @@ describe('useTabStore', () => {
     const state = useTabStore.getState()
     assert.equal(state.tabs.length, 1)
     assert.equal(state.tabs[0].id, 'collections/user/create-user.pebble.json')
+  })
+
+  test('openFolderTab opens preview tab on single click and pinned tab on double click', () => {
+    const store = useTabStore.getState()
+    const folderDef = {
+      name: '01-auth',
+      headers: [{ key: 'X-Folder', value: '1', enabled: true }],
+      auth: { type: 'bearer' as const, token: 'secret' },
+    }
+
+    // Single-click preview
+    store.openFolderTab('collections/01-auth', folderDef, true)
+    let state = useTabStore.getState()
+    assert.equal(state.tabs.length, 1)
+    assert.equal(state.tabs[0].id, 'folder:collections/01-auth')
+    assert.equal(state.tabs[0].type, 'folder')
+    assert.equal(state.tabs[0].title, '01-auth')
+    assert.equal(state.tabs[0].isPreview, true)
+
+    // Double-click pin
+    store.openFolderTab('collections/01-auth', folderDef, false)
+    state = useTabStore.getState()
+    assert.equal(state.tabs[0].isPreview, false)
+  })
+
+  test('updateActiveFolder marks folder tab dirty and modifies folder definition', () => {
+    const store = useTabStore.getState()
+    const folderDef = {
+      name: '02-payments',
+      headers: [],
+      auth: { type: 'none' as const },
+    }
+
+    store.openFolderTab('collections/02-payments', folderDef, false)
+    assert.equal(useTabStore.getState().tabs[0].isDirty, false)
+
+    store.updateActiveFolder((prev) => ({
+      ...prev,
+      headers: [{ key: 'X-Payment-Gateway', value: 'stripe', enabled: true }],
+    }))
+
+    const state = useTabStore.getState()
+    assert.equal(state.tabs[0].isDirty, true)
+    assert.equal(state.tabs[0].folder?.headers?.[0].key, 'X-Payment-Gateway')
   })
 })

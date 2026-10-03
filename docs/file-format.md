@@ -128,9 +128,9 @@ Environments store reusable variable maps.
 
 ---
 
-## 5. Folder Ordering Metadata (`_folder.pebble.json`)
+## 5. Folder Configuration & Inheritance (`_folder.pebble.json`)
 
-To organize requests inside a directory without renaming files on disk, an optional `_folder.pebble.json` file can be placed inside any collection folder:
+To configure shared behavior and organize requests inside a directory, an optional `_folder.pebble.json` file can be placed inside any collection directory:
 
 ```json
 {
@@ -143,9 +143,58 @@ To organize requests inside a directory without renaming files on disk, an optio
     "02-login.pebble.json",
     "refresh-token.pebble.json",
     "logout.pebble.json"
-  ]
+  ],
+  "headers": [
+    {
+      "key": "Accept",
+      "value": "application/json",
+      "enabled": true
+    },
+    {
+      "key": "X-Client-Version",
+      "value": "2.0.0",
+      "enabled": true
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "token": "{{AUTH_TOKEN}}"
+  },
+  "variables": [
+    {
+      "key": "TIMEOUT",
+      "value": "5000",
+      "enabled": true
+    }
+  ],
+  "scripts": {
+    "preRequest": "// Folder-level pre-request script\npb.request.headers.set('X-Folder-Timestamp', Date.now().toString());",
+    "postResponse": "// Folder-level shared test assertions\npb.test('Has Content-Type header', () => {\n  pb.expect(pb.response.headers.get('content-type')).to.exist;\n});"
+  }
 }
 ```
+
+### Configuration Inheritance Rules
+
+Inheritance flows along the directory hierarchy:
+**Collection Root → Parent Folder → Child Folder → Request**
+
+1. **Headers**:
+   - Headers defined in ancestor folders are merged downstream into child folders and requests.
+   - Header matching is **case-insensitive** (e.g. `accept` in a child folder or request overrides `Accept` from a parent folder).
+   - The request can always override any inherited header value or disable it (`enabled: false`).
+2. **Authentication**:
+   - Requests support three auth states:
+     - `"inherit"` (default on requests): Walk up the folder chain (leaf to root) and use the first non-inherit auth definition encountered. If no ancestor defines auth, defaults to `"none"`.
+     - `"none"`: Explicitly disables authentication for this request, overriding parent auth.
+     - Specific type (`"bearer"`, `"basic"`, `"apiKey"`, `"oauth2"`): Request defines its own credentials, overriding parent auth.
+   - Folders can also specify `"inherit"`, delegating to higher parent folders.
+3. **Variables**:
+   - Variables defined in `_folder.pebble.json` are scoped locally to the folder and its subdirectories.
+   - Resolution order: Active Environment → Root Folder → Parent Folder → Child Folder → Request execution overrides.
+4. **Scripts Execution Order**:
+   - **Pre-request scripts**: Run **Root-to-Leaf** (`Root Folder → Parent Folder → Child Folder → Request Pre-Request`). If any pre-request script throws an error, execution stops immediately and does not proceed to downstream scripts or network requests.
+   - **Post-response / Test scripts**: Run **Leaf-to-Root** (`Request Test Script → Child Folder → Parent Folder → Root Folder`). Assertions and extracted environment variables from all executed scripts are aggregated into the test result.
 
 ### Ordering Resolution (Hybrid Hierarchy)
 
