@@ -61,6 +61,24 @@ func TestSafeJoin_NewFileDoesNotExist(t *testing.T) {
 	}
 }
 
+func TestSafeJoin_SymlinkedRoot(t *testing.T) {
+	realTarget := t.TempDir()
+	linkDir := t.TempDir()
+	symlinkedRoot := filepath.Join(linkDir, "symlink-workspace")
+	if err := os.Symlink(realTarget, symlinkedRoot); err != nil {
+		t.Skip("symlinks not supported")
+	}
+
+	got, err := SafeJoin(symlinkedRoot, "foo/bar.pebble.json")
+	if err != nil {
+		t.Fatalf("unexpected error for symlinked root: %v", err)
+	}
+	want := filepath.Join(symlinkedRoot, "foo/bar.pebble.json")
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestSafeJoin_EmptyRoot(t *testing.T) {
 	_, err := SafeJoin("", "foo.json")
 	if err == nil {
