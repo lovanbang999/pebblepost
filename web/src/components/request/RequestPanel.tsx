@@ -14,6 +14,8 @@ import {
   Shield,
   RefreshCw,
   Lock,
+  Clock,
+  RotateCcw,
 } from "lucide-react";
 import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
@@ -394,6 +396,38 @@ export function RequestPanel() {
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden transition-colors duration-150">
       <TabBar />
+
+      {/* Historical Execution Read-Only Banner */}
+      {(currentTab?.type === "history" || currentTab?.isReadOnly) && (
+        <div className="px-4 py-2 bg-indigo-50/90 dark:bg-indigo-950/40 border-b border-indigo-200 dark:border-indigo-800/80 flex items-center justify-between text-xs animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 text-indigo-800 dark:text-indigo-300">
+            <Clock className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <span>
+              <strong>Historical Run Snapshot</strong> &bull;{" "}
+              {currentTab.historyEntry?.executedAt
+                ? new Date(currentTab.historyEntry.executedAt).toLocaleString()
+                : "Recorded Run"}{" "}
+              (Read-Only)
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (currentTab.historyEntry) {
+                  useTabStore.getState().restoreRequestFromHistory(currentTab.historyEntry);
+                }
+              }}
+              className="h-6 px-2.5 text-xs font-semibold bg-white dark:bg-zinc-900 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 gap-1.5 cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Restore this request
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Top Request Bar */}
       <div className="p-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2 bg-white dark:bg-zinc-950">
         {/* HTTP Method Dropdown */}

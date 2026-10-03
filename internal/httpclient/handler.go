@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"pebblepost/internal/history"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
 	"pebblepost/internal/types"
@@ -21,6 +22,7 @@ type Handler struct {
 	interpolator        *workspace.Interpolator
 	scriptEngine        *scripting.Engine
 	inheritanceResolver *workspace.InheritanceResolver
+	historySvc          *history.Store // may be nil (e.g. in tests)
 }
 
 // NewHandler creates a new HTTP Client API Handler.
@@ -30,6 +32,7 @@ func NewHandler(
 	envSvc *workspace.EnvironmentService,
 	in *workspace.Interpolator,
 	scriptEngine *scripting.Engine,
+	historySvc *history.Store,
 ) *Handler {
 	return &Handler{
 		client:              client,
@@ -38,6 +41,7 @@ func NewHandler(
 		interpolator:        in,
 		scriptEngine:        scriptEngine,
 		inheritanceResolver: workspace.NewInheritanceResolver(wsSvc),
+		historySvc:          historySvc,
 	}
 }
 
@@ -275,6 +279,40 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonResponse(w, result)
+
+	// Record to history asynchronously — never block the HTTP response.
+	if h.historySvc != nil && result != nil {
+		recordInput := h.buildHistoryInput(payload, reqToExecute, secretValues, result)
+		go func() { _ = h.historySvc.Record(recordInput) }()
+	}
+}
+
+// buildHistoryInput assembles a RecordInput from the execution context.
+func (h *Handler) buildHistoryInput(
+	payload ExecutePayload,
+	req *types.RequestDefinition,
+	secretValues []string,
+	result *types.ExecutionResult,
+) history.RecordInput {
+	name := ""
+	if req != nil {
+		name = req.Name
+	}
+	if name == "" && payload.Request != nil {
+		name = payload.Request.Name
+	}
+	url := ""
+	if req != nil {
+		url = req.URL
+	}
+	return history.RecordInput{
+		WorkspacePath: payload.WorkspacePath,
+		RequestName:   name,
+		Method:        req.Method,
+		URL:           url,
+		Result:        result,
+		SecretsToMask: secretValues,
+	}
 }
 
 // handleCookies handles GET, POST, DELETE for workspace cookies.

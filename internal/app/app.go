@@ -3,7 +3,9 @@ package app
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 
+	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
@@ -23,6 +25,7 @@ type App struct {
 	Interpolator   *workspace.Interpolator
 	HttpClient     httpclient.Client
 	ScriptEngine   *scripting.Engine
+	HistorySvc     *history.Store
 }
 
 // ServeHTTP implements http.Handler, running requests through the full
@@ -47,6 +50,12 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 	client := httpclient.NewClient()
 	scriptEngine := scripting.NewEngine()
 
+	// Open history SQLite store under <dataDir>/history/
+	historySvc, err := history.Open(filepath.Join(dataDir, "history"))
+	if err != nil {
+		return nil, err
+	}
+
 	a := &App{
 		Mux:            mux,
 		DataDir:        dataDir,
@@ -56,6 +65,7 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 		Interpolator:   interpolator,
 		HttpClient:     client,
 		ScriptEngine:   scriptEngine,
+		HistorySvc:     historySvc,
 	}
 
 	a.registerRoutes()
@@ -74,6 +84,9 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 
 // Close gracefully releases application resources.
 func (a *App) Close() error {
+	if a.HistorySvc != nil {
+		return a.HistorySvc.Close()
+	}
 	return nil
 }
 
@@ -93,6 +106,10 @@ func (a *App) registerRoutes() {
 	wsHandler.RegisterRoutes(a.Mux)
 
 	// HTTP Execution endpoints with Scripting sandbox
-	httpHandler := httpclient.NewHandler(a.HttpClient, a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator, a.ScriptEngine)
+	httpHandler := httpclient.NewHandler(a.HttpClient, a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator, a.ScriptEngine, a.HistorySvc)
 	httpHandler.RegisterRoutes(a.Mux)
+
+	// History endpoints
+	historyHandler := history.NewHandler(a.HistorySvc)
+	historyHandler.RegisterRoutes(a.Mux)
 }
