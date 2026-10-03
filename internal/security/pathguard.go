@@ -78,8 +78,8 @@ func SafeJoin(root, untrusted string) (string, error) {
 		return "", fmt.Errorf("path cannot be empty")
 	}
 
-	// Reject OS-native absolute paths.
-	if filepath.IsAbs(untrusted) {
+	// Reject OS-native absolute paths, leading slashes (Unix absolute or Windows drive-relative).
+	if filepath.IsAbs(untrusted) || strings.HasPrefix(untrusted, "/") || strings.HasPrefix(untrusted, `\`) {
 		return "", fmt.Errorf("absolute paths are not allowed: %s", untrusted)
 	}
 
