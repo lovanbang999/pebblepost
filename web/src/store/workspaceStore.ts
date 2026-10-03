@@ -21,6 +21,8 @@ interface WorkspaceState {
   lastResult: ExecutionResult | null
   activeTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings'
 
+  sidebarView: 'collections' | 'history'
+  setSidebarView: (view: 'collections' | 'history') => void
   setWorkspacePath: (path: string | null) => void
   setActiveEnv: (env: string) => void
   setEnvironments: (envs: EnvironmentDefinition[]) => void
@@ -198,6 +200,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   isLoadingWorkspace: false,
   lastResult: null,
   activeTab: 'params',
+  sidebarView: 'collections',
+  setSidebarView: (sidebarView) => set({ sidebarView }),
 
   setWorkspacePath: (path) => {
     if (typeof window !== 'undefined') {

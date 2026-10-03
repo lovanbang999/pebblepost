@@ -54,7 +54,7 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 	_ = envSvc.SaveEnvironment(tempDir, envData, false)
 
 	client := NewClient()
-	handler := NewHandler(client, wsSvc, envSvc, in, scriptEngine)
+	handler := NewHandler(client, wsSvc, envSvc, in, scriptEngine, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -123,7 +123,7 @@ func TestHandler_ExecuteEndpoint(t *testing.T) {
 
 func TestHandler_ExecuteEndpoint_InvalidPayload(t *testing.T) {
 	client := NewClient()
-	handler := NewHandler(client, nil, nil, nil, nil)
+	handler := NewHandler(client, nil, nil, nil, nil, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -149,7 +149,7 @@ func TestHandler_CookiesEndpoint(t *testing.T) {
 	tempDir := t.TempDir()
 	client := NewClient()
 	client.SetWorkspace(tempDir)
-	handler := NewHandler(client, nil, nil, nil, nil)
+	handler := NewHandler(client, nil, nil, nil, nil, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -221,7 +221,7 @@ func TestHandler_SecretMaskingInLogs(t *testing.T) {
 
 	client := NewClient()
 	scriptEngine := scripting.NewEngine()
-	handler := NewHandler(client, nil, nil, workspace.NewInterpolator(), scriptEngine)
+	handler := NewHandler(client, nil, nil, workspace.NewInterpolator(), scriptEngine, nil)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -257,4 +257,3 @@ func TestHandler_SecretMaskingInLogs(t *testing.T) {
 		}
 	}
 }
-

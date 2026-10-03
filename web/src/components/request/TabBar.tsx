@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Plus, RotateCcw, Folder } from 'lucide-react'
+import { X, Plus, RotateCcw, Folder, Clock } from 'lucide-react'
 import { useTabStore, type RequestTab } from '../../store/tabStore'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { getMethodTextColor, cn } from '../../lib/utils'
@@ -110,9 +110,21 @@ export function TabBar() {
                   : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/50 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200 border-t-2 border-t-transparent'
               )}
             >
-              {/* Method badge or Folder icon */}
+              {/* Method badge or Folder icon or History indicator */}
               {tab.type === 'folder' ? (
                 <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              ) : tab.type === 'history' || tab.isReadOnly ? (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Clock className="w-3 h-3 text-indigo-500 shrink-0" />
+                  <span
+                    className={cn(
+                      'text-[9.5px] font-mono font-bold tracking-tight uppercase shrink-0',
+                      getMethodTextColor(tab.method || 'GET')
+                    )}
+                  >
+                    {tab.method || 'GET'}
+                  </span>
+                </div>
               ) : (
                 <span
                   className={cn(

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { TitleBar } from './components/layout/TitleBar'
+import { ActivityBar } from './components/layout/ActivityBar'
 import { CollectionTree } from './components/sidebar/CollectionTree'
+import { HistoryPanel } from './components/history/HistoryPanel'
 import { RequestPanel } from './components/request/RequestPanel'
 import { ResponsePanel } from './components/response/ResponsePanel'
 import { QuickSearch } from './components/common/QuickSearch'
@@ -16,7 +18,7 @@ export default function App() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false)
   const [cookieManagerOpen, setCookieManagerOpen] = useState(false)
   const [envManagerOpen, setEnvManagerOpen] = useState(false)
-  const { loadWorkspace, workspacePath, initWatcher, cleanupWatcher } = useWorkspaceStore()
+  const { loadWorkspace, workspacePath, initWatcher, cleanupWatcher, sidebarView } = useWorkspaceStore()
   const { restoreTabs } = useTabStore()
 
   useEffect(() => {
@@ -88,8 +90,11 @@ export default function App() {
 
         {/* Main Workspace Layout */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Left Sidebar */}
-          <CollectionTree />
+          {/* Left Activity Rail */}
+          <ActivityBar />
+
+          {/* Left Sidebar: Collections or History */}
+          {sidebarView === 'history' ? <HistoryPanel /> : <CollectionTree />}
 
           {/* Center Request Editor */}
           <div className="flex-1 flex overflow-hidden">

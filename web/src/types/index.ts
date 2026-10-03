@@ -194,3 +194,24 @@ export interface TreeNode {
   children?: TreeNode[]
 }
 
+export interface HistoryEntry {
+  id: number
+  workspacePath: string
+  requestName: string
+  method: string
+  url: string
+  statusCode: number
+  durationMs: number
+  sizeBytes: number
+  responseBody?: string       // only in detail view
+  responseHeaders?: Record<string, string[]>
+  resolvedRequest?: Record<string, unknown>
+  executedAt: string          // ISO-8601
+}
+
+export interface HistoryListResponse {
+  entries: HistoryEntry[]
+  total: number
+  page: number
+  limit: number
+}

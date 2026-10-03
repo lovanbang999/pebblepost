@@ -1,16 +1,18 @@
 import { create } from 'zustand'
-import type { RequestDefinition, ExecutionResult, FolderDefinition } from '../types'
+import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry } from '../types'
 
-export type TabType = 'request' | 'folder'
+export type TabType = 'request' | 'folder' | 'history'
 
 export interface RequestTab {
-  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders)
+  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id
   filePath: string
   title: string
   type?: TabType
   method?: RequestDefinition['method']
   isPreview: boolean // true when opened via single click; replaced by next preview tab
   isDirty: boolean
+  isReadOnly?: boolean
+  historyEntry?: HistoryEntry
   request?: RequestDefinition
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
@@ -28,6 +30,8 @@ interface TabState {
   // Tab management actions
   openTab: (filePath: string, request: RequestDefinition, isPreview?: boolean) => void
   openFolderTab: (folderPath: string, folder?: FolderDefinition, isPreview?: boolean) => Promise<void>
+  openHistoryTab: (entry: HistoryEntry) => void
+  restoreRequestFromHistory: (entry: HistoryEntry) => void
   pinTab: (tabId: string) => void
   closeTab: (tabId: string, force?: boolean) => boolean
   confirmCloseTab: (choice: 'save' | 'discard' | 'cancel') => Promise<void>
@@ -50,6 +54,37 @@ interface TabState {
   // Workspace persistence
   restoreTabs: (workspacePath: string) => Promise<void>
   persistTabs: (workspacePath: string) => void
+}
+
+function makeHistoryRequestDefinition(entry: HistoryEntry): RequestDefinition {
+  const base: RequestDefinition = {
+    name: entry.requestName || `${entry.method} ${entry.url}`,
+    method: (entry.method as RequestDefinition['method']) || 'GET',
+    url: entry.url,
+    headers: [],
+    params: [],
+    auth: { type: 'none' },
+    body: { type: 'none' },
+    scripts: {},
+    settings: { followRedirects: true, verifySSL: true, timeoutMs: 30000 },
+  }
+
+  if (entry.resolvedRequest && typeof entry.resolvedRequest === 'object') {
+    const raw = entry.resolvedRequest as Partial<RequestDefinition>
+    return {
+      ...base,
+      ...raw,
+      name: raw.name || base.name,
+      method: raw.method || base.method,
+      url: raw.url || base.url,
+      auth: raw.auth || base.auth,
+      body: raw.body || base.body,
+      scripts: raw.scripts || base.scripts,
+      settings: raw.settings || base.settings,
+    }
+  }
+
+  return base
 }
 
 export const useTabStore = create<TabState>((set, get) => ({
@@ -198,6 +233,97 @@ export const useTabStore = create<TabState>((set, get) => ({
       activeTabId: newTab.id,
     }))
     get().persistTabs(localStorage.getItem('pebblepost-workspace-path') || '.')
+  },
+
+  openHistoryTab: (entry: HistoryEntry) => {
+    const tabId = `history:${entry.id}`
+    const { tabs } = get()
+    const existing = tabs.find((t) => t.id === tabId)
+    if (existing) {
+      set({ activeTabId: tabId })
+      return
+    }
+
+    const reqDef = makeHistoryRequestDefinition(entry)
+
+    const histResult: ExecutionResult = {
+      statusCode: entry.statusCode,
+      statusText: entry.statusCode >= 200 && entry.statusCode < 300 ? 'OK' : `${entry.statusCode}`,
+      headers: entry.responseHeaders || {},
+      body: entry.responseBody || '',
+      size: entry.sizeBytes,
+      timing: {
+        dnsLookupMs: 0,
+        tcpConnectMs: 0,
+        tlsHandshakeMs: 0,
+        ttfbMs: 0,
+        downloadMs: 0,
+        totalDurationMs: entry.durationMs,
+      },
+      tests: [],
+      logs: [],
+      executedAt: entry.executedAt,
+    }
+
+    const newTab: RequestTab = {
+      id: tabId,
+      filePath: '',
+      title: `[History] ${entry.requestName || entry.method + ' ' + entry.url}`,
+      type: 'history',
+      method: (reqDef.method || entry.method || 'GET') as RequestDefinition['method'],
+      isPreview: false,
+      isDirty: false,
+      isReadOnly: true,
+      historyEntry: entry,
+      request: reqDef,
+      savedSnapshot: JSON.stringify(reqDef),
+      lastResult: histResult,
+      activeSubTab: 'params',
+      scrollPosition: 0,
+    }
+
+    set((state) => ({
+      tabs: [...state.tabs, newTab],
+      activeTabId: newTab.id,
+    }))
+  },
+
+  restoreRequestFromHistory: (entry: HistoryEntry) => {
+    const { tabs, activeTabId, updateActiveRequest } = get()
+    const active = tabs.find((t) => t.id === activeTabId)
+    const reqDef = makeHistoryRequestDefinition(entry)
+
+    if (active && active.type !== 'history' && active.type !== 'folder') {
+      updateActiveRequest((prev) => ({
+        ...prev,
+        method: reqDef.method || prev.method,
+        url: reqDef.url || prev.url,
+        params: reqDef.params ? [...reqDef.params] : prev.params,
+        headers: reqDef.headers ? [...reqDef.headers] : prev.headers,
+        auth: reqDef.auth ? { ...reqDef.auth } : prev.auth,
+        body: reqDef.body ? { ...reqDef.body } : prev.body,
+      }))
+    } else {
+      const tabId = `draft:restore-${Date.now()}`
+      const newTab: RequestTab = {
+        id: tabId,
+        filePath: '',
+        title: reqDef.name || 'Restored Request',
+        type: 'request',
+        method: (reqDef.method || 'GET') as RequestDefinition['method'],
+        isPreview: false,
+        isDirty: true,
+        request: reqDef,
+        savedSnapshot: '',
+        lastResult: null,
+        activeSubTab: 'params',
+        scrollPosition: 0,
+      }
+      set((state) => ({
+        tabs: [...state.tabs, newTab],
+        activeTabId: newTab.id,
+      }))
+    }
   },
 
   pinTab: (tabId: string) => {
