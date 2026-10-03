@@ -1,5 +1,6 @@
 # Binaries & build artifacts
 build/
+bin/
 
 cmd/desktop/build/
 cmd/desktop/build
