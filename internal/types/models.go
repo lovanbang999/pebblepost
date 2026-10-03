@@ -13,13 +13,35 @@ type KeyValue struct {
 
 // AuthDefinition represents authentication configuration for a request or folder.
 type AuthDefinition struct {
-	Type     string `json:"type"` // "inherit", "none", "bearer", "basic", "apiKey", "oauth2"
+	Type     string `json:"type"` // "inherit", "none", "bearer", "basic", "apiKey", "digest", "oauth2", "awsSigV4"
 	Token    string `json:"token,omitempty"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 	Key      string `json:"key,omitempty"`
 	Value    string `json:"value,omitempty"`
 	AddTo    string `json:"addTo,omitempty"` // "header" or "query"
+
+	// Digest Auth fields
+	Realm string `json:"realm,omitempty"`
+
+	// OAuth2 fields
+	GrantType      string `json:"grantType,omitempty"` // "authorization_code" or "client_credentials"
+	AuthURL        string `json:"authUrl,omitempty"`
+	TokenURL       string `json:"tokenUrl,omitempty"`
+	ClientID       string `json:"clientId,omitempty"`
+	ClientSecret   string `json:"clientSecret,omitempty"`
+	Scope          string `json:"scope,omitempty"`
+	RedirectURL    string `json:"redirectUrl,omitempty"`
+	CodeVerifier   string `json:"codeVerifier,omitempty"`
+	RefreshToken   string `json:"refreshToken,omitempty"`
+	TokenExpiresAt int64  `json:"tokenExpiresAt,omitempty"`
+
+	// AWS Signature v4 fields
+	AccessKey    string `json:"accessKey,omitempty"`
+	SecretKey    string `json:"secretKey,omitempty"`
+	Region       string `json:"region,omitempty"`
+	Service      string `json:"service,omitempty"`
+	SessionToken string `json:"sessionToken,omitempty"`
 }
 
 // BodyDefinition represents the request body payload.
@@ -46,10 +68,30 @@ type ScriptDefinition struct {
 
 // SettingDefinition holds per-request execution settings.
 type SettingDefinition struct {
-	FollowRedirects bool `json:"followRedirects"`
-	VerifySSL       bool `json:"verifySSL"`
-	TimeoutMs       int  `json:"timeoutMs"`
-	ScriptTimeoutMs int  `json:"scriptTimeoutMs,omitempty"` // 0 = engine default (5 s)
+	FollowRedirects  bool   `json:"followRedirects"`
+	VerifySSL        bool   `json:"verifySSL"`
+	TimeoutMs        int    `json:"timeoutMs"`
+	ScriptTimeoutMs  int    `json:"scriptTimeoutMs,omitempty"`  // 0 = engine default (5 s)
+	ConnectTimeoutMs int    `json:"connectTimeoutMs,omitempty"` // 0 = default (10 s)
+	MaxRedirects     int    `json:"maxRedirects,omitempty"`     // 0 = default 10
+	EnableCookies    *bool  `json:"enableCookies,omitempty"`    // nil or true = enabled, false = disabled
+	UserAgent        string `json:"userAgent,omitempty"`        // custom User-Agent, default "PebblePost/1.0"
+	ProxyURL         string `json:"proxyUrl,omitempty"`         // HTTP/HTTPS/SOCKS5 proxy URL
+	ClientCertPath   string `json:"clientCertPath,omitempty"`   // mTLS client certificate path
+	ClientKeyPath    string `json:"clientKeyPath,omitempty"`    // mTLS client key path
+}
+
+// CookieItem represents an HTTP cookie managed in the workspace cookie jar.
+type CookieItem struct {
+	Name     string    `json:"name"`
+	Value    string    `json:"value"`
+	Domain   string    `json:"domain"`
+	Path     string    `json:"path"`
+	Expires  time.Time `json:"expires,omitempty"`
+	MaxAge   int       `json:"maxAge,omitempty"`
+	Secure   bool      `json:"secure"`
+	HTTPOnly bool      `json:"httpOnly"`
+	SameSite string    `json:"sameSite,omitempty"`
 }
 
 // RequestDefinition is the schema for a *.pebble.json file.

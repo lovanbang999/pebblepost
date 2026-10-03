@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -17,24 +18,45 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/proxy"
 	"pebblepost/internal/types"
 )
 
 // Client defines the interface for executing HTTP requests.
 type Client interface {
 	Execute(ctx context.Context, req *types.RequestDefinition) (*types.ExecutionResult, error)
+	SetWorkspace(wsPath string)
+	GetCookieJar() *PersistentJar
 }
 
 // DefaultClient implements the Client interface using Go's net/http.
 type DefaultClient struct {
 	defaultTimeout time.Duration
+	cookieJar      *PersistentJar
+	oauth2Manager  *OAuth2Manager
 }
 
 // NewClient creates a new HTTP Client instance.
 func NewClient() *DefaultClient {
 	return &DefaultClient{
 		defaultTimeout: 30 * time.Second,
+		cookieJar:      NewPersistentJar(""),
+		oauth2Manager:  GetOAuth2Manager(),
 	}
+}
+
+// SetWorkspace updates the workspace path for the client's cookie jar.
+func (c *DefaultClient) SetWorkspace(wsPath string) {
+	if c.cookieJar == nil {
+		c.cookieJar = NewPersistentJar(wsPath)
+	} else {
+		c.cookieJar.SetWorkspace(wsPath)
+	}
+}
+
+// GetCookieJar returns the persistent cookie jar attached to this client.
+func (c *DefaultClient) GetCookieJar() *PersistentJar {
+	return c.cookieJar
 }
 
 // Execute performs the HTTP request based on the provided RequestDefinition.
@@ -57,8 +79,8 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 		return result, err
 	}
 
-	// 2. Prepare Body & Content-Type
-	bodyReader, contentType, err := c.buildBody(req.Body)
+	// 2. Prepare Body Bytes & Content-Type
+	bodyBytes, contentType, err := c.buildBodyBytes(req.Body)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to build request body: %v", err)
 		return result, err
@@ -81,11 +103,11 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 
 	// 5. Setup Network Trace for Timing Metrics
 	var (
-		dnsStart, dnsDone       time.Time
-		connStart, connDone     time.Time
-		tlsStart, tlsDone       time.Time
-		firstByteTime           time.Time
-		reqStartTime            = time.Now()
+		dnsStart, dnsDone   time.Time
+		connStart, connDone time.Time
+		tlsStart, tlsDone   time.Time
+		firstByteTime       time.Time
+		reqStartTime        = time.Now()
 	)
 
 	trace := &httptrace.ClientTrace{
@@ -115,17 +137,17 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 	reqCtx = httptrace.WithClientTrace(reqCtx, trace)
 
 	// 6. Create HTTP Request
-	httpReq, err := http.NewRequestWithContext(reqCtx, method, targetURL.String(), bodyReader)
+	httpReq, err := http.NewRequestWithContext(reqCtx, method, targetURL.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to create http request: %v", err)
 		return result, err
 	}
 
 	// 7. Apply Headers
-	c.applyHeaders(httpReq, req.Headers, contentType)
+	c.applyHeaders(httpReq, req.Headers, contentType, req.Settings.UserAgent)
 
 	// 8. Apply Authentication
-	c.applyAuth(httpReq, targetURL, req.Auth)
+	c.applyAuth(reqCtx, httpReq, targetURL, &req.Auth, bodyBytes)
 
 	// 9. Build http.Client with Settings
 	httpClient := c.buildHTTPClient(req.Settings)
@@ -133,6 +155,32 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 	// 10. Execute Request
 	reqStartTime = time.Now()
 	resp, err := httpClient.Do(httpReq)
+
+	// Digest Auth 401 Challenge Retry
+	if err == nil && IsDigestChallenge(resp) && strings.EqualFold(req.Auth.Type, "digest") {
+		challengeHeader := resp.Header.Get("WWW-Authenticate")
+		challenge, parseErr := ParseDigestChallenge(challengeHeader)
+		if parseErr == nil {
+			_ = resp.Body.Close()
+			digestAuthHeader, buildErr := BuildDigestAuthorization(
+				method,
+				targetURL.RequestURI(),
+				req.Auth.Username,
+				req.Auth.Password,
+				challenge,
+				bodyBytes,
+			)
+			if buildErr == nil {
+				retryReq, retryErr := http.NewRequestWithContext(reqCtx, method, targetURL.String(), bytes.NewReader(bodyBytes))
+				if retryErr == nil {
+					c.applyHeaders(retryReq, req.Headers, contentType, req.Settings.UserAgent)
+					retryReq.Header.Set("Authorization", digestAuthHeader)
+					resp, err = httpClient.Do(retryReq)
+				}
+			}
+		}
+	}
+
 	if err != nil {
 		totalDuration := time.Since(reqStartTime)
 		result.Timing.TotalDurationMs = float64(totalDuration.Microseconds()) / 1000.0
@@ -213,10 +261,10 @@ func (c *DefaultClient) buildURL(rawURL string, params []types.KeyValue) (*url.U
 	return parsedURL, nil
 }
 
-func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string, error) {
+func (c *DefaultClient) buildBodyBytes(body types.BodyDefinition) ([]byte, string, error) {
 	bodyType := strings.ToLower(strings.TrimSpace(body.Type))
 
-	// If body references an external file, load content from disk (never embed large payload in JSON)
+	// If body references an external file, load content from disk
 	if body.FilePath != "" {
 		data, err := os.ReadFile(body.FilePath)
 		if err != nil {
@@ -229,7 +277,7 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 		case "raw":
 			contentType = "text/plain"
 		}
-		return bytes.NewReader(data), contentType, nil
+		return data, contentType, nil
 	}
 
 	switch bodyType {
@@ -245,26 +293,26 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to read body file %s: %w", filePath, err)
 		}
-		return bytes.NewReader(data), "application/octet-stream", nil
+		return data, "application/octet-stream", nil
 
 	case "json":
 		raw := strings.TrimSpace(body.Raw)
 		if raw == "" {
 			return nil, "application/json", nil
 		}
-		return strings.NewReader(raw), "application/json", nil
+		return []byte(raw), "application/json", nil
 
 	case "raw":
-		return strings.NewReader(body.Raw), "text/plain", nil
+		return []byte(body.Raw), "text/plain", nil
 
 	case "urlencoded":
-		form := url.Values{}
+		values := url.Values{}
 		for _, kv := range body.UrlEncoded {
 			if kv.Enabled && kv.Key != "" {
-				form.Add(kv.Key, kv.Value)
+				values.Add(kv.Key, kv.Value)
 			}
 		}
-		return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", nil
+		return []byte(values.Encode()), "application/x-www-form-urlencoded", nil
 
 	case "formdata":
 		var buf bytes.Buffer
@@ -275,8 +323,7 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 				continue
 			}
 
-			if strings.ToLower(kv.Type) == "file" {
-				// Handle file upload
+			if kv.Type == "file" {
 				filePath := kv.Value
 				if filePath == "" {
 					continue
@@ -285,7 +332,6 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 				fileName := filepath.Base(filePath)
 				fileData, err := os.ReadFile(filePath)
 				if err != nil {
-					// Fallback to sending value as raw content if file does not exist on disk
 					part, partErr := writer.CreateFormFile(kv.Key, fileName)
 					if partErr != nil {
 						return nil, "", partErr
@@ -302,7 +348,6 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 					return nil, "", err
 				}
 			} else {
-				// Normal form text field
 				if err := writer.WriteField(kv.Key, kv.Value); err != nil {
 					return nil, "", err
 				}
@@ -312,11 +357,11 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 		if err := writer.Close(); err != nil {
 			return nil, "", err
 		}
-		return &buf, writer.FormDataContentType(), nil
+		return buf.Bytes(), writer.FormDataContentType(), nil
 
 	case "graphql":
 		if body.GraphQL == nil {
-			return strings.NewReader("{}"), "application/json", nil
+			return []byte("{}"), "application/json", nil
 		}
 
 		payload := map[string]any{
@@ -336,14 +381,14 @@ func (c *DefaultClient) buildBody(body types.BodyDefinition) (io.Reader, string,
 		if err != nil {
 			return nil, "", err
 		}
-		return bytes.NewReader(data), "application/json", nil
+		return data, "application/json", nil
 
 	default:
-		return strings.NewReader(body.Raw), "text/plain", nil
+		return []byte(body.Raw), "text/plain", nil
 	}
 }
 
-func (c *DefaultClient) applyHeaders(req *http.Request, headers []types.KeyValue, computedContentType string) {
+func (c *DefaultClient) applyHeaders(req *http.Request, headers []types.KeyValue, computedContentType, customUA string) {
 	hasContentType := false
 	hasUserAgent := false
 	hasAccept := false
@@ -370,18 +415,43 @@ func (c *DefaultClient) applyHeaders(req *http.Request, headers []types.KeyValue
 		req.Header.Set("Content-Type", computedContentType)
 	}
 	if !hasUserAgent {
-		req.Header.Set("User-Agent", "PebblePost/1.0")
+		ua := "PebblePost/1.0"
+		if strings.TrimSpace(customUA) != "" {
+			ua = strings.TrimSpace(customUA)
+		}
+		req.Header.Set("User-Agent", ua)
 	}
 	if !hasAccept {
 		req.Header.Set("Accept", "*/*")
 	}
 }
 
-func (c *DefaultClient) applyAuth(req *http.Request, u *url.URL, auth types.AuthDefinition) {
+func (c *DefaultClient) applyAuth(ctx context.Context, req *http.Request, u *url.URL, auth *types.AuthDefinition, bodyBytes []byte) {
+	if auth == nil {
+		return
+	}
 	authType := strings.ToLower(strings.TrimSpace(auth.Type))
 
 	switch authType {
-	case "bearer", "oauth2":
+	case "bearer":
+		if token := strings.TrimSpace(auth.Token); token != "" {
+			if !strings.HasPrefix(strings.ToLower(token), "bearer ") {
+				req.Header.Set("Authorization", "Bearer "+token)
+			} else {
+				req.Header.Set("Authorization", token)
+			}
+		}
+
+	case "oauth2":
+		// Auto-fetch / auto-refresh OAuth2 token
+		if c.oauth2Manager != nil {
+			tok, err := c.oauth2Manager.GetToken(ctx, auth)
+			if err == nil && tok != nil && tok.AccessToken != "" {
+				req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+				return
+			}
+		}
+		// Fallback to static token if present
 		if token := strings.TrimSpace(auth.Token); token != "" {
 			if !strings.HasPrefix(strings.ToLower(token), "bearer ") {
 				req.Header.Set("Authorization", "Bearer "+token)
@@ -408,18 +478,77 @@ func (c *DefaultClient) applyAuth(req *http.Request, u *url.URL, auth types.Auth
 				req.Header.Set(auth.Key, auth.Value)
 			}
 		}
+
+	case "awssigv4":
+		_ = SignAWSSigV4(req, *auth, bodyBytes, time.Now())
 	}
 }
 
 func (c *DefaultClient) buildHTTPClient(settings types.SettingDefinition) *http.Client {
-	// TLS config
+	// TLS configuration
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: !settings.VerifySSL,
 	}
 
+	// Client Certificate (mTLS)
+	if settings.ClientCertPath != "" && settings.ClientKeyPath != "" {
+		if cert, err := tls.LoadX509KeyPair(settings.ClientCertPath, settings.ClientKeyPath); err == nil {
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+	}
+
+	connectTimeout := 10 * time.Second
+	if settings.ConnectTimeoutMs > 0 {
+		connectTimeout = time.Duration(settings.ConnectTimeoutMs) * time.Millisecond
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   connectTimeout,
+		KeepAlive: 30 * time.Second,
+	}
+
+	var proxyFn func(*http.Request) (*url.URL, error) = http.ProxyFromEnvironment
+	var dialContextFn func(ctx context.Context, network, addr string) (net.Conn, error) = dialer.DialContext
+
+	// Proxy configuration: HTTP, HTTPS, or SOCKS5
+	if strings.TrimSpace(settings.ProxyURL) != "" {
+		proxyStr := strings.TrimSpace(settings.ProxyURL)
+		if strings.HasPrefix(strings.ToLower(proxyStr), "socks5://") {
+			if parsedProxy, err := url.Parse(proxyStr); err == nil {
+				var auth *proxy.Auth
+				if parsedProxy.User != nil {
+					auth = &proxy.Auth{
+						User: parsedProxy.User.Username(),
+					}
+					if pass, ok := parsedProxy.User.Password(); ok {
+						auth.Password = pass
+					}
+				}
+				if socksDialer, err := proxy.SOCKS5("tcp", parsedProxy.Host, auth, dialer); err == nil {
+					proxyFn = nil
+					if cd, ok := socksDialer.(proxy.ContextDialer); ok {
+						dialContextFn = cd.DialContext
+					} else {
+						dialContextFn = func(ctx context.Context, network, addr string) (net.Conn, error) {
+							return socksDialer.Dial(network, addr)
+						}
+					}
+				}
+			}
+		} else {
+			if !strings.Contains(proxyStr, "://") {
+				proxyStr = "http://" + proxyStr
+			}
+			if parsedProxy, err := url.Parse(proxyStr); err == nil {
+				proxyFn = http.ProxyURL(parsedProxy)
+			}
+		}
+	}
+
 	transport := &http.Transport{
 		TLSClientConfig:       tlsConfig,
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 proxyFn,
+		DialContext:           dialContextFn,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
@@ -430,17 +559,31 @@ func (c *DefaultClient) buildHTTPClient(settings types.SettingDefinition) *http.
 		Transport: transport,
 	}
 
+	// Cookie Jar integration
+	enableCookies := true
+	if settings.EnableCookies != nil {
+		enableCookies = *settings.EnableCookies
+	}
+	if enableCookies && c.cookieJar != nil {
+		client.Jar = c.cookieJar
+	}
+
 	// Redirect policy: limit hops, and strip sensitive headers across origins
+	maxRedirects := 10
+	if settings.MaxRedirects > 0 {
+		maxRedirects = settings.MaxRedirects
+	}
+
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if !settings.FollowRedirects {
 			return http.ErrUseLastResponse
 		}
-		if len(via) >= 10 {
-			return fmt.Errorf("stopped after 10 redirects")
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
 		}
 		if len(via) > 0 {
 			initial := via[0]
-			// If origin (scheme or host:port) differs, strip sensitive auth credentials
+			// If origin differs, strip sensitive auth credentials & cookies
 			if initial.URL.Scheme != req.URL.Scheme || !strings.EqualFold(initial.URL.Host, req.URL.Host) {
 				req.Header.Del("Authorization")
 				req.Header.Del("Cookie")

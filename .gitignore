@@ -23,6 +23,9 @@ data/
 *.secret.json
 .env
 .env.local
+.pebble/cookies.json
+*.cookies.json
+.pebble/trash/
 
 # Operating System & IDEs
 .DS_Store
