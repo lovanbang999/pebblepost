@@ -406,3 +406,19 @@ export interface DocsTabConfig {
   folderName?: string
 }
 
+export interface UpdateInfo {
+  currentVersion: string
+  latestVersion: string
+  hasUpdate: boolean
+  releaseNotes?: string
+  releaseUrl?: string
+  publishedAt?: string
+  assetUrl?: string
+  signatureUrl?: string
+}
+
+export interface UpdateSettings {
+  checkOnStartup: boolean
+  channel: string
+}
+

@@ -1,0 +1,86 @@
+name: Bug Report
+description: File a bug report to help improve PebblePost
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide as much detailed context as possible.
+  - type: input
+    id: version
+    attributes:
+      label: PebblePost Version
+      description: What version of PebblePost are you using? (Check via `pebblepost version` or UI version badge)
+      placeholder: e.g. 0.2.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you running PebblePost on?
+      options:
+        - Linux (x86_64)
+        - Linux (ARM64)
+        - macOS (Apple Silicon - M1/M2/M3/M4)
+        - macOS (Intel)
+        - Windows (x64)
+        - Windows (ARM64)
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime_mode
+    attributes:
+      label: Runtime Mode
+      description: How are you running PebblePost?
+      options:
+        - Native Desktop Studio (Wails)
+        - Standalone Web Server (`pebblepost-server`)
+        - Docker Container (`lovanbang999/pebblepost`)
+        - Command Line Runner (`pebblepost run`)
+        - Documentation Generator (`pebblepost docs`)
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what unexpected behavior occurred.
+      placeholder: Describe the problem...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How can maintainers reproduce this issue?
+      value: |
+        1. Open collection '...'
+        2. Set environment variable '...'
+        3. Execute request '...'
+        4. See error: '...'
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console Logs / Terminal Output
+      description: Paste any error messages, terminal logs, or browser dev tools console output here.
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Verification
+      options:
+        - label: I have verified this is not a duplicate of an existing issue.
+          required: true
+        - label: I have stripped all sensitive API keys, passwords, and private tokens from the logs.
+          required: true

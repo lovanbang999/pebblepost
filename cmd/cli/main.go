@@ -15,7 +15,12 @@ import (
 	"pebblepost/internal/runner"
 )
 
-const version = "0.2.0"
+var (
+	version = "0.2.0"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "source"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -31,7 +36,7 @@ func main() {
 	case "docs":
 		handleDocs(os.Args[2:])
 	case "version", "-v", "--version":
-		fmt.Printf("PebblePost CLI Runner v%s\n", version)
+		fmt.Printf("PebblePost CLI Runner v%s (commit: %s, date: %s, built by: %s)\n", version, commit, date, builtBy)
 	case "help", "-h", "--help":
 		printUsage()
 	default:

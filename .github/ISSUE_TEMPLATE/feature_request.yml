@@ -1,0 +1,52 @@
+name: Feature Request
+description: Propose a new feature, protocol, or enhancement for PebblePost
+title: "[FEAT]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an improvement to PebblePost! We prioritize features that preserve local-first principles, speed, and privacy.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Limitation
+      description: Is this feature related to a specific problem or workflow friction you encountered?
+      placeholder: I am currently unable to...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution or new capability you would like added.
+      placeholder: PebblePost should allow...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Target Component
+      description: Which part of PebblePost does this proposal impact?
+      options:
+        - Desktop Studio & UI
+        - Command Line Runner (pebblepost run)
+        - Documentation Generator (pebblepost docs)
+        - Backend Core & HTTP Engine
+        - gRPC Client & Streaming
+        - WebSocket / SSE Streams
+        - JavaScript Sandbox (pb.* API)
+        - Docker & Web Server Mode
+        - Import / Export Formats
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative workarounds or approaches?
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context / Mockups
+      description: Add any mockups, screenshots, or protocol specifications relevant to this request.
