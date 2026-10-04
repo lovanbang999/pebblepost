@@ -1,0 +1,80 @@
+info:
+    title: PetStore API
+    version: "1.0"
+openapi: 3.0.3
+paths:
+    /get:
+        get:
+            description: Sample request demonstrating PebblePost offline collection capabilities
+            parameters:
+                - in: query
+                  name: source
+                  required: false
+                  schema:
+                    example: pebblepost
+                    type: string
+            responses:
+                "200":
+                    description: Successful response
+            summary: Get Started (HTTPBin)
+            tags:
+                - example
+    /v1/users:
+        post:
+            description: Register a new pet store customer.
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            properties:
+                                email:
+                                    example: bob@example.com
+                                    type: string
+                                name:
+                                    example: Bob Jones
+                                    type: string
+                            type: object
+                required: true
+            responses:
+                "201":
+                    content:
+                        application/json:
+                            example:
+                                createdAt: "2026-10-04T12:00:00Z"
+                                email: bob@example.com
+                                id: usr_102
+                                name: Bob Jones
+                    description: Created
+            summary: Create New User
+            tags:
+                - 01-users
+    /v1/users/{id}:
+        get:
+            description: Fetch a specific user profile by user ID.
+            parameters:
+                - in: path
+                  name: id
+                  required: true
+                  schema:
+                    type: string
+                - in: query
+                  name: include_orders
+                  required: false
+                  schema:
+                    example: "true"
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            example:
+                                email: alice@example.com
+                                id: usr_101
+                                name: Alice Smith
+                    description: OK
+            summary: Get User Details
+            tags:
+                - 01-users
+servers:
+    - url: https://api.petstore.com
+    - url: '{{BASE_URL}}'

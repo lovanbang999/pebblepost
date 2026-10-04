@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"pebblepost/internal/impexp"
 	"pebblepost/internal/security"
@@ -58,6 +59,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/request/resolved", h.handleResolvedRequest)
 	mux.HandleFunc("/api/request/save", h.handleSaveRequest)
 	mux.HandleFunc("/api/request/delete", h.handleDeleteRequest)
+	mux.HandleFunc("/api/request/example/save", h.handleSaveExample)
+	mux.HandleFunc("/api/request/example/delete", h.handleDeleteExample)
 	mux.HandleFunc("/api/request/interpolate", h.handleInterpolate)
 	mux.HandleFunc("/api/environments", h.handleEnvironments)
 	mux.HandleFunc("/api/environments/save", h.handleSaveEnvironment)
@@ -406,6 +409,194 @@ func (h *Handler) handleDeleteRequest(w http.ResponseWriter, r *http.Request) {
 
 	h.jsonResponse(w, map[string]any{
 		"success": true,
+	})
+}
+
+func (h *Handler) handleSaveExample(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath string                `json:"workspacePath"`
+		Path          string                `json:"path"`
+		Example       types.ExampleResponse `json:"example"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Path == "" {
+		h.jsonError(w, "request path cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Validate path against workspace root when available
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	req, err := h.workspaceSvc.ReadRequest(payload.Path)
+	if err != nil {
+		h.jsonError(w, "failed to load request: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// 1. Gather secret values from workspace/active environment to mask in example body
+	var secretValues []string
+	if payload.WorkspacePath != "" {
+		wsInfo, _ := h.workspaceSvc.GetWorkspaceInfo(payload.WorkspacePath)
+		activeEnv := ""
+		if wsInfo != nil {
+			activeEnv = wsInfo.ActiveEnvironment
+		}
+		envs, _ := h.environmentSvc.ListEnvironments(payload.WorkspacePath)
+		for _, env := range envs {
+			if env.Name == activeEnv || activeEnv == "" {
+				for _, v := range env.Variables {
+					if v.Secret && v.Value != "" {
+						secretValues = append(secretValues, v.Value)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Sanitize sensitive headers
+	sensitiveHeaderKeys := map[string]bool{
+		"authorization":       true,
+		"proxy-authorization": true,
+		"cookie":              true,
+		"set-cookie":          true,
+		"x-api-key":           true,
+		"x-auth-token":        true,
+	}
+	sanitizedHeaders := make([]types.KeyValue, len(payload.Example.Headers))
+	for i, hdr := range payload.Example.Headers {
+		sanitizedHeaders[i] = hdr
+		if sensitiveHeaderKeys[strings.ToLower(hdr.Key)] {
+			sanitizedHeaders[i].Value = "[REDACTED]"
+		} else if len(secretValues) > 0 {
+			sanitizedHeaders[i].Value = security.MaskSecrets(hdr.Value, secretValues)
+		}
+	}
+	payload.Example.Headers = sanitizedHeaders
+
+	// 3. Enforce 512 KB size limit on body
+	const maxBodyBytes = 512 * 1024
+	bodyStr := payload.Example.Body
+	if len(bodyStr) > maxBodyBytes {
+		bodyStr = bodyStr[:maxBodyBytes] + "\n\n[Truncated: response body exceeds 512KB limit]"
+	}
+	if len(secretValues) > 0 {
+		bodyStr = security.MaskSecrets(bodyStr, secretValues)
+	}
+	payload.Example.Body = bodyStr
+	payload.Example.Size = int64(len(bodyStr))
+
+	if payload.Example.ID == "" {
+		payload.Example.ID = fmt.Sprintf("ex_%d", time.Now().UnixNano())
+	}
+	if payload.Example.SavedAt.IsZero() {
+		payload.Example.SavedAt = time.Now()
+	}
+	if payload.Example.Name == "" {
+		payload.Example.Name = fmt.Sprintf("%d %s Example", payload.Example.StatusCode, payload.Example.StatusText)
+	}
+
+	// 4. Update existing example or append
+	updated := false
+	for i, ex := range req.Examples {
+		if ex.ID == payload.Example.ID {
+			req.Examples[i] = payload.Example
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		req.Examples = append(req.Examples, payload.Example)
+	}
+
+	// 5. Cap at 10 examples maximum (FIFO eviction)
+	const maxSavedExamples = 10
+	if len(req.Examples) > maxSavedExamples {
+		req.Examples = req.Examples[len(req.Examples)-maxSavedExamples:]
+	}
+
+	// 6. Save request back to disk
+	if err := h.workspaceSvc.SaveRequest(payload.Path, req); err != nil {
+		h.jsonError(w, "failed to save example: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"success":  true,
+		"example":  payload.Example,
+		"examples": req.Examples,
+	})
+}
+
+func (h *Handler) handleDeleteExample(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		WorkspacePath string `json:"workspacePath"`
+		Path          string `json:"path"`
+		ExampleID     string `json:"exampleId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Path == "" || payload.ExampleID == "" {
+		h.jsonError(w, "path and exampleId are required", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath != "" {
+		if _, err := security.SafeAbsolute(payload.WorkspacePath, payload.Path); err != nil {
+			h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if err := security.RejectTraversal(payload.Path); err != nil {
+		h.jsonError(w, "invalid file path: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	req, err := h.workspaceSvc.ReadRequest(payload.Path)
+	if err != nil {
+		h.jsonError(w, "failed to load request: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	filtered := make([]types.ExampleResponse, 0, len(req.Examples))
+	for _, ex := range req.Examples {
+		if ex.ID != payload.ExampleID {
+			filtered = append(filtered, ex)
+		}
+	}
+	req.Examples = filtered
+
+	if err := h.workspaceSvc.SaveRequest(payload.Path, req); err != nil {
+		h.jsonError(w, "failed to save request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{
+		"success":  true,
+		"examples": req.Examples,
 	})
 }
 

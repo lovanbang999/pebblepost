@@ -26,6 +26,9 @@ import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
 import { RunnerPanel } from "../runner/RunnerPanel";
+import { DocsPanel } from "../docs/DocsPanel";
+import { RequestDocsTab } from "./RequestDocsTab";
+import { RequestExamplesTab } from "./RequestExamplesTab";
 import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
 import { ScriptTrustDialog } from "./ScriptTrustDialog";
 import { VariableInput } from "../common/VariableInput";
@@ -436,6 +439,15 @@ export function RequestPanel() {
       <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
         <TabBar />
         <RunnerPanel currentTab={currentTab} />
+      </div>
+    );
+  }
+
+  if (currentTab.type === "docs") {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
+        <TabBar />
+        <DocsPanel currentTab={currentTab} />
       </div>
     );
   }
@@ -992,7 +1004,7 @@ export function RequestPanel() {
           ? (["grpc", "scripts", "settings"] as const)
           : isStream
           ? (["stream", "headers", "scripts", "settings"] as const)
-          : (["params", "headers", "auth", "body", "scripts", "settings"] as const);
+          : (["params", "headers", "auth", "body", "scripts", "docs", "examples", "settings"] as const);
         const resolvedActiveTab =
           isGrpc && !(subTabs as readonly string[]).includes(activeTab)
             ? "grpc"
@@ -1017,7 +1029,22 @@ export function RequestPanel() {
                     ? activeRequest.protocol === "sse" || activeRequest.method === "SSE"
                       ? "SSE Config"
                       : "WebSocket"
+                    : tab === "docs"
+                    ? "Docs"
+                    : tab === "examples"
+                    ? "Examples"
                     : tab}
+                  {tab === "docs" && Boolean(activeRequest.description?.trim()) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1.5" />
+                  )}
+                  {tab === "examples" && (activeRequest.examples?.length || 0) > 0 && (
+                    <Badge
+                      variant="secondary"
+                      className="ml-1.5 px-1 py-0 text-[9px]"
+                    >
+                      {activeRequest.examples?.length}
+                    </Badge>
+                  )}
                   {tab === "headers" &&
                     (activeRequest.headers?.length || 0) > 0 && (
                       <Badge
@@ -2344,6 +2371,31 @@ export function RequestPanel() {
                 </div>
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="docs" className="h-[calc(100vh-230px)] min-h-112.5 m-0 -m-3">
+            <RequestDocsTab
+              description={activeRequest.description}
+              onChange={(newDesc) =>
+                updateActiveRequest((prev) => ({
+                  ...prev,
+                  description: newDesc,
+                }))
+              }
+            />
+          </TabsContent>
+
+          <TabsContent value="examples" className="h-[calc(100vh-230px)] min-h-112.5 m-0 -m-3">
+            <RequestExamplesTab
+              filePath={currentTab.filePath}
+              examples={activeRequest.examples || []}
+              onExamplesChange={(newExamples) =>
+                updateActiveRequest((prev) => ({
+                  ...prev,
+                  examples: newExamples,
+                }))
+              }
+            />
           </TabsContent>
         </div>
       </Tabs>

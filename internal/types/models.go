@@ -186,6 +186,20 @@ type StreamSessionStatus struct {
 	CloseReason    string `json:"closeReason,omitempty"`
 }
 
+// ExampleResponse represents a captured, sanitized HTTP/gRPC response example saved with a request.
+type ExampleResponse struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	StatusCode  int        `json:"statusCode"`
+	StatusText  string     `json:"statusText,omitempty"`
+	Headers     []KeyValue `json:"headers,omitempty"`
+	Body        string     `json:"body,omitempty"`
+	ContentType string     `json:"contentType,omitempty"`
+	DurationMs  int64      `json:"durationMs,omitempty"`
+	Size        int64      `json:"size,omitempty"`
+	SavedAt     time.Time  `json:"savedAt,omitempty"`
+}
+
 // RequestDefinition is the schema for a *.pebble.json file.
 type RequestDefinition struct {
 	Schema        string            `json:"$schema,omitempty"`
@@ -207,6 +221,7 @@ type RequestDefinition struct {
 	Stream        *StreamDefinition `json:"stream,omitempty"`
 	Scripts       ScriptDefinition  `json:"scripts"`
 	Settings      SettingDefinition `json:"settings"`
+	Examples      []ExampleResponse `json:"examples,omitempty"`
 }
 
 // EnvironmentDefinition represents an environment file (*.env.json or *.secret.env.json).

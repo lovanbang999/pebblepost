@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"pebblepost/internal/docs"
 	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/runner"
@@ -117,4 +118,8 @@ func (a *App) registerRoutes() {
 	// Collection Runner endpoints
 	runnerHandler := runner.NewHandler(runner.NewCustomRunner(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator, a.HttpClient, a.ScriptEngine))
 	runnerHandler.RegisterRoutes(a.Mux)
+
+	// Documentation endpoints
+	docsHandler := docs.NewHandler(docs.NewGenerator())
+	docsHandler.RegisterRoutes(a.Mux)
 }

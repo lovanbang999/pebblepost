@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   Settings,
   Play,
+  BookOpen,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
@@ -130,7 +131,7 @@ export function CollectionTree() {
     createNewRequest,
   } = useWorkspaceStore()
 
-  const { openTab, openFolderTab, openRunnerTab, onFileRenamed, onFileDeleted } = useTabStore()
+  const { openTab, openFolderTab, openRunnerTab, openDocsTab, onFileRenamed, onFileDeleted } = useTabStore()
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     collections: true,
@@ -869,6 +870,16 @@ export function CollectionTree() {
           </Tooltip>
           <ImportDialog />
           <ExportDialog />
+          <Tooltip content="Documentation">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => openDocsTab()}
+              className="h-6 w-6 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+            </Button>
+          </Tooltip>
           <Tooltip content="Collection Runner">
             <Button
               variant="ghost"
@@ -955,6 +966,17 @@ export function CollectionTree() {
                 <span>New Folder</span>
               </button>
               <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  openDocsTab(contextMenu.node.path, contextMenu.node.displayName || contextMenu.node.name)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-950/30 text-blue-600 dark:text-blue-400 text-left cursor-pointer font-medium"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>View Documentation</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Folder, Save, Plus, Trash2, Check } from 'lucide-react'
+import { Folder, Save, Plus, Trash2, Check, FileText, Eye, Edit3, Columns } from 'lucide-react'
+import { MarkdownView } from '../common/MarkdownView'
 import CodeMirror from '@uiw/react-codemirror'
 import { autocompletion } from '@codemirror/autocomplete'
 import { javascript } from '@codemirror/lang-javascript'
@@ -37,7 +38,8 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
   const { theme } = useWorkspaceStore()
   const { updateActiveFolder, saveCurrentTab } = useTabStore()
   const [isSaved, setIsSaved] = useState(false)
-  const [activeTab, setActiveTab] = useState<'headers' | 'auth' | 'vars' | 'scripts'>('headers')
+  const [activeTab, setActiveTab] = useState<'headers' | 'auth' | 'vars' | 'scripts' | 'docs'>('headers')
+  const [folderDocsMode, setFolderDocsMode] = useState<'split' | 'edit' | 'preview'>('split')
 
   const folder: FolderDefinition = currentTab.folder || {
     schemaVersion: 1,
@@ -185,7 +187,7 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
       {/* Tabs navigation */}
       <Tabs
         value={activeTab}
-        onValueChange={(val) => setActiveTab(val as any)}
+        onValueChange={(val) => setActiveTab(val as typeof activeTab)}
         className="flex-1 flex flex-col overflow-hidden"
       >
         <TabsList>
@@ -224,6 +226,13 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
             Scripts
             {((folder.scripts?.preRequest && folder.scripts.preRequest.trim()) ||
               (folder.scripts?.postResponse && folder.scripts.postResponse.trim())) && (
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1.5" />
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger value="docs" className="capitalize">
+            Docs
+            {Boolean(folder.description?.trim()) && (
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1.5" />
             )}
           </TabsTrigger>
@@ -319,7 +328,9 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
             </label>
             <Select
               value={currentAuthType}
-              onValueChange={(val: any) => updateAuth({ type: val })}
+              onValueChange={(val) => {
+                if (val) updateAuth({ type: val as AuthDefinition['type'] })
+              }}
             >
               <SelectTrigger className="h-8 text-xs font-medium">
                 <SelectValue placeholder="Select Auth Type" />
@@ -415,7 +426,9 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
                 <label className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Add to</label>
                 <Select
                   value={folder.auth?.addTo || 'header'}
-                  onValueChange={(val: any) => updateAuth({ addTo: val })}
+                  onValueChange={(val) => {
+                    if (val) updateAuth({ addTo: val as 'header' | 'query' })
+                  }}
                 >
                   <SelectTrigger className="h-8 text-xs font-medium">
                     <SelectValue />
@@ -672,6 +685,101 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
                 className="text-xs font-mono"
               />
             </div>
+          </div>
+        </TabsContent>
+
+        {/* Tab 5: Docs / Markdown Description */}
+        <TabsContent value="docs" className="flex-1 flex flex-col p-4 overflow-hidden m-0">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-200 dark:border-zinc-800">
+            <div>
+              <h4 className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-blue-500" />
+                Folder Description & Documentation
+              </h4>
+              <p className="text-[11px] text-zinc-500 mt-0.5">
+                Included as section overview in generated API docs and OpenAPI tag descriptions.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800/80 p-0.5 rounded-lg border border-zinc-200/80 dark:border-zinc-700/60">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setFolderDocsMode('edit')}
+                className={`h-6 px-2 text-[11px] gap-1 cursor-pointer ${
+                  folderDocsMode === 'edit'
+                    ? 'bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                    : 'text-zinc-600 dark:text-zinc-400'
+                }`}
+              >
+                <Edit3 className="w-3 h-3" />
+                Edit
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setFolderDocsMode('split')}
+                className={`h-6 px-2 text-[11px] gap-1 cursor-pointer ${
+                  folderDocsMode === 'split'
+                    ? 'bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                    : 'text-zinc-600 dark:text-zinc-400'
+                }`}
+              >
+                <Columns className="w-3 h-3" />
+                Split
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setFolderDocsMode('preview')}
+                className={`h-6 px-2 text-[11px] gap-1 cursor-pointer ${
+                  folderDocsMode === 'preview'
+                    ? 'bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 shadow-xs'
+                    : 'text-zinc-600 dark:text-zinc-400'
+                }`}
+              >
+                <Eye className="w-3 h-3" />
+                Preview
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex-1 flex overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950">
+            {(folderDocsMode === 'edit' || folderDocsMode === 'split') && (
+              <div
+                className={`flex flex-col h-full overflow-hidden ${
+                  folderDocsMode === 'split' ? 'w-1/2 border-r border-zinc-200 dark:border-zinc-800' : 'w-full'
+                }`}
+              >
+                <textarea
+                  value={folder.description || ''}
+                  onChange={(e) =>
+                    updateActiveFolder((prev) => ({
+                      ...prev,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Describe the endpoints, data models, or purpose of this folder...&#10;&#10;### Overview&#10;This group contains authentication and user management APIs."
+                  className="flex-1 w-full p-4 bg-white dark:bg-zinc-950 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-600 resize-none outline-none focus:ring-0 leading-relaxed"
+                />
+              </div>
+            )}
+
+            {(folderDocsMode === 'preview' || folderDocsMode === 'split') && (
+              <div
+                className={`flex-1 h-full overflow-y-auto p-4 bg-zinc-50/50 dark:bg-zinc-900/20 ${
+                  folderDocsMode === 'split' ? 'w-1/2' : 'w-full'
+                }`}
+              >
+                <MarkdownView
+                  content={folder.description}
+                  emptyMessage="No description written for this folder yet. Type in the editor to see formatted Markdown."
+                />
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>

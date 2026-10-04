@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"pebblepost/internal/docs"
 	"pebblepost/internal/impexp"
 	"pebblepost/internal/runner"
 )
@@ -27,6 +28,8 @@ func main() {
 		handleRun(os.Args[2:])
 	case "import":
 		handleImport(os.Args[2:])
+	case "docs":
+		handleDocs(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("PebblePost CLI Runner v%s\n", version)
 	case "help", "-h", "--help":
@@ -235,6 +238,64 @@ func handleImport(args []string) {
 	fmt.Println("────────────────────────────────────────────────────────────────")
 }
 
+func handleDocs(args []string) {
+	fs := flag.NewFlagSet("docs", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	var (
+		formatFlag    = fs.String("format", "md", "Output format: md, html, openapi, json (default: md)")
+		formatShort   = fs.String("f", "", "Alias for --format")
+		outFlag       = fs.String("out", "", "Output directory or file path (default: docs/)")
+		outShort      = fs.String("o", "", "Alias for --out")
+		stdoutFlag    = fs.Bool("stdout", false, "Print documentation directly to stdout")
+		workspaceFlag = fs.String("workspace", ".", "Workspace root directory")
+	)
+
+	reordered := reorderArgs(args)
+	if err := fs.Parse(reordered); err != nil {
+		os.Exit(runner.ExitConfigError)
+	}
+
+	targetPath := "."
+	if fs.NArg() > 0 {
+		targetPath = fs.Arg(0)
+	}
+
+	format := *formatFlag
+	if *formatShort != "" {
+		format = *formatShort
+	}
+	outPath := *outFlag
+	if *outShort != "" {
+		outPath = *outShort
+	}
+
+	gen := docs.NewGenerator()
+
+	if *stdoutFlag {
+		data, _, err := gen.Generate(*workspaceFlag, targetPath, format)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating documentation: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		os.Stdout.Write(data)
+		return
+	}
+
+	writtenPath, err := gen.WriteDocs(*workspaceFlag, targetPath, format, outPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write documentation: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	fmt.Println("────────────────────────────────────────────────────────────────")
+	fmt.Printf("✓ Documentation Generated Successfully\n")
+	fmt.Printf("  • Target:   %s\n", targetPath)
+	fmt.Printf("  • Format:   %s\n", strings.ToLower(format))
+	fmt.Printf("  • Output:   %s\n", writtenPath)
+	fmt.Println("────────────────────────────────────────────────────────────────")
+}
+
 func printUsage() {
 	fmt.Printf(`PebblePost CLI Runner v%s
 A local-first, Git-friendly API test runner for CI/CD pipelines.
@@ -242,14 +303,22 @@ A local-first, Git-friendly API test runner for CI/CD pipelines.
 Usage:
   pebblepost run [<path-to-collection>] [flags]
   pebblepost import <file-or-dir> [flags]
+  pebblepost docs [<path-to-collection>] [flags]
   pebblepost version
   pebblepost help
 
 Commands:
   run          Execute API requests and test assertions in a collection
   import       Import collections from Postman, Bruno, Insomnia, HAR, OpenAPI, or cURL
+  docs         Generate API documentation from collections in Markdown, HTML, or OpenAPI
   version      Print version information
   help         Print this help message
+
+Flags for 'docs':
+  -f, --format <format>     Documentation format: md (default), html, openapi, json
+  -o, --out <path>          Output directory or file path (default: docs/)
+      --stdout              Print documentation directly to stdout
+      --workspace <path>    Workspace root directory (default: .)
 
 Flags for 'import':
   -o, --out-dir <path>      Output directory relative to workspace (default: collections/<name>)

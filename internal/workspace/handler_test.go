@@ -244,4 +244,104 @@ func TestHandler_APIEndpoints(t *testing.T) {
 			t.Errorf("expected 400 for invalid env name, got %d", badEnvRR.Code)
 		}
 	})
+
+	// 9. Test Save and Delete Examples
+	t.Run("Save and Delete Example with Secret Redaction and Truncation", func(t *testing.T) {
+		reqPath := filepath.Join(tempDir, "collections", "custom", "test-examples.pebble.json")
+		baseReq := types.RequestDefinition{
+			Name:   "Example API",
+			Method: "GET",
+			URL:    "http://example.com/api",
+		}
+		if err := wsSvc.SaveRequest(reqPath, &baseReq); err != nil {
+			t.Fatalf("failed to save base request: %v", err)
+		}
+
+		// Save example with sensitive headers and large body
+		largeBody := make([]byte, 600*1024) // 600 KB
+		for i := range largeBody {
+			largeBody[i] = 'A'
+		}
+
+		savePayload, _ := json.Marshal(map[string]any{
+			"workspacePath": tempDir,
+			"path":          reqPath,
+			"example": types.ExampleResponse{
+				Name:       "Success 200",
+				StatusCode: 200,
+				StatusText: "OK",
+				Headers: []types.KeyValue{
+					{Key: "Authorization", Value: "Bearer secret_jwt_token", Enabled: true},
+					{Key: "Content-Type", Value: "application/json", Enabled: true},
+					{Key: "Cookie", Value: "session=xyz123", Enabled: true},
+				},
+				Body: string(largeBody),
+			},
+		})
+
+		saveReq := httptest.NewRequest(http.MethodPost, "/api/request/example/save", bytes.NewReader(savePayload))
+		saveRR := httptest.NewRecorder()
+		mux.ServeHTTP(saveRR, saveReq)
+
+		if saveRR.Code != http.StatusOK {
+			t.Fatalf("save example failed with status %d: %s", saveRR.Code, saveRR.Body.String())
+		}
+
+		var saveResp struct {
+			Success  bool                    `json:"success"`
+			Example  types.ExampleResponse   `json:"example"`
+			Examples []types.ExampleResponse `json:"examples"`
+		}
+		if err := json.NewDecoder(saveRR.Body).Decode(&saveResp); err != nil {
+			t.Fatalf("failed to decode save response: %v", err)
+		}
+
+		if len(saveResp.Examples) != 1 {
+			t.Fatalf("expected 1 example, got %d", len(saveResp.Examples))
+		}
+
+		savedEx := saveResp.Examples[0]
+		// Verify sensitive headers are redacted
+		for _, hdr := range savedEx.Headers {
+			if hdr.Key == "Authorization" && hdr.Value != "[REDACTED]" {
+				t.Errorf("expected Authorization header to be [REDACTED], got %s", hdr.Value)
+			}
+			if hdr.Key == "Cookie" && hdr.Value != "[REDACTED]" {
+				t.Errorf("expected Cookie header to be [REDACTED], got %s", hdr.Value)
+			}
+		}
+
+		// Verify body size is capped (512 KB + truncation note)
+		if len(savedEx.Body) > 513*1024 {
+			t.Errorf("expected body to be truncated to ~512KB, got %d bytes", len(savedEx.Body))
+		}
+		if !bytes.Contains([]byte(savedEx.Body), []byte("[Truncated: response body exceeds 512KB limit]")) {
+			t.Errorf("expected truncation notice in body")
+		}
+
+		// Delete the example
+		delPayload, _ := json.Marshal(map[string]any{
+			"workspacePath": tempDir,
+			"path":          reqPath,
+			"exampleId":     savedEx.ID,
+		})
+		delReq := httptest.NewRequest(http.MethodPost, "/api/request/example/delete", bytes.NewReader(delPayload))
+		delRR := httptest.NewRecorder()
+		mux.ServeHTTP(delRR, delReq)
+
+		if delRR.Code != http.StatusOK {
+			t.Fatalf("delete example failed with status %d: %s", delRR.Code, delRR.Body.String())
+		}
+
+		var delResp struct {
+			Success  bool                    `json:"success"`
+			Examples []types.ExampleResponse `json:"examples"`
+		}
+		if err := json.NewDecoder(delRR.Body).Decode(&delResp); err != nil {
+			t.Fatalf("failed to decode delete response: %v", err)
+		}
+		if len(delResp.Examples) != 0 {
+			t.Errorf("expected 0 examples after deletion, got %d", len(delResp.Examples))
+		}
+	})
 }
