@@ -114,6 +114,11 @@ func (f *cliReporter) PrintRequestResult(res RequestRunResult) {
 		badge = f.colorize(colorRed+colorBold, "[FAIL]")
 	}
 
+	iterPrefix := ""
+	if res.Iteration > 0 {
+		iterPrefix = fmt.Sprintf("[%s] ", f.colorize(colorMagenta, fmt.Sprintf("#%d", res.Iteration)))
+	}
+
 	method := "REQ"
 	if res.Request != nil && res.Request.Method != "" {
 		method = res.Request.Method
@@ -129,8 +134,9 @@ func (f *cliReporter) PrintRequestResult(res RequestRunResult) {
 		retrySuffix = fmt.Sprintf(" [retried %dx]", res.RetryCount)
 	}
 
-	_, _ = fmt.Fprintf(f.out, "%s %s %s (%s%s)%s\n",
+	_, _ = fmt.Fprintf(f.out, "%s %s%s %s (%s%s)%s\n",
 		badge,
+		iterPrefix,
 		f.methodColor(method),
 		res.RelPath,
 		statusText,
@@ -165,25 +171,51 @@ func (f *cliReporter) PrintSummary(s *RunSummary) {
 		statusStr = f.colorize(colorRed+colorBold, "FAILED")
 	}
 
+	iterLine := ""
+	if s.TotalIterations > 1 {
+		iterLine = fmt.Sprintf("Iterations:  %d total | %s passed | %s failed\n",
+			s.TotalIterations,
+			f.colorize(colorGreen, fmt.Sprintf("%d", s.PassedIterations)),
+			f.colorize(colorRed, fmt.Sprintf("%d", s.FailedIterations)),
+		)
+	}
+
+	durLine := fmt.Sprintf("Duration:    %s", s.TotalDuration.Round(time.Millisecond))
+	if s.TotalRequests > 0 {
+		durLine = fmt.Sprintf("Duration:    %s (avg: %.1fms | p95: %.1fms)",
+			s.TotalDuration.Round(time.Millisecond),
+			s.AvgDurationMs,
+			s.P95DurationMs,
+		)
+	}
+
+	passRateColor := colorGreen
+	if s.PassRate < 100.0 {
+		passRateColor = colorRed
+	}
+
 	divider := strings.Repeat("=", 60)
 	summaryText := fmt.Sprintf(`%s
                         TEST SUMMARY                          
 %s
-Requests:    %d total | %s passed | %s failed
+%sRequests:    %d total | %s passed | %s failed
 Assertions:  %d total | %s passed | %s failed
-Duration:    %s
+Pass Rate:   %s
+%s
 Status:      %s
 %s
 `,
 		divider,
 		divider,
+		iterLine,
 		s.TotalRequests,
 		f.colorize(colorGreen, fmt.Sprintf("%d", s.PassedRequests)),
 		f.colorize(colorRed, fmt.Sprintf("%d", s.FailedRequests)),
 		s.TotalTests,
 		f.colorize(colorGreen, fmt.Sprintf("%d", s.PassedTests)),
 		f.colorize(colorRed, fmt.Sprintf("%d", s.FailedTests)),
-		s.TotalDuration.Round(time.Millisecond),
+		f.colorize(passRateColor, fmt.Sprintf("%.1f%%", s.PassRate)),
+		durLine,
 		statusStr,
 		divider,
 	)
@@ -445,24 +477,37 @@ func (h *htmlReporter) PrintSummary(s *RunSummary) {
 			}
 		}
 
+		iterCol := ""
+		if s.TotalIterations > 1 {
+			iterCol = fmt.Sprintf("<td><span class=\"badge\" style=\"background:#581c87;color:#d8b4fe\">#%d</span></td>", res.Iteration)
+		}
+
 		rows.WriteString(fmt.Sprintf(`
 <tr class="%s">
   <td><span class="badge %s">%s</span></td>
-  <td><code class="method">%s</code></td>
+  %s<td><code class="method">%s</code></td>
   <td>%s</td>
   <td>%s</td>
   <td>%s</td>
   <td>%s</td>
 </tr>
-<tr class="detail-row %s"><td colspan="6"><div class="assertions">%s%s</div></td></tr>`,
+<tr class="detail-row %s"><td colspan="%d"><div class="assertions">%s%s</div></td></tr>`,
 			rowClass,
 			rowClass, rowLabel,
+			iterCol,
 			html.EscapeString(method),
 			html.EscapeString(res.RelPath),
 			status,
 			html.EscapeString(res.Duration.Round(time.Millisecond).String()),
 			errMsg,
-			rowClass, assertions.String(),
+			rowClass,
+			func() int {
+				if s.TotalIterations > 1 {
+					return 7
+				}
+				return 6
+			}(),
+			assertions.String(),
 			func() string {
 				if errMsg != "" && (res.Result == nil || len(res.Result.Tests) == 0) {
 					return fmt.Sprintf(`<div class="assertion assert-fail">✗ %s</div>`, errMsg)
@@ -470,6 +515,16 @@ func (h *htmlReporter) PrintSummary(s *RunSummary) {
 				return ""
 			}(),
 		))
+	}
+
+	iterTh := ""
+	if s.TotalIterations > 1 {
+		iterTh = "<th>Iter</th>"
+	}
+
+	passRateClass := "green"
+	if s.PassRate < 100.0 {
+		passRateClass = "red"
 	}
 
 	report := fmt.Sprintf(`<!DOCTYPE html>
@@ -487,7 +542,7 @@ h1{font-size:1.5rem;font-weight:700;margin-bottom:.25rem}
 .card{background:#18181b;border:1px solid #27272a;border-radius:.75rem;padding:1rem}
 .card-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:#71717a;margin-bottom:.25rem}
 .card-value{font-size:1.5rem;font-weight:700}
-.card-value.green{color:#4ade80}.card-value.red{color:#f87171}.card-value.blue{color:#60a5fa}.card-value.yellow{color:#fbbf24}
+.card-value.green{color:#4ade80}.card-value.red{color:#f87171}.card-value.blue{color:#60a5fa}.card-value.yellow{color:#fbbf24}.card-value.purple{color:#c084fc}
 .status-badge{display:inline-block;padding:.25rem .75rem;border-radius:9999px;font-weight:700;font-size:.875rem}
 .status-badge.passed{background:#14532d;color:#4ade80}.status-badge.failed{background:#450a0a;color:#f87171}
 table{width:100%%;border-collapse:collapse;background:#18181b;border-radius:.75rem;overflow:hidden;border:1px solid #27272a}
@@ -509,13 +564,16 @@ code{font-family:monospace}
 <p class="subtitle">Target: %s | Environment: %s | Duration: %s</p>
 <div class="summary-grid">
   <div class="card"><div class="card-label">Status</div><div><span class="status-badge %s">%s</span></div></div>
+  <div class="card"><div class="card-label">Pass Rate</div><div class="card-value %s">%.1f%%</div></div>
   <div class="card"><div class="card-label">Requests</div><div class="card-value blue">%d</div></div>
   <div class="card"><div class="card-label">Passed</div><div class="card-value green">%d</div></div>
   <div class="card"><div class="card-label">Failed</div><div class="card-value red">%d</div></div>
-  <div class="card"><div class="card-label">Assertions</div><div class="card-value blue">%d</div></div>
+  <div class="card"><div class="card-label">Iterations</div><div class="card-value purple">%d</div></div>
+  <div class="card"><div class="card-label">Avg Latency</div><div class="card-value yellow">%.1fms</div></div>
+  <div class="card"><div class="card-label">P95 Latency</div><div class="card-value yellow">%.1fms</div></div>
 </div>
 <table>
-<thead><tr><th>Status</th><th>Method</th><th>Path</th><th>HTTP</th><th>Duration</th><th>Error</th></tr></thead>
+<thead><tr><th>Status</th>%s<th>Method</th><th>Path</th><th>HTTP</th><th>Duration</th><th>Error</th></tr></thead>
 <tbody>%s</tbody>
 </table>
 </body>
@@ -529,10 +587,14 @@ code{font-family:monospace}
 		}(),
 		s.TotalDuration.Round(time.Millisecond),
 		statusClass, statusLabel,
+		passRateClass, s.PassRate,
 		s.TotalRequests,
 		s.PassedRequests,
 		s.FailedRequests,
-		s.TotalTests,
+		s.TotalIterations,
+		s.AvgDurationMs,
+		s.P95DurationMs,
+		iterTh,
 		rows.String(),
 	)
 

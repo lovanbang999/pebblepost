@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,9 +40,23 @@ type RunOptions struct {
 	// DelayMs is the sleep duration between requests.
 	DelayMs int
 
+	// DataFile is the path to an imported CSV or JSON data file for iterations.
+	DataFile string
+	// DataRows provides pre-parsed data rows (useful for API/UI runner).
+	DataRows []map[string]any
+	// Iterations specifies how many iterations to run.
+	Iterations int
+	// MaxExecutionsPerIteration guards against infinite loops with pb.runner.setNextRequest (default: 100).
+	MaxExecutionsPerIteration int
+	// RequestPaths explicitly specifies the list and order of request files to execute.
+	RequestPaths []string
+
 	// Reporters specifies one or more output reporters.
 	// If empty, a "cli" reporter writing to Writer (or stdout) is used.
 	Reporters []ReporterConfig
+
+	// CustomReporter allows injecting a programmatic reporter (e.g. SSE event emitter).
+	CustomReporter Reporter
 
 	// ExtraVars are highest-precedence variables from --var KEY=VALUE flags.
 	ExtraVars map[string]string
@@ -58,6 +73,7 @@ type RunOptions struct {
 
 // RequestRunResult represents the outcome of executing a single request file.
 type RequestRunResult struct {
+	Iteration  int                      `json:"iteration,omitempty"`
 	FilePath   string                   `json:"filePath"`
 	RelPath    string                   `json:"relPath"`
 	Request    *types.RequestDefinition `json:"request,omitempty"`
@@ -69,25 +85,65 @@ type RequestRunResult struct {
 	Skipped    bool                     `json:"skipped,omitempty"`
 }
 
+// IterationSummary records aggregate outcomes for a single iteration loop.
+type IterationSummary struct {
+	Iteration   int                `json:"iteration"`
+	DataRow     map[string]any     `json:"dataRow,omitempty"`
+	Results     []RequestRunResult `json:"results"`
+	TotalTests  int                `json:"totalTests"`
+	PassedTests int                `json:"passedTests"`
+	FailedTests int                `json:"failedTests"`
+	Duration    time.Duration      `json:"duration"`
+	Passed      bool               `json:"passed"`
+	Error       string             `json:"error,omitempty"`
+}
+
 // RunSummary aggregates execution statistics for a full collection test run.
 type RunSummary struct {
-	Target          string             `json:"target"`
-	Environment     string             `json:"environment,omitempty"`
-	TotalRequests   int                `json:"totalRequests"`
-	PassedRequests  int                `json:"passedRequests"`
-	FailedRequests  int                `json:"failedRequests"`
-	SkippedRequests int                `json:"skippedRequests,omitempty"`
-	TotalTests      int                `json:"totalTests"`
-	PassedTests     int                `json:"passedTests"`
-	FailedTests     int                `json:"failedTests"`
-	TotalDuration   time.Duration      `json:"totalDurationMs"`
-	Bailed          bool               `json:"bailed"`
-	DryRun          bool               `json:"dryRun,omitempty"`
-	Success         bool               `json:"success"`
-	Results         []RequestRunResult `json:"results"`
+	Target           string             `json:"target"`
+	Environment      string             `json:"environment,omitempty"`
+	TotalIterations  int                `json:"totalIterations"`
+	PassedIterations int                `json:"passedIterations"`
+	FailedIterations int                `json:"failedIterations"`
+	TotalRequests    int                `json:"totalRequests"`
+	PassedRequests   int                `json:"passedRequests"`
+	FailedRequests   int                `json:"failedRequests"`
+	SkippedRequests  int                `json:"skippedRequests,omitempty"`
+	TotalTests       int                `json:"totalTests"`
+	PassedTests      int                `json:"passedTests"`
+	FailedTests      int                `json:"failedTests"`
+	TotalDuration    time.Duration      `json:"totalDurationMs"`
+	AvgDurationMs    float64            `json:"avgDurationMs"`
+	P95DurationMs    float64            `json:"p95DurationMs"`
+	PassRate         float64            `json:"passRate"` // 0.0 - 100.0%
+	Bailed           bool               `json:"bailed"`
+	DryRun           bool               `json:"dryRun,omitempty"`
+	Success          bool               `json:"success"`
+	Results          []RequestRunResult `json:"results"`
+	Iterations       []IterationSummary `json:"iterations,omitempty"`
 	// ExitCode is computed after Run completes:
 	//   0 = all passed, 1 = assertion failure, 2 = config/parse error, 3 = network error
 	ExitCode int `json:"-"`
+}
+
+// CalculateP95 computes the 95th percentile latency in milliseconds.
+func CalculateP95(durations []time.Duration) float64 {
+	if len(durations) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(durations))
+	for i, d := range durations {
+		sorted[i] = float64(d.Milliseconds())
+	}
+	sort.Float64s(sorted)
+	idx := int(float64(len(sorted))*0.95+0.5) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 // ReporterConfigsFromFlags parses raw --reporter flag values.

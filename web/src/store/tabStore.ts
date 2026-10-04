@@ -1,10 +1,10 @@
 import { create } from 'zustand'
-import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry } from '../types'
+import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry, RunnerTabConfig } from '../types'
 
-export type TabType = 'request' | 'folder' | 'history'
+export type TabType = 'request' | 'folder' | 'history' | 'runner'
 
 export interface RequestTab {
-  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id
+  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id or "runner:" + path
   filePath: string
   title: string
   type?: TabType
@@ -13,6 +13,7 @@ export interface RequestTab {
   isDirty: boolean
   isReadOnly?: boolean
   historyEntry?: HistoryEntry
+  runnerConfig?: RunnerTabConfig
   request?: RequestDefinition
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
@@ -31,6 +32,7 @@ interface TabState {
   openTab: (filePath: string, request: RequestDefinition, isPreview?: boolean) => void
   openFolderTab: (folderPath: string, folder?: FolderDefinition, isPreview?: boolean) => Promise<void>
   openHistoryTab: (entry: HistoryEntry) => void
+  openRunnerTab: (folderPath?: string, folderName?: string) => void
   restoreRequestFromHistory: (entry: HistoryEntry) => void
   pinTab: (tabId: string) => void
   closeTab: (tabId: string, force?: boolean) => boolean
@@ -288,6 +290,40 @@ export const useTabStore = create<TabState>((set, get) => ({
       request: reqDef,
       savedSnapshot: JSON.stringify(reqDef),
       lastResult: histResult,
+      activeSubTab: 'params',
+      scrollPosition: 0,
+    }
+
+    set((state) => ({
+      tabs: [...state.tabs, newTab],
+      activeTabId: newTab.id,
+    }))
+  },
+
+  openRunnerTab: (folderPath?: string, folderName?: string) => {
+    const tabId = folderPath ? `runner:${folderPath}` : 'runner:workspace'
+    const title = folderName ? `Runner: ${folderName}` : 'Collection Runner'
+    const { tabs } = get()
+    const existing = tabs.find((t) => t.id === tabId)
+    if (existing) {
+      set({ activeTabId: tabId })
+      return
+    }
+
+    const newTab: RequestTab = {
+      id: tabId,
+      filePath: folderPath || '',
+      title,
+      type: 'runner',
+      isPreview: false,
+      isDirty: false,
+      isReadOnly: true,
+      runnerConfig: {
+        folderPath,
+        folderName,
+      },
+      savedSnapshot: '',
+      lastResult: null,
       activeSubTab: 'params',
       scrollPosition: 0,
     }

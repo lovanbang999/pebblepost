@@ -330,3 +330,60 @@ export interface HistoryListResponse {
   page: number
   limit: number
 }
+
+// ── Runner Types ─────────────────────────────────────────────────────────────
+
+export interface RequestRunResult {
+  iteration?: number
+  filePath: string
+  relPath: string
+  request?: RequestDefinition
+  result?: ExecutionResult
+  passed: boolean
+  error?: string
+  duration: number
+  retryCount?: number
+  skipped?: boolean
+}
+
+export interface IterationSummary {
+  iteration: number
+  dataRow?: Record<string, unknown>
+  results: RequestRunResult[]
+  totalTests: number
+  passedTests: number
+  failedTests: number
+  duration: number
+  passed: boolean
+  error?: string
+}
+
+export interface RunSummary {
+  target: string
+  environment?: string
+  totalIterations: number
+  passedIterations: number
+  failedIterations: number
+  totalRequests: number
+  passedRequests: number
+  failedRequests: number
+  skippedRequests?: number
+  totalTests: number
+  passedTests: number
+  failedTests: number
+  totalDurationMs: number
+  avgDurationMs: number
+  p95DurationMs: number
+  passRate: number
+  bailed: boolean
+  dryRun?: boolean
+  success: boolean
+  results: RequestRunResult[]
+  iterations?: IterationSummary[]
+}
+
+export interface RunnerTabConfig {
+  folderPath?: string
+  folderName?: string
+}
+

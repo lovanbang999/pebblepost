@@ -16,6 +16,7 @@ import {
   ExternalLink,
   AlertTriangle,
   Settings,
+  Play,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
@@ -129,7 +130,7 @@ export function CollectionTree() {
     createNewRequest,
   } = useWorkspaceStore()
 
-  const { openTab, openFolderTab, onFileRenamed, onFileDeleted } = useTabStore()
+  const { openTab, openFolderTab, openRunnerTab, onFileRenamed, onFileDeleted } = useTabStore()
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     collections: true,
@@ -868,6 +869,16 @@ export function CollectionTree() {
           </Tooltip>
           <ImportDialog />
           <ExportDialog />
+          <Tooltip content="Collection Runner">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => openRunnerTab()}
+              className="h-6 w-6 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+            </Button>
+          </Tooltip>
         </div>
       </div>
 
@@ -942,6 +953,18 @@ export function CollectionTree() {
               >
                 <FolderPlus className="w-3.5 h-3.5 text-zinc-400" />
                 <span>New Folder</span>
+              </button>
+              <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  openRunnerTab(contextMenu.node.path, contextMenu.node.displayName || contextMenu.node.name)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 text-left cursor-pointer font-medium"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Run Folder</span>
               </button>
               <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
               <button
