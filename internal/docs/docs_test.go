@@ -11,6 +11,10 @@ import (
 	"pebblepost/internal/workspace"
 )
 
+func normalizeNewlines(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
+}
+
 // setupSampleWorkspace sets up a test workspace with folders, requests, and examples.
 func setupSampleWorkspace(t *testing.T) string {
 	t.Helper()
@@ -142,7 +146,7 @@ func TestDocs_GoldenMarkdown(t *testing.T) {
 		_ = os.MkdirAll("testdata", 0755)
 		_ = os.WriteFile(goldenPath, data, 0644)
 	} else if goldenData, err := os.ReadFile(goldenPath); err == nil {
-		if string(data) != string(goldenData) {
+		if normalizeNewlines(string(data)) != normalizeNewlines(string(goldenData)) {
 			t.Errorf("markdown output does not match golden.md")
 		}
 	}
@@ -183,7 +187,7 @@ func TestDocs_GoldenHTML(t *testing.T) {
 		_ = os.MkdirAll("testdata", 0755)
 		_ = os.WriteFile(goldenPath, data, 0644)
 	} else if goldenData, err := os.ReadFile(goldenPath); err == nil {
-		if string(data) != string(goldenData) {
+		if normalizeNewlines(string(data)) != normalizeNewlines(string(goldenData)) {
 			t.Errorf("html output does not match golden.html")
 		}
 	}
@@ -231,7 +235,7 @@ func TestDocs_GoldenOpenAPI(t *testing.T) {
 		_ = os.MkdirAll("testdata", 0755)
 		_ = os.WriteFile(goldenPath, yamlData, 0644)
 	} else if goldenData, err := os.ReadFile(goldenPath); err == nil {
-		if string(yamlData) != string(goldenData) {
+		if normalizeNewlines(string(yamlData)) != normalizeNewlines(string(goldenData)) {
 			t.Errorf("openapi output does not match golden.openapi.yaml")
 		}
 	}
