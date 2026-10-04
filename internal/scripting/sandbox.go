@@ -326,6 +326,7 @@ func (e *Engine) ExecutePostResponseNamed(
 	_ = pbObj.Set("crypto", cryptoObj)
 	_ = pbObj.Set("test", testFn)
 	_ = pbObj.Set("expect", vm.Get("expect"))
+	_ = pbObj.Set("stream", e.setupStreamBridge(vm, resp))
 
 	// Bind extended pb utilities
 	e.bindExtendedPbAPIs(vm, pbObj, timeout)
@@ -655,6 +656,23 @@ func (e *Engine) setupResponseBridge(vm *goja.Runtime, resp *types.ExecutionResu
 
 	_ = respObj.Set("json", func() goja.Value {
 		var parsed any
+		if resp.Body != "" {
+			if err := json.Unmarshal([]byte(resp.Body), &parsed); err == nil {
+				return vm.ToValue(parsed)
+			}
+		}
+		if len(resp.StreamLogs) > 0 {
+			for i := len(resp.StreamLogs) - 1; i >= 0; i-- {
+				if resp.StreamLogs[i].Direction == "receive" {
+					if err := json.Unmarshal([]byte(resp.StreamLogs[i].Payload), &parsed); err == nil {
+						return vm.ToValue(parsed)
+					}
+				}
+			}
+		}
+		if resp.Body == "" {
+			return vm.ToValue(nil)
+		}
 		if err := json.Unmarshal([]byte(resp.Body), &parsed); err != nil {
 			panic(vm.ToValue(fmt.Sprintf("Failed to parse response body as JSON: %v", err)))
 		}
@@ -687,7 +705,90 @@ func (e *Engine) setupResponseBridge(vm *goja.Runtime, resp *types.ExecutionResu
 	})
 	_ = respObj.Set("headers", headersObj)
 
+	if len(resp.StreamLogs) > 0 {
+		_ = respObj.Set("streamLogs", resp.StreamLogs)
+		_ = respObj.Set("closeCode", resp.StreamCloseCode)
+		_ = respObj.Set("closeReason", resp.StreamCloseReason)
+		_ = respObj.Set("evicted", resp.StreamEvicted)
+	}
+
 	return respObj
+}
+
+func (e *Engine) setupStreamBridge(vm *goja.Runtime, resp *types.ExecutionResult) *goja.Object {
+	streamObj := vm.NewObject()
+	if resp == nil {
+		return streamObj
+	}
+
+	_ = streamObj.Set("messages", func() []string {
+		var msgs []string
+		for _, l := range resp.StreamLogs {
+			if l.Direction == "receive" {
+				msgs = append(msgs, l.Payload)
+			}
+		}
+		return msgs
+	})
+
+	_ = streamObj.Set("jsonMessages", func() goja.Value {
+		var msgs []any
+		for _, l := range resp.StreamLogs {
+			if l.Direction == "receive" {
+				var parsed any
+				if err := json.Unmarshal([]byte(l.Payload), &parsed); err == nil {
+					msgs = append(msgs, parsed)
+				} else {
+					msgs = append(msgs, l.Payload)
+				}
+			}
+		}
+		return vm.ToValue(msgs)
+	})
+
+	_ = streamObj.Set("logs", func() []types.StreamLogEntry {
+		return resp.StreamLogs
+	})
+
+	_ = streamObj.Set("closeCode", func() int {
+		return resp.StreamCloseCode
+	})
+
+	_ = streamObj.Set("closeReason", func() string {
+		return resp.StreamCloseReason
+	})
+
+	_ = streamObj.Set("evicted", func() int {
+		return resp.StreamEvicted
+	})
+
+	_ = streamObj.Set("waitFor", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 {
+			return vm.ToValue(false)
+		}
+		pred, ok := goja.AssertFunction(call.Arguments[0])
+		if !ok {
+			return vm.ToValue(false)
+		}
+		for _, l := range resp.StreamLogs {
+			if l.Direction == "receive" {
+				var argVal goja.Value
+				var parsed any
+				if err := json.Unmarshal([]byte(l.Payload), &parsed); err == nil {
+					argVal = vm.ToValue(parsed)
+				} else {
+					argVal = vm.ToValue(l.Payload)
+				}
+				res, err := pred(goja.Undefined(), argVal)
+				if err == nil && res.ToBoolean() {
+					return vm.ToValue(true)
+				}
+			}
+		}
+		return vm.ToValue(false)
+	})
+
+	return streamObj
 }
 
 func (e *Engine) setupEnvironmentBridge(vm *goja.Runtime, envVars map[string]string) *goja.Object {

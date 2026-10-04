@@ -12,6 +12,7 @@ import (
 	"pebblepost/internal/history"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
+	"pebblepost/internal/streamclient"
 	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
 )
@@ -61,6 +62,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/grpc/sample-message", h.handleGrpcSampleMessage)
 	mux.HandleFunc("/api/grpc/stream", h.handleGrpcStream)
 	mux.HandleFunc("/api/grpc/stream/cancel", h.handleGrpcStreamCancel)
+	mux.HandleFunc("/api/stream/connect", h.handleStreamConnect)
+	mux.HandleFunc("/api/stream/send", h.handleStreamSend)
+	mux.HandleFunc("/api/stream/disconnect", h.handleStreamDisconnect)
+	mux.HandleFunc("/api/stream/status", h.handleStreamStatus)
 }
 
 // ExecutePayload defines the JSON body for the /api/request/execute endpoint.
@@ -715,4 +720,254 @@ func (h *Handler) handleGrpcStreamCancel(w http.ResponseWriter, r *http.Request)
 	h.streamsMu.Unlock()
 
 	h.jsonResponse(w, map[string]any{"cancelled": ok})
+}
+
+func (h *Handler) handleStreamConnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	var payload struct {
+		StreamID        string                   `json:"streamId"`
+		WorkspacePath   string                   `json:"workspacePath,omitempty"`
+		EnvironmentName string                   `json:"environmentName,omitempty"`
+		Path            string                   `json:"path,omitempty"`
+		Request         *types.RequestDefinition `json:"request"`
+		Trusted         *bool                    `json:"trusted,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if payload.Request == nil {
+		h.jsonError(w, "Request definition is required", http.StatusBadRequest)
+		return
+	}
+
+	if payload.StreamID == "" {
+		payload.StreamID = fmt.Sprintf("stream_%d", time.Now().UnixNano())
+	}
+
+	// Interpolate variables
+	var varMap map[string]string
+	if h.interpolator != nil {
+		var env *types.EnvironmentDefinition
+		if h.environmentSvc != nil && payload.WorkspacePath != "" && payload.EnvironmentName != "" {
+			env, _ = h.environmentSvc.GetEnvironment(payload.WorkspacePath, payload.EnvironmentName)
+		}
+		varMap = h.interpolator.BuildVariableMap(env, nil)
+	}
+	if varMap == nil {
+		varMap = make(map[string]string)
+	}
+
+	reqToExecute := payload.Request
+	if h.interpolator != nil {
+		reqToExecute = h.interpolator.InterpolateRequest(payload.Request, varMap)
+	}
+
+	// Headers
+	header := make(http.Header)
+	for _, kv := range reqToExecute.Headers {
+		if kv.Enabled && kv.Key != "" {
+			header.Add(kv.Key, kv.Value)
+		}
+	}
+
+	streamCfg := reqToExecute.Stream
+	if streamCfg == nil {
+		streamCfg = &types.StreamDefinition{}
+	}
+
+	maxEntries := streamCfg.MaxLogEntries
+	if maxEntries <= 0 {
+		maxEntries = 1000
+	}
+	maxBytes := streamCfg.MaxLogBytes
+	if maxBytes <= 0 {
+		maxBytes = 5 * 1024 * 1024
+	}
+	ring := streamclient.NewRingBuffer(maxEntries, maxBytes)
+
+	// Set SSE response headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	h.streamsMu.Lock()
+	h.activeStreams[payload.StreamID] = cancel
+	h.streamsMu.Unlock()
+	defer func() {
+		h.streamsMu.Lock()
+		delete(h.activeStreams, payload.StreamID)
+		h.streamsMu.Unlock()
+	}()
+
+	isSSE := reqToExecute.Protocol == "sse" || reqToExecute.Method == "SSE"
+
+	var session *streamclient.StreamSession
+	var err error
+
+	if isSSE {
+		session, err = streamclient.DefaultManager.StartSSE(ctx, streamclient.SSEClientConfig{
+			StreamID:             payload.StreamID,
+			URL:                  reqToExecute.URL,
+			Headers:              header,
+			AutoReconnect:        streamCfg.AutoReconnect,
+			MaxReconnectAttempts: streamCfg.MaxReconnectAttempts,
+			ReconnectInterval:    time.Duration(streamCfg.ReconnectIntervalMs) * time.Millisecond,
+			ProxyURL:             reqToExecute.Settings.ProxyURL,
+			RingBuffer:           ring,
+		})
+	} else {
+		session, err = streamclient.DefaultManager.StartWS(ctx, streamclient.WSClientConfig{
+			StreamID:             payload.StreamID,
+			URL:                  reqToExecute.URL,
+			Headers:              header,
+			Subprotocols:         streamCfg.Subprotocols,
+			AutoReconnect:        streamCfg.AutoReconnect,
+			MaxReconnectAttempts: streamCfg.MaxReconnectAttempts,
+			ReconnectInterval:    time.Duration(streamCfg.ReconnectIntervalMs) * time.Millisecond,
+			PingInterval:         time.Duration(streamCfg.PingIntervalMs) * time.Millisecond,
+			ProxyURL:             reqToExecute.Settings.ProxyURL,
+			RingBuffer:           ring,
+		})
+	}
+
+	if err != nil {
+		errEvent, _ := json.Marshal(streamclient.MakeSystemLog(1, "error", "Failed to connect: "+err.Error(), true))
+		fmt.Fprintf(w, "event: log\ndata: %s\n\n", errEvent)
+		flusher.Flush()
+		return
+	}
+
+	eventsCh, unsubscribe := session.Subscribe()
+	defer unsubscribe()
+
+	// Initial status event
+	initialStatus, _ := json.Marshal(session.Status())
+	fmt.Fprintf(w, "event: status\ndata: %s\n\n", initialStatus)
+	flusher.Flush()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-eventsCh:
+			if !ok {
+				return
+			}
+			if ev.Type == "log" && ev.Log != nil {
+				data, _ := json.Marshal(ev.Log)
+				fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+				flusher.Flush()
+			} else if ev.Type == "status" && ev.Status != nil {
+				data, _ := json.Marshal(ev.Status)
+				fmt.Fprintf(w, "event: status\ndata: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+func (h *Handler) handleStreamSend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		StreamID string `json:"streamId"`
+		Payload  string `json:"payload"`
+		Type     string `json:"type"` // "text", "binary", "ping", "pong"
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if payload.StreamID == "" {
+		h.jsonError(w, "streamId is required", http.StatusBadRequest)
+		return
+	}
+
+	err := streamclient.DefaultManager.Send(payload.StreamID, payload.Payload, payload.Type)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	h.jsonResponse(w, map[string]any{"sent": true})
+}
+
+func (h *Handler) handleStreamDisconnect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload struct {
+		StreamID string `json:"streamId"`
+		Code     int    `json:"code,omitempty"`
+		Reason   string `json:"reason,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if payload.StreamID == "" {
+		h.jsonError(w, "streamId is required", http.StatusBadRequest)
+		return
+	}
+
+	code := payload.Code
+	if code <= 0 {
+		code = streamclient.CloseNormalClosure
+	}
+
+	_ = streamclient.DefaultManager.CloseSession(payload.StreamID, code, payload.Reason)
+
+	h.streamsMu.Lock()
+	if cancel, ok := h.activeStreams[payload.StreamID]; ok {
+		cancel()
+		delete(h.activeStreams, payload.StreamID)
+	}
+	h.streamsMu.Unlock()
+
+	h.jsonResponse(w, map[string]any{"disconnected": true})
+}
+
+func (h *Handler) handleStreamStatus(w http.ResponseWriter, r *http.Request) {
+	streamID := r.URL.Query().Get("streamId")
+	if streamID == "" {
+		h.jsonError(w, "streamId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	session, ok := streamclient.DefaultManager.GetSession(streamID)
+	if !ok {
+		h.jsonResponse(w, types.StreamSessionStatus{
+			StreamID: streamID,
+			State:    "disconnected",
+		})
+		return
+	}
+
+	h.jsonResponse(w, session.Status())
 }

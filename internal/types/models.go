@@ -135,6 +135,57 @@ type GrpcServiceInfo struct {
 	Methods []GrpcMethodInfo `json:"methods"`
 }
 
+// WebSocketMessage represents a saved sample or outgoing message for WebSocket.
+type WebSocketMessage struct {
+	ID      string `json:"id"`
+	Name    string `json:"name,omitempty"`
+	Payload string `json:"payload"`
+	Type    string `json:"type,omitempty"` // "text", "binary", "ping", "pong"
+}
+
+// StreamDefinition defines configuration for WebSocket and SSE requests.
+type StreamDefinition struct {
+	Subprotocols         []string           `json:"subprotocols,omitempty"`         // WebSocket subprotocols
+	AutoReconnect        bool               `json:"autoReconnect,omitempty"`        // auto-reconnect on unexpected drop
+	MaxReconnectAttempts int                `json:"maxReconnectAttempts,omitempty"` // e.g. 5
+	ReconnectIntervalMs  int                `json:"reconnectIntervalMs,omitempty"`  // e.g. 1000
+	PingIntervalMs       int                `json:"pingIntervalMs,omitempty"`       // periodic ping heartbeat, e.g. 30000
+	MaxLogEntries        int                `json:"maxLogEntries,omitempty"`        // ring buffer item limit, default 1000
+	MaxLogBytes          int64              `json:"maxLogBytes,omitempty"`          // ring buffer byte limit, default 5*1024*1024
+	OutgoingMessages     []WebSocketMessage `json:"outgoingMessages,omitempty"`     // saved sample messages
+	TimeoutMs            int                `json:"timeoutMs,omitempty"`            // maximum stream run duration before stopping in CLI
+	MaxWaitMessages      int                `json:"maxWaitMessages,omitempty"`      // stop after receiving N messages in CLI
+}
+
+// StreamLogEntry represents a two-way log message or system event in a stream session.
+type StreamLogEntry struct {
+	ID          string    `json:"id"`
+	Index       int       `json:"index"`
+	Direction   string    `json:"direction"` // "send", "receive", "system"
+	Type        string    `json:"type"`      // "text", "binary", "ping", "pong", "open", "close", "error"
+	Timestamp   time.Time `json:"timestamp"`
+	Payload     string    `json:"payload"`
+	Size        int       `json:"size"`
+	CloseCode   int       `json:"closeCode,omitempty"`
+	CloseReason string    `json:"closeReason,omitempty"`
+	IsError     bool      `json:"isError,omitempty"`
+}
+
+// StreamSessionStatus represents the current status of an active stream session.
+type StreamSessionStatus struct {
+	StreamID       string `json:"streamId"`
+	Protocol       string `json:"protocol"` // "websocket" or "sse"
+	State          string `json:"state"`    // "connecting", "connected", "disconnected", "reconnecting"
+	URL            string `json:"url"`
+	Subprotocol    string `json:"subprotocol,omitempty"`
+	ReconnectCount int    `json:"reconnectCount"`
+	TotalSent      int    `json:"totalSent"`
+	TotalReceived  int    `json:"totalReceived"`
+	EvictedCount   int    `json:"evictedCount"`
+	CloseCode      int    `json:"closeCode,omitempty"`
+	CloseReason    string `json:"closeReason,omitempty"`
+}
+
 // RequestDefinition is the schema for a *.pebble.json file.
 type RequestDefinition struct {
 	Schema        string            `json:"$schema,omitempty"`
@@ -145,7 +196,7 @@ type RequestDefinition struct {
 	Description   string            `json:"description,omitempty"`
 	Order         int               `json:"order,omitempty"`
 	Tags          []string          `json:"tags,omitempty"`     // used for --tag filtering in CLI
-	Protocol      string            `json:"protocol,omitempty"` // "http" (default) or "grpc"
+	Protocol      string            `json:"protocol,omitempty"` // "http" (default), "grpc", "websocket", "sse"
 	Method        string            `json:"method"`
 	URL           string            `json:"url"`
 	Headers       []KeyValue        `json:"headers,omitempty"`
@@ -153,6 +204,7 @@ type RequestDefinition struct {
 	Auth          AuthDefinition    `json:"auth"`
 	Body          BodyDefinition    `json:"body"`
 	Grpc          *GrpcDefinition   `json:"grpc,omitempty"`
+	Stream        *StreamDefinition `json:"stream,omitempty"`
 	Scripts       ScriptDefinition  `json:"scripts"`
 	Settings      SettingDefinition `json:"settings"`
 }
@@ -250,28 +302,32 @@ type ConsoleLogEntry struct {
 
 // ExecutionResult is the response returned after executing an API request.
 type ExecutionResult struct {
-	StatusCode       int                   `json:"statusCode"`
-	StatusText       string                `json:"statusText"`
-	Headers          map[string][]string   `json:"headers"`
-	Body             string                `json:"body"`
-	BodyTruncated    bool                  `json:"bodyTruncated,omitempty"` // true when body exceeded the display threshold
-	BodySizeBytes    int64                 `json:"bodySizeBytes,omitempty"` // actual byte length of the full body
-	TempBodyFile     string                `json:"tempBodyFile,omitempty"`  // OS temp file path when body is large
-	Size             int64                 `json:"size"`
-	Timing           TimingMetrics         `json:"timing"`
-	RedirectChain    []RedirectHop         `json:"redirectChain,omitempty"` // hops before the final response
-	SentRequest      *SentRequestSummary   `json:"sentRequest,omitempty"`   // the actual request sent over the wire
-	GrpcStatus       *int                  `json:"grpcStatus,omitempty"`
-	GrpcStatusText   string                `json:"grpcStatusText,omitempty"`
-	GrpcMetadata     map[string][]string   `json:"grpcMetadata,omitempty"`
-	GrpcTrailers     map[string][]string   `json:"grpcTrailers,omitempty"`
-	GrpcMessages     []GrpcStreamMessage   `json:"grpcMessages,omitempty"`
-	Tests            []TestAssertionResult `json:"tests"`
-	Logs             []string              `json:"logs"`
-	ConsoleLogs      []ConsoleLogEntry     `json:"consoleLogs,omitempty"`
-	ExtractedEnvVars map[string]string     `json:"extractedEnvVars,omitempty"`
-	ExecutedAt       time.Time             `json:"executedAt"`
-	Error            string                `json:"error,omitempty"`
+	StatusCode        int                   `json:"statusCode"`
+	StatusText        string                `json:"statusText"`
+	Headers           map[string][]string   `json:"headers"`
+	Body              string                `json:"body"`
+	BodyTruncated     bool                  `json:"bodyTruncated,omitempty"` // true when body exceeded the display threshold
+	BodySizeBytes     int64                 `json:"bodySizeBytes,omitempty"` // actual byte length of the full body
+	TempBodyFile      string                `json:"tempBodyFile,omitempty"`  // OS temp file path when body is large
+	Size              int64                 `json:"size"`
+	Timing            TimingMetrics         `json:"timing"`
+	RedirectChain     []RedirectHop         `json:"redirectChain,omitempty"` // hops before the final response
+	SentRequest       *SentRequestSummary   `json:"sentRequest,omitempty"`   // the actual request sent over the wire
+	GrpcStatus        *int                  `json:"grpcStatus,omitempty"`
+	GrpcStatusText    string                `json:"grpcStatusText,omitempty"`
+	GrpcMetadata      map[string][]string   `json:"grpcMetadata,omitempty"`
+	GrpcTrailers      map[string][]string   `json:"grpcTrailers,omitempty"`
+	GrpcMessages      []GrpcStreamMessage   `json:"grpcMessages,omitempty"`
+	StreamLogs        []StreamLogEntry      `json:"streamLogs,omitempty"`
+	StreamCloseCode   int                   `json:"streamCloseCode,omitempty"`
+	StreamCloseReason string                `json:"streamCloseReason,omitempty"`
+	StreamEvicted     int                   `json:"streamEvicted,omitempty"`
+	Tests             []TestAssertionResult `json:"tests"`
+	Logs              []string              `json:"logs"`
+	ConsoleLogs       []ConsoleLogEntry     `json:"consoleLogs,omitempty"`
+	ExtractedEnvVars  map[string]string     `json:"extractedEnvVars,omitempty"`
+	ExecutedAt        time.Time             `json:"executedAt"`
+	Error             string                `json:"error,omitempty"`
 }
 
 // TreeNode represents a file or folder in the collection directory explorer.

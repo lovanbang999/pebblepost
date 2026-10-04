@@ -495,4 +495,107 @@ describe("useTabStore", () => {
     assert.equal(activeTab.request?.url, "https://api.example.com/v2/users");
     assert.equal(activeTab.request?.headers?.[0].key, "X-Restored");
   });
+
+  test("opens WebSocket and SSE requests with activeSubTab set to stream and stores streamLogs", () => {
+    const store = useTabStore.getState();
+
+    // 1. WebSocket request
+    store.openTab("collections/ws-chat.pebble.json", {
+      name: "Live Chat",
+      method: "WS",
+      protocol: "websocket",
+      url: "ws://localhost:8080/ws",
+      auth: { type: "none" },
+      body: { type: "none" },
+      scripts: {},
+      settings: { followRedirects: true, verifySSL: true, timeoutMs: 30000 },
+      stream: {
+        autoReconnect: true,
+        maxReconnectAttempts: 3,
+        reconnectIntervalMs: 1000,
+        pingIntervalMs: 30000,
+        maxLogEntries: 500,
+        maxLogBytes: 2 * 1024 * 1024,
+        outgoingMessages: [
+          { id: "1", name: "Join Room", payload: '{"action":"join"}', type: "text" },
+        ],
+      },
+    });
+
+    let state = useTabStore.getState();
+    const wsTab = state.tabs.find((t) => t.id === "collections/ws-chat.pebble.json");
+    assert.ok(wsTab);
+    assert.equal(wsTab.activeSubTab, "stream");
+    assert.equal(wsTab.request?.protocol, "websocket");
+    assert.equal(wsTab.request?.stream?.outgoingMessages?.length, 1);
+
+    // 2. Set stream execution result with streamLogs and closeCode
+    store.setActiveTabId("collections/ws-chat.pebble.json");
+    store.setLastResult({
+      statusCode: 200,
+      statusText: "Stream Connected",
+      headers: {},
+      body: "",
+      size: 0,
+      timing: {
+        dnsLookupMs: 0,
+        tcpConnectMs: 0,
+        tlsHandshakeMs: 0,
+        ttfbMs: 0,
+        downloadMs: 0,
+        totalDurationMs: 45,
+      },
+      tests: [],
+      logs: [],
+      executedAt: new Date().toISOString(),
+      streamLogs: [
+        {
+          id: "log-1",
+          index: 1,
+          direction: "send",
+          type: "text",
+          timestamp: new Date().toISOString(),
+          payload: '{"action":"join"}',
+          size: 17,
+        },
+        {
+          id: "log-2",
+          index: 2,
+          direction: "receive",
+          type: "text",
+          timestamp: new Date().toISOString(),
+          payload: '{"status":"joined"}',
+          size: 19,
+        },
+      ],
+      streamCloseCode: 1000,
+      streamCloseReason: "Normal Closure",
+      streamEvicted: 0,
+    });
+
+    state = useTabStore.getState();
+    const resultTab = state.tabs.find((t) => t.id === "collections/ws-chat.pebble.json");
+    assert.ok(resultTab?.lastResult);
+    assert.equal(resultTab.lastResult.streamLogs?.length, 2);
+    assert.equal(resultTab.lastResult.streamCloseCode, 1000);
+    assert.equal(resultTab.lastResult.streamCloseReason, "Normal Closure");
+
+    // 3. SSE request
+    store.openTab("collections/sse-feed.pebble.json", {
+      name: "Live Feed",
+      method: "SSE",
+      protocol: "sse",
+      url: "http://localhost:8080/events",
+      auth: { type: "none" },
+      body: { type: "none" },
+      scripts: {},
+      settings: { followRedirects: true, verifySSL: true, timeoutMs: 30000 },
+    });
+
+    state = useTabStore.getState();
+    const sseTab = state.tabs.find((t) => t.id === "collections/sse-feed.pebble.json");
+    assert.ok(sseTab);
+    assert.equal(sseTab.activeSubTab, "stream");
+    assert.equal(sseTab.request?.protocol, "sse");
+  });
 });

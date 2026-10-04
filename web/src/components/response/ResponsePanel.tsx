@@ -20,6 +20,7 @@ import {
   Radio,
 } from 'lucide-react'
 import { GrpcStreamTimeline } from '../grpc/GrpcStreamTimeline'
+import { StreamLogPanel } from '../stream/StreamLogPanel'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
@@ -268,7 +269,7 @@ type SubTab = 'body' | 'stream' | 'headers' | 'trailers' | 'tests' | 'timing' | 
 
 export function ResponsePanel() {
   const { theme, lastResult: wsLastResult, isExecuting } = useWorkspaceStore()
-  const { tabs, activeTabId } = useTabStore()
+  const { tabs, activeTabId, setLastResult } = useTabStore()
   const currentTab = tabs.find((t) => t.id === activeTabId)
   const lastResult = currentTab ? currentTab.lastResult : wsLastResult
 
@@ -289,10 +290,10 @@ export function ResponsePanel() {
     setLoadOffset(0)
     setSearchOpen(false)
     setShowJsonPath(false)
-    if (lastResult?.grpcMessages && lastResult.grpcMessages.length > 0) {
+    if ((lastResult?.grpcMessages && lastResult.grpcMessages.length > 0) || (lastResult?.streamLogs && lastResult.streamLogs.length > 0)) {
       setActiveSubTab('stream')
     }
-  }, [lastResult?.executedAt, lastResult?.grpcMessages])
+  }, [lastResult?.executedAt, lastResult?.grpcMessages, lastResult?.streamLogs])
 
   // Ctrl+F shortcut
   useEffect(() => {
@@ -513,13 +514,13 @@ export function ResponsePanel() {
         className="flex-1 overflow-hidden flex flex-col"
       >
         <TabsList>
-          {/* Stream Tab if gRPC stream messages present */}
-          {lastResult.grpcMessages && lastResult.grpcMessages.length > 0 && (
+          {/* Stream Tab if stream logs or gRPC stream messages present */}
+          {((lastResult.streamLogs && lastResult.streamLogs.length > 0) || (lastResult.grpcMessages && lastResult.grpcMessages.length > 0)) && (
             <TabsTrigger value="stream" className="gap-1.5">
-              <Radio className="w-3.5 h-3.5 text-indigo-500" />
+              <Radio className="w-3.5 h-3.5 text-cyan-500" />
               <span>Stream</span>
-              <Badge variant="secondary" className="ml-1 px-1 py-0 text-[9px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold">
-                {lastResult.grpcMessages.length}
+              <Badge variant="secondary" className="ml-1 px-1 py-0 text-[9px] bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 font-bold">
+                {lastResult.streamLogs ? lastResult.streamLogs.length : lastResult.grpcMessages?.length}
               </Badge>
             </TabsTrigger>
           )}
@@ -674,12 +675,25 @@ export function ResponsePanel() {
             </div>
           </TabsContent>
 
-          {/* ── STREAM TIMELINE TAB ── */}
-          {lastResult.grpcMessages && lastResult.grpcMessages.length > 0 && (
+          {/* ── STREAM TIMELINE / LOG TAB ── */}
+          {lastResult.streamLogs && lastResult.streamLogs.length > 0 ? (
+            <TabsContent value="stream" className="h-[calc(100vh-230px)] min-h-100 m-0 -m-3">
+              <StreamLogPanel
+                logs={lastResult.streamLogs}
+                isLive={isExecuting}
+                closeCode={lastResult.streamCloseCode}
+                closeReason={lastResult.streamCloseReason}
+                evictedCount={lastResult.streamEvicted}
+                onClearLogs={() => {
+                  setLastResult((prev) => (prev ? { ...prev, streamLogs: [] } : null))
+                }}
+              />
+            </TabsContent>
+          ) : lastResult.grpcMessages && lastResult.grpcMessages.length > 0 ? (
             <TabsContent value="stream" className="h-[calc(100vh-230px)] min-h-100 m-0 -m-3">
               <GrpcStreamTimeline messages={lastResult.grpcMessages} isLive={isExecuting} />
             </TabsContent>
-          )}
+          ) : null}
 
           {/* ── TRAILERS TAB ── */}
           {lastResult.grpcTrailers && Object.keys(lastResult.grpcTrailers).length > 0 && (

@@ -17,7 +17,7 @@ export interface RequestTab {
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
   lastResult: ExecutionResult | null
-  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc'
+  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc' | 'stream'
   scrollPosition?: number
 }
 
@@ -136,7 +136,12 @@ export const useTabStore = create<TabState>((set, get) => ({
       request: request,
       savedSnapshot: JSON.stringify(request),
       lastResult: null,
-      activeSubTab: 'params',
+      activeSubTab:
+        request.method === 'GRPC' || request.protocol === 'grpc'
+          ? 'grpc'
+          : request.method === 'WS' || request.method === 'SSE' || request.protocol === 'websocket' || request.protocol === 'sse'
+            ? 'stream'
+            : 'params',
       scrollPosition: 0,
     }
 
