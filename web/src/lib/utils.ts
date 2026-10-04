@@ -33,6 +33,11 @@ export function getMethodColor(method: string) {
       return 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800/60'
     case 'GRPC':
       return 'text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 border-indigo-300 dark:border-indigo-800/60'
+    case 'WS':
+    case 'WEBSOCKET':
+      return 'text-cyan-700 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/60 border-cyan-300 dark:border-cyan-800/60'
+    case 'SSE':
+      return 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/60 border-orange-300 dark:border-orange-800/60'
     default:
       return 'text-zinc-700 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-900 border-zinc-300 dark:border-zinc-700'
   }
@@ -55,6 +60,11 @@ export function getMethodTextColor(method: string) {
       return 'text-teal-600 dark:text-teal-400'
     case 'GRPC':
       return 'text-indigo-600 dark:text-indigo-400'
+    case 'WS':
+    case 'WEBSOCKET':
+      return 'text-cyan-600 dark:text-cyan-400'
+    case 'SSE':
+      return 'text-orange-600 dark:text-orange-400'
     default:
       return 'text-zinc-600 dark:text-zinc-400'
   }

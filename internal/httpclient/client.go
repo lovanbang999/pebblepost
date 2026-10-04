@@ -17,10 +17,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
 	"pebblepost/internal/grpcclient"
+	"pebblepost/internal/streamclient"
 	"pebblepost/internal/types"
 )
 
@@ -93,6 +95,11 @@ func (c *DefaultClient) Execute(ctx context.Context, req *types.RequestDefinitio
 			req.Grpc.Address = req.URL
 		}
 		return c.grpcClient.Execute(ctx, req)
+	}
+
+	// Dispatch to stream client when protocol is websocket or sse
+	if req.Protocol == "websocket" || req.Method == "WS" || req.Protocol == "sse" || req.Method == "SSE" {
+		return c.executeStream(ctx, req)
 	}
 
 	// Redirect chain is populated by the CheckRedirect hook in buildHTTPClient.
@@ -556,22 +563,28 @@ func (c *DefaultClient) applyAuth(ctx context.Context, req *http.Request, u *url
 	}
 }
 
+func (c *DefaultClient) buildTLSConfig(settings types.SettingDefinition) (*tls.Config, error) {
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: !settings.VerifySSL,
+	}
+
+	if settings.ClientCertPath != "" && settings.ClientKeyPath != "" {
+		cert, err := tls.LoadX509KeyPair(settings.ClientCertPath, settings.ClientKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	return tlsConfig, nil
+}
+
 func (c *DefaultClient) buildHTTPClient(
 	settings types.SettingDefinition,
 	redirectMu *sync.Mutex,
 	redirectChain *[]types.RedirectHop,
 ) *http.Client {
 	// TLS configuration
-	tlsConfig := &tls.Config{
-		InsecureSkipVerify: !settings.VerifySSL,
-	}
-
-	// Client Certificate (mTLS)
-	if settings.ClientCertPath != "" && settings.ClientKeyPath != "" {
-		if cert, err := tls.LoadX509KeyPair(settings.ClientCertPath, settings.ClientKeyPath); err == nil {
-			tlsConfig.Certificates = []tls.Certificate{cert}
-		}
-	}
+	tlsConfig, _ := c.buildTLSConfig(settings)
 
 	connectTimeout := 10 * time.Second
 	if settings.ConnectTimeoutMs > 0 {
@@ -687,4 +700,205 @@ func (c *DefaultClient) buildHTTPClient(
 	}
 
 	return client
+}
+
+func (c *DefaultClient) executeStream(ctx context.Context, req *types.RequestDefinition) (*types.ExecutionResult, error) {
+	startTime := time.Now()
+	isSSE := req.Protocol == "sse" || req.Method == "SSE"
+
+	streamCfg := req.Stream
+	if streamCfg == nil {
+		streamCfg = &types.StreamDefinition{}
+	}
+
+	timeout := 5 * time.Second
+	if streamCfg.TimeoutMs > 0 {
+		timeout = time.Duration(streamCfg.TimeoutMs) * time.Millisecond
+	} else if req.Settings.TimeoutMs > 0 {
+		timeout = time.Duration(req.Settings.TimeoutMs) * time.Millisecond
+	}
+
+	streamCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Build headers
+	header := make(http.Header)
+	for _, h := range req.Headers {
+		if h.Enabled && h.Key != "" {
+			header.Add(h.Key, h.Value)
+		}
+	}
+
+	// TLS config
+	tlsConfig, err := c.buildTLSConfig(req.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("tls config error: %w", err)
+	}
+
+	maxEntries := streamCfg.MaxLogEntries
+	if maxEntries <= 0 {
+		maxEntries = 1000
+	}
+	maxBytes := streamCfg.MaxLogBytes
+	if maxBytes <= 0 {
+		maxBytes = 5 * 1024 * 1024
+	}
+	ring := streamclient.NewRingBuffer(maxEntries, maxBytes)
+
+	var receivedCount atomic.Int64
+	doneCh := make(chan struct{})
+	var once sync.Once
+	notifyDone := func() {
+		once.Do(func() {
+			close(doneCh)
+		})
+	}
+
+	streamID := fmt.Sprintf("stream_%d", time.Now().UnixNano())
+
+	if isSSE {
+		sseClient := streamclient.NewSSEClient(streamclient.SSEClientConfig{
+			StreamID:             streamID,
+			URL:                  req.URL,
+			Headers:              header,
+			AutoReconnect:        streamCfg.AutoReconnect,
+			MaxReconnectAttempts: streamCfg.MaxReconnectAttempts,
+			ReconnectInterval:    time.Duration(streamCfg.ReconnectIntervalMs) * time.Millisecond,
+			TLSConfig:            tlsConfig,
+			ProxyURL:             req.Settings.ProxyURL,
+			RingBuffer:           ring,
+			OnLog: func(entry types.StreamLogEntry) {
+				if entry.Direction == "receive" {
+					count := receivedCount.Add(1)
+					if streamCfg.MaxWaitMessages > 0 && int(count) >= streamCfg.MaxWaitMessages {
+						notifyDone()
+					}
+				}
+				if entry.Type == "close" || (entry.Type == "error" && entry.IsError) {
+					notifyDone()
+				}
+			},
+		})
+
+		if err := sseClient.Connect(streamCtx); err != nil {
+			return &types.ExecutionResult{
+				StatusCode: 0,
+				StatusText: "Connection Failed",
+				Headers:    make(map[string][]string),
+				StreamLogs: ring.GetAll(),
+				ExecutedAt: startTime,
+				Error:      err.Error(),
+			}, err
+		}
+
+		select {
+		case <-streamCtx.Done():
+		case <-doneCh:
+		}
+
+		_ = sseClient.Close()
+		status := sseClient.Status()
+		dur := time.Since(startTime)
+
+		logs := ring.GetAll()
+		var lastPayload string
+		for i := len(logs) - 1; i >= 0; i-- {
+			if logs[i].Direction == "receive" {
+				lastPayload = logs[i].Payload
+				break
+			}
+		}
+
+		return &types.ExecutionResult{
+			StatusCode:        200,
+			StatusText:        "OK",
+			Headers:           make(map[string][]string),
+			Body:              lastPayload,
+			Size:              int64(len(lastPayload)),
+			StreamLogs:        logs,
+			StreamCloseCode:   status.CloseCode,
+			StreamCloseReason: status.CloseReason,
+			StreamEvicted:     ring.EvictedCount(),
+			Timing: types.TimingMetrics{
+				TotalDurationMs: float64(dur.Milliseconds()),
+			},
+			ExecutedAt: startTime,
+		}, nil
+	}
+
+	// WebSocket
+	wsClient := streamclient.NewWSClient(streamclient.WSClientConfig{
+		StreamID:             streamID,
+		URL:                  req.URL,
+		Headers:              header,
+		Subprotocols:         streamCfg.Subprotocols,
+		AutoReconnect:        streamCfg.AutoReconnect,
+		MaxReconnectAttempts: streamCfg.MaxReconnectAttempts,
+		ReconnectInterval:    time.Duration(streamCfg.ReconnectIntervalMs) * time.Millisecond,
+		PingInterval:         time.Duration(streamCfg.PingIntervalMs) * time.Millisecond,
+		TLSConfig:            tlsConfig,
+		ProxyURL:             req.Settings.ProxyURL,
+		RingBuffer:           ring,
+		OnLog: func(entry types.StreamLogEntry) {
+			if entry.Direction == "receive" {
+				count := receivedCount.Add(1)
+				if streamCfg.MaxWaitMessages > 0 && int(count) >= streamCfg.MaxWaitMessages {
+					notifyDone()
+				}
+			}
+			if entry.Type == "close" {
+				notifyDone()
+			}
+		},
+	})
+
+	if err := wsClient.Connect(streamCtx); err != nil {
+		return &types.ExecutionResult{
+			StatusCode: 0,
+			StatusText: "Connection Failed",
+			Headers:    make(map[string][]string),
+			StreamLogs: ring.GetAll(),
+			ExecutedAt: startTime,
+			Error:      err.Error(),
+		}, err
+	}
+
+	// Send initial outgoing messages if configured
+	for _, msg := range streamCfg.OutgoingMessages {
+		_ = wsClient.Send(msg.Payload, msg.Type)
+	}
+
+	select {
+	case <-streamCtx.Done():
+	case <-doneCh:
+	}
+
+	_ = wsClient.Close(streamclient.CloseNormalClosure, "Execution completed")
+	status := wsClient.Status()
+	dur := time.Since(startTime)
+
+	logs := ring.GetAll()
+	var lastPayload string
+	for i := len(logs) - 1; i >= 0; i-- {
+		if logs[i].Direction == "receive" {
+			lastPayload = logs[i].Payload
+			break
+		}
+	}
+
+	return &types.ExecutionResult{
+		StatusCode:        200,
+		StatusText:        "OK",
+		Headers:           make(map[string][]string),
+		Body:              lastPayload,
+		Size:              int64(len(lastPayload)),
+		StreamLogs:        logs,
+		StreamCloseCode:   status.CloseCode,
+		StreamCloseReason: status.CloseReason,
+		StreamEvicted:     ring.EvictedCount(),
+		Timing: types.TimingMetrics{
+			TotalDurationMs: float64(dur.Milliseconds()),
+		},
+		ExecutedAt: startTime,
+	}, nil
 }

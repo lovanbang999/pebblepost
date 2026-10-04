@@ -119,6 +119,53 @@ export interface GrpcServiceInfo {
   methods: GrpcMethodInfo[]
 }
 
+export interface WebSocketMessage {
+  id: string
+  name?: string
+  payload: string
+  type?: 'text' | 'binary' | 'ping' | 'pong'
+}
+
+export interface StreamDefinition {
+  subprotocols?: string[]
+  autoReconnect?: boolean
+  maxReconnectAttempts?: number
+  reconnectIntervalMs?: number
+  pingIntervalMs?: number
+  maxLogEntries?: number
+  maxLogBytes?: number
+  outgoingMessages?: WebSocketMessage[]
+  timeoutMs?: number
+  maxWaitMessages?: number
+}
+
+export interface StreamLogEntry {
+  id: string
+  index: number
+  direction: 'send' | 'receive' | 'system'
+  type: 'text' | 'binary' | 'ping' | 'pong' | 'open' | 'close' | 'error'
+  timestamp: string
+  payload: string
+  size: number
+  closeCode?: number
+  closeReason?: string
+  isError?: boolean
+}
+
+export interface StreamSessionStatus {
+  streamId: string
+  protocol: 'websocket' | 'sse'
+  state: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+  url: string
+  subprotocol?: string
+  reconnectCount: number
+  totalSent: number
+  totalReceived: number
+  evictedCount: number
+  closeCode?: number
+  closeReason?: string
+}
+
 export interface RequestDefinition {
   $schema?: string
   schemaVersion?: number
@@ -127,14 +174,15 @@ export interface RequestDefinition {
   name: string
   description?: string
   order?: number
-  protocol?: 'http' | 'grpc'
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'GRPC' | string
+  protocol?: 'http' | 'grpc' | 'websocket' | 'sse'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'GRPC' | 'WS' | 'SSE' | string
   url: string
   headers?: KeyValue[]
   params?: KeyValue[]
   auth: AuthDefinition
   body: BodyDefinition
   grpc?: GrpcDefinition
+  stream?: StreamDefinition
   scripts: ScriptDefinition
   settings: SettingDefinition
 }
@@ -237,6 +285,10 @@ export interface ExecutionResult {
   grpcMetadata?: Record<string, string[]>
   grpcTrailers?: Record<string, string[]>
   grpcMessages?: GrpcStreamMessage[]
+  streamLogs?: StreamLogEntry[]
+  streamCloseCode?: number
+  streamCloseReason?: string
+  streamEvicted?: number
   tests: TestAssertionResult[]
   logs: string[]
   consoleLogs?: ConsoleLogEntry[]

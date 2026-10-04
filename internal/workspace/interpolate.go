@@ -463,6 +463,44 @@ func (in *Interpolator) InterpolateGrpc(g *types.GrpcDefinition, vars map[string
 	}
 }
 
+// InterpolateStream interpolates variables in a StreamDefinition.
+func (in *Interpolator) InterpolateStream(s *types.StreamDefinition, vars map[string]string) *types.StreamDefinition {
+	if s == nil {
+		return nil
+	}
+	var subprotocols []string
+	if len(s.Subprotocols) > 0 {
+		subprotocols = make([]string, len(s.Subprotocols))
+		for i, sp := range s.Subprotocols {
+			subprotocols[i] = in.InterpolateString(sp, vars)
+		}
+	}
+	var messages []types.WebSocketMessage
+	if len(s.OutgoingMessages) > 0 {
+		messages = make([]types.WebSocketMessage, len(s.OutgoingMessages))
+		for i, m := range s.OutgoingMessages {
+			messages[i] = types.WebSocketMessage{
+				ID:      m.ID,
+				Name:    in.InterpolateString(m.Name, vars),
+				Payload: in.InterpolateString(m.Payload, vars),
+				Type:    m.Type,
+			}
+		}
+	}
+	return &types.StreamDefinition{
+		Subprotocols:         subprotocols,
+		AutoReconnect:        s.AutoReconnect,
+		MaxReconnectAttempts: s.MaxReconnectAttempts,
+		ReconnectIntervalMs:  s.ReconnectIntervalMs,
+		PingIntervalMs:       s.PingIntervalMs,
+		MaxLogEntries:        s.MaxLogEntries,
+		MaxLogBytes:          s.MaxLogBytes,
+		OutgoingMessages:     messages,
+		TimeoutMs:            s.TimeoutMs,
+		MaxWaitMessages:      s.MaxWaitMessages,
+	}
+}
+
 // InterpolateRequest produces a deep copy of RequestDefinition with all variables resolved.
 func (in *Interpolator) InterpolateRequest(req *types.RequestDefinition, vars map[string]string) *types.RequestDefinition {
 	if req == nil {
@@ -486,6 +524,7 @@ func (in *Interpolator) InterpolateRequest(req *types.RequestDefinition, vars ma
 		Auth:          in.InterpolateAuth(req.Auth, vars),
 		Body:          in.InterpolateBody(req.Body, vars),
 		Grpc:          in.InterpolateGrpc(req.Grpc, vars),
+		Stream:        in.InterpolateStream(req.Stream, vars),
 		Scripts:       req.Scripts, // Scripts are executed at runtime, not interpolated
 		Settings:      in.InterpolateSettings(req.Settings, vars),
 	}

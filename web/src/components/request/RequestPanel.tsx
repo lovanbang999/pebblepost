@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { GrpcRequestPanel } from "../grpc/GrpcRequestPanel";
-import type { GrpcStreamMessage, ExecutionResult } from "../../types";
+import { StreamRequestPanel } from "../stream/StreamRequestPanel";
+import type { GrpcStreamMessage, ExecutionResult, StreamLogEntry, StreamSessionStatus } from "../../types";
 import {
   Send,
   Loader2,
@@ -18,6 +19,8 @@ import {
   Lock,
   Clock,
   RotateCcw,
+  Radio,
+  WifiOff,
 } from "lucide-react";
 import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
@@ -100,6 +103,216 @@ export function RequestPanel() {
   const [pendingUndefinedVars, setPendingUndefinedVars] = useState<string[]>([]);
   const [isEnvManagerOpen, setIsEnvManagerOpen] = useState(false);
   const streamAbortRef = useRef<{ abortController: AbortController; streamId: string } | null>(null);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<StreamSessionStatus | null>(null);
+
+  const handleStreamDisconnect = async () => {
+    if (streamAbortRef.current) {
+      const { streamId, abortController } = streamAbortRef.current;
+      abortController.abort();
+      try {
+        await fetch("/api/stream/disconnect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ streamId }),
+        });
+      } catch {
+        // ignore
+      }
+      streamAbortRef.current = null;
+    }
+    setIsStreaming(false);
+  };
+
+  const handleStreamConnect = async () => {
+    if (isStreaming) {
+      await handleStreamDisconnect();
+      return;
+    }
+
+    if (!activeRequest) return;
+
+    const undefinedVars = findUndefinedVariablesInRequest(activeRequest, availableMap);
+    if (undefinedVars.length > 0) {
+      setPendingUndefinedVars(undefinedVars);
+      setUndefinedDialogOpen(true);
+      return;
+    }
+
+    setIsStreaming(true);
+    const streamId = activeRequest.id || `stream_${Date.now()}`;
+    const abortController = new AbortController();
+    streamAbortRef.current = { abortController, streamId };
+
+    const { workspacePath, activeEnv } = useWorkspaceStore.getState();
+    const startTime = performance.now();
+
+    try {
+      const res = await fetch("/api/stream/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
+        body: JSON.stringify({
+          streamId,
+          workspacePath: workspacePath || undefined,
+          environmentName: activeEnv || undefined,
+          path: activeFilePath || undefined,
+          request: activeRequest,
+          trusted: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `Server responded with ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("Response body is unreadable");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentLogs: StreamLogEntry[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+
+        for (const block of blocks) {
+          if (!block.trim()) continue;
+          let event = "message";
+          let data = "";
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event: ")) {
+              event = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              data = line.slice(6).trim();
+            }
+          }
+
+          if (event === "status" && data) {
+            try {
+              const status: StreamSessionStatus = JSON.parse(data);
+              setStreamStatus(status);
+              if (status.state === "disconnected") {
+                setIsStreaming(false);
+              }
+              setLastResult((prev) => ({
+                ...(prev || {
+                  statusCode: 200,
+                  statusText: "Stream Connected",
+                  headers: {},
+                  body: "",
+                  size: 0,
+                  timing: {
+                    dnsLookupMs: 0,
+                    tcpConnectMs: 0,
+                    tlsHandshakeMs: 0,
+                    ttfbMs: 0,
+                    downloadMs: 0,
+                    totalDurationMs: performance.now() - startTime,
+                  },
+                  tests: [],
+                  logs: [],
+                  executedAt: new Date().toISOString(),
+                }),
+                streamCloseCode: status.closeCode,
+                streamCloseReason: status.closeReason,
+                streamEvicted: status.evictedCount,
+              }));
+            } catch {
+              // ignore
+            }
+          } else if (event === "log" && data) {
+            try {
+              const logEntry: StreamLogEntry = JSON.parse(data);
+              currentLogs = [...currentLogs, logEntry];
+              setLastResult((prev) => ({
+                ...(prev || {
+                  statusCode: 200,
+                  statusText: "Streaming",
+                  headers: {},
+                  body: "",
+                  size: 0,
+                  timing: {
+                    dnsLookupMs: 0,
+                    tcpConnectMs: 0,
+                    tlsHandshakeMs: 0,
+                    ttfbMs: 0,
+                    downloadMs: 0,
+                    totalDurationMs: performance.now() - startTime,
+                  },
+                  tests: [],
+                  logs: [],
+                  executedAt: new Date().toISOString(),
+                }),
+                streamLogs: currentLogs,
+              }));
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return;
+      }
+      const errMsg = err instanceof Error ? err.message : String(err);
+      setLastResult((prev) => ({
+        ...(prev || {
+          statusCode: 500,
+          statusText: "Stream Error",
+          headers: {},
+          body: "",
+          size: 0,
+          timing: {
+            dnsLookupMs: 0,
+            tcpConnectMs: 0,
+            tlsHandshakeMs: 0,
+            ttfbMs: 0,
+            downloadMs: 0,
+            totalDurationMs: performance.now() - startTime,
+          },
+          tests: [{ name: "Stream Connection", passed: false, message: errMsg }],
+          logs: ["Error connecting stream: " + errMsg],
+          executedAt: new Date().toISOString(),
+        }),
+        error: errMsg,
+      }));
+    } finally {
+      setIsStreaming(false);
+    }
+  };
+
+  const handleStreamSend = async (
+    payload: string,
+    type: "text" | "binary" | "ping" | "pong" = "text",
+  ) => {
+    const streamId = streamAbortRef.current?.streamId || activeRequest?.id;
+    if (!streamId) return;
+    try {
+      const res = await fetch("/api/stream/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          streamId,
+          payload,
+          type,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to send message");
+      }
+    } catch (err: unknown) {
+      console.error("Failed to send stream message:", err);
+    }
+  };
 
   const { environments, activeEnv } = useWorkspaceStore();
   const availableMap = useMemo(() => {
@@ -577,10 +790,30 @@ export function RequestPanel() {
           onValueChange={(val) => {
             if (typeof val !== "string") return;
             const isGrpcVal = val === "GRPC";
+            const isWsVal = val === "WS";
+            const isSseVal = val === "SSE";
+            const isStreamVal = isWsVal || isSseVal;
+
             updateActiveRequest((prev) => ({
               ...prev,
               method: val as RequestDefinition["method"],
-              protocol: isGrpcVal ? "grpc" : (prev.protocol === "grpc" ? "http" : prev.protocol),
+              protocol: isGrpcVal
+                ? "grpc"
+                : isWsVal
+                ? "websocket"
+                : isSseVal
+                ? "sse"
+                : (prev.protocol === "grpc" || prev.protocol === "websocket" || prev.protocol === "sse")
+                ? "http"
+                : prev.protocol,
+              url:
+                isWsVal && (!prev.url || prev.url.startsWith("http"))
+                  ? (prev.url ? prev.url.replace(/^http/, "ws") : "ws://localhost:8080/ws")
+                  : isSseVal && (!prev.url || prev.url.startsWith("ws"))
+                  ? (prev.url ? prev.url.replace(/^ws/, "http") : "http://localhost:8080/events")
+                  : isGrpcVal && !prev.url
+                  ? "localhost:50051"
+                  : prev.url,
               grpc: isGrpcVal
                 ? prev.grpc || {
                     address: prev.url || "localhost:50051",
@@ -591,9 +824,23 @@ export function RequestPanel() {
                     useTls: false,
                   }
                 : prev.grpc,
+              stream: isStreamVal
+                ? prev.stream || {
+                    autoReconnect: true,
+                    maxReconnectAttempts: 5,
+                    reconnectIntervalMs: 1000,
+                    pingIntervalMs: isWsVal ? 30000 : 0,
+                    maxLogEntries: 1000,
+                    maxLogBytes: 5 * 1024 * 1024,
+                    outgoingMessages: [],
+                    subprotocols: [],
+                  }
+                : prev.stream,
             }));
             if (isGrpcVal) {
               setActiveSubTab("grpc");
+            } else if (isStreamVal) {
+              setActiveSubTab("stream");
             }
           }}
         >
@@ -615,6 +862,8 @@ export function RequestPanel() {
                 "HEAD",
                 "OPTIONS",
                 "GRPC",
+                "WS",
+                "SSE",
               ] as const
             ).map((m) => (
               <SelectItem key={m} value={m} className="font-mono font-bold">
@@ -657,43 +906,88 @@ export function RequestPanel() {
           </Button>
         </Tooltip>
 
-        {/* Send / Cancel Button */}
-        {isExecuting && (activeRequest.method === "GRPC" || activeRequest.protocol === "grpc") ? (
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handleCancelStream}
-            className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm animate-pulse"
-          >
-            Cancel
-          </Button>
-        ) : (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleSend}
-            disabled={isExecuting}
-            className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm"
-          >
-            {isExecuting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        {/* Send / Cancel / Connect / Disconnect Button */}
+        {(() => {
+          const isStream =
+            activeRequest.method === "WS" ||
+            activeRequest.method === "SSE" ||
+            activeRequest.protocol === "websocket" ||
+            activeRequest.protocol === "sse";
+
+          if (isStream) {
+            return isStreaming ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleStreamDisconnect}
+                className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm"
+              >
+                <WifiOff className="w-3.5 h-3.5" />
+                Disconnect
+              </Button>
             ) : (
-              <Send className="w-3.5 h-3.5" />
-            )}
-            Send
-          </Button>
-        )}
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleStreamConnect}
+                className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm bg-cyan-600 hover:bg-cyan-700 text-white"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                Connect
+              </Button>
+            );
+          }
+
+          if (isExecuting && (activeRequest.method === "GRPC" || activeRequest.protocol === "grpc")) {
+            return (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleCancelStream}
+                className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm animate-pulse"
+              >
+                Cancel
+              </Button>
+            );
+          }
+
+          return (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={handleSend}
+              disabled={isExecuting}
+              className="h-8 px-4 gap-1.5 font-semibold shrink-0 shadow-sm"
+            >
+              {isExecuting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              Send
+            </Button>
+          );
+        })()}
       </div>
 
       {/* Sub Tabs */}
       {(() => {
         const isGrpc = activeRequest.method === "GRPC" || activeRequest.protocol === "grpc";
+        const isStream =
+          activeRequest.method === "WS" ||
+          activeRequest.method === "SSE" ||
+          activeRequest.protocol === "websocket" ||
+          activeRequest.protocol === "sse";
         const subTabs = isGrpc
           ? (["grpc", "scripts", "settings"] as const)
+          : isStream
+          ? (["stream", "headers", "scripts", "settings"] as const)
           : (["params", "headers", "auth", "body", "scripts", "settings"] as const);
         const resolvedActiveTab =
           isGrpc && !(subTabs as readonly string[]).includes(activeTab)
             ? "grpc"
+            : isStream && !(subTabs as readonly string[]).includes(activeTab)
+            ? "stream"
             : activeTab;
 
         return (
@@ -707,7 +1001,13 @@ export function RequestPanel() {
             <TabsList>
               {subTabs.map((tab) => (
                 <TabsTrigger key={tab} value={tab} className="capitalize">
-                  {tab === "grpc" ? "gRPC Config" : tab}
+                  {tab === "grpc"
+                    ? "gRPC Config"
+                    : tab === "stream"
+                    ? activeRequest.protocol === "sse" || activeRequest.method === "SSE"
+                      ? "SSE Config"
+                      : "WebSocket"
+                    : tab}
                   {tab === "headers" &&
                     (activeRequest.headers?.length || 0) > 0 && (
                       <Badge
@@ -730,6 +1030,17 @@ export function RequestPanel() {
                     onChange={updateActiveRequest}
                     isExecuting={isExecuting}
                     onCancel={handleCancelStream}
+                  />
+                </TabsContent>
+              )}
+              {isStream && (
+                <TabsContent value="stream" className="h-[calc(100vh-230px)] min-h-112.5 m-0 -m-3">
+                  <StreamRequestPanel
+                    request={activeRequest}
+                    onChange={updateActiveRequest}
+                    isStreaming={isStreaming}
+                    streamStatus={streamStatus}
+                    onSend={handleStreamSend}
                   />
                 </TabsContent>
               )}
