@@ -1,0 +1,13 @@
+.git
+.github
+.githooks
+.agents
+web/node_modules
+web/dist
+build
+data
+testdata
+*.log
+*.out
+*.exe
+*.bin

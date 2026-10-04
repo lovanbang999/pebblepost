@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+PackageIdentifier: lovanbang999.pebblepost
+PackageVersion: 0.2.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0
+---
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: lovanbang999.pebblepost
+PackageVersion: 0.2.0
+PackageLocale: en-US
+Publisher: PebblePost
+PublisherUrl: https://github.com/lovanbang999/pebblepost
+PackageName: PebblePost
+PackageUrl: https://github.com/lovanbang999/pebblepost
+License: MIT
+LicenseUrl: https://github.com/lovanbang999/pebblepost/blob/main/LICENSE
+ShortDescription: Lightweight, Git-friendly API client and runner for modern developers
+Tags:
+  - api
+  - rest
+  - grpc
+  - websocket
+  - sse
+  - postman-alternative
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
+---
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: lovanbang999.pebblepost
+PackageVersion: 0.2.0
+Installers:
+  - Architecture: x64
+    InstallerType: zip
+    InstallerUrl: https://github.com/lovanbang999/pebblepost/releases/download/v0.2.0/pebblepost_0.2.0_windows_amd64.zip
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: pebblepost.exe
+        PortableCommandAlias: pebblepost
+ManifestType: installer
+ManifestVersion: 1.6.0

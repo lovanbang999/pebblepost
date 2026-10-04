@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 
+	"pebblepost/internal/autoupdate"
 	"pebblepost/internal/docs"
 	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
@@ -28,6 +29,7 @@ type App struct {
 	HttpClient     httpclient.Client
 	ScriptEngine   *scripting.Engine
 	HistorySvc     *history.Store
+	UpdateSvc      *autoupdate.Service
 }
 
 // ServeHTTP implements http.Handler, running requests through the full
@@ -58,6 +60,8 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 		return nil, err
 	}
 
+	updateSvc := autoupdate.NewService("0.2.0", dataDir)
+
 	a := &App{
 		Mux:            mux,
 		DataDir:        dataDir,
@@ -68,6 +72,7 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 		HttpClient:     client,
 		ScriptEngine:   scriptEngine,
 		HistorySvc:     historySvc,
+		UpdateSvc:      updateSvc,
 	}
 
 	a.registerRoutes()
@@ -94,14 +99,16 @@ func (a *App) Close() error {
 
 func (a *App) registerRoutes() {
 	// Health check (no auth required – checked in TokenMiddleware)
-	a.Mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":  "ok",
-			"version": "0.1.0",
+			"version": "0.2.0",
 			"name":    "PebblePost",
 		})
-	})
+	}
+	a.Mux.HandleFunc("/api/health", healthHandler)
+	a.Mux.HandleFunc("/health", healthHandler)
 
 	// Workspace & Collection endpoints
 	wsHandler := workspace.NewHandler(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
@@ -122,4 +129,10 @@ func (a *App) registerRoutes() {
 	// Documentation endpoints
 	docsHandler := docs.NewHandler(docs.NewGenerator())
 	docsHandler.RegisterRoutes(a.Mux)
+
+	// Auto-update endpoints
+	if a.UpdateSvc != nil {
+		updateHandler := autoupdate.NewHandler(a.UpdateSvc)
+		updateHandler.RegisterRoutes(a.Mux)
+	}
 }

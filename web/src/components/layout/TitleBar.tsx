@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { FolderOpen, Layers, Search, Sun, Moon, Folder, Cookie, SlidersHorizontal } from "lucide-react";
+import { useState, useEffect } from "react";
+import { FolderOpen, Layers, Search, Sun, Moon, Folder, Cookie, SlidersHorizontal, ArrowUpCircle } from "lucide-react";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -15,6 +15,8 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { UpdateDialog } from "../common/UpdateDialog";
+import type { UpdateInfo } from "../../types";
 
 interface TitleBarProps {
   onOpenQuickSearch?: () => void
@@ -56,6 +58,9 @@ export function TitleBar({
   const [isMaximised, setIsMaximised] = useState(true);
   const [isOpenWorkspaceModalOpen, setIsOpenWorkspaceModalOpen] = useState(false);
   const [inputWorkspacePath, setInputWorkspacePath] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [isUpdateDialogOpen, setIsUpdateDialogOpen] = useState(false);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const {
     theme,
     toggleTheme,
@@ -65,6 +70,25 @@ export function TitleBar({
     setActiveEnv,
     setWorkspacePath,
   } = useWorkspaceStore();
+
+  const fetchUpdateCheck = async (force: boolean = false) => {
+    setIsCheckingUpdate(true);
+    try {
+      const res = await fetch(`/api/update/check${force ? "?force=true" : ""}`);
+      if (res.ok) {
+        const data = await res.json();
+        setUpdateInfo(data);
+      }
+    } catch (err) {
+      console.error("Failed to check for updates:", err);
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUpdateCheck(false);
+  }, []);
 
   const handleOpenFolder = async () => {
     const app = getWailsApp();
@@ -93,9 +117,21 @@ export function TitleBar({
           />
           <span className="font-semibold text-xs text-zinc-900 dark:text-zinc-100 tracking-tight flex items-center gap-1.5">
             PebblePost
-            <Badge variant="outline" className="text-[9px] font-mono lowercase tracking-normal py-0 px-1 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800">
-              v0.1
-            </Badge>
+            <button
+              onClick={() => setIsUpdateDialogOpen(true)}
+              className="hover:opacity-80 transition-opacity cursor-pointer flex items-center gap-1"
+              title="Click to check updates and releases"
+            >
+              <Badge variant="outline" className="text-[9px] font-mono lowercase tracking-normal py-0 px-1 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-800">
+                v0.2.0
+              </Badge>
+              {updateInfo?.hasUpdate && (
+                <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-medium py-0 px-1.5 gap-1 shadow-xs animate-pulse">
+                  <ArrowUpCircle className="w-2.5 h-2.5" />
+                  v{updateInfo.latestVersion}
+                </Badge>
+              )}
+            </button>
           </span>
         </div>
 
@@ -304,6 +340,15 @@ export function TitleBar({
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Software Update Modal & Preferences */}
+      <UpdateDialog
+        isOpen={isUpdateDialogOpen}
+        onClose={() => setIsUpdateDialogOpen(false)}
+        updateInfo={updateInfo}
+        onRefresh={() => fetchUpdateCheck(true)}
+        isLoading={isCheckingUpdate}
+      />
     </header>
   );
 }

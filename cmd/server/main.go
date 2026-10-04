@@ -13,14 +13,28 @@ import (
 	"pebblepost/internal/app"
 )
 
+var (
+	version = "0.2.0"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "source"
+)
+
 func main() {
-	host := flag.String("host", envOr("PEBBLE_HOST", "127.0.0.1"),
-		"Interface to listen on. Use 0.0.0.0 to expose to the network (requires --token or PEBBLE_TOKEN).")
+	showVersion := flag.Bool("version", false, "Show server version")
+	host := flag.String("host", envOr("PEBBLEPOST_HOST", envOr("PEBBLE_HOST", "127.0.0.1")),
+		"Interface to listen on. Use 0.0.0.0 to expose to the network (requires --token or PEBBLEPOST_TOKEN).")
 	port := flag.String("port", envOr("PORT", "8080"), "Port to listen on.")
-	token := flag.String("token", os.Getenv("PEBBLE_TOKEN"),
+	tokenEnv := envOr("PEBBLEPOST_TOKEN", os.Getenv("PEBBLE_TOKEN"))
+	token := flag.String("token", tokenEnv,
 		"Bearer token for API authentication. Generated automatically in loopback mode.")
-	dataDir := flag.String("data-dir", envOr("DATA_DIR", "./data"), "Data directory.")
+	dataDir := flag.String("data-dir", envOr("PEBBLEPOST_DATA_DIR", envOr("DATA_DIR", "./data")), "Data directory.")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("PebblePost Server v%s (commit: %s, date: %s, built by: %s)\n", version, commit, date, builtBy)
+		os.Exit(0)
+	}
 
 	authToken := *token
 
@@ -29,7 +43,7 @@ func main() {
 	if !isLoopback {
 		// Binding to a network interface is dangerous without authentication.
 		if authToken == "" {
-			log.Fatal("ERROR: --token or PEBBLE_TOKEN is required when --host is not 127.0.0.1.\n" +
+			log.Fatal("ERROR: --token or PEBBLEPOST_TOKEN (or PEBBLE_TOKEN) is required when --host is not 127.0.0.1.\n" +
 				"Generate one with: openssl rand -hex 16")
 		}
 	}
