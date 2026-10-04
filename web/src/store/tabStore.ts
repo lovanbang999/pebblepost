@@ -1,10 +1,10 @@
 import { create } from 'zustand'
-import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry, RunnerTabConfig } from '../types'
+import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry, RunnerTabConfig, DocsTabConfig } from '../types'
 
-export type TabType = 'request' | 'folder' | 'history' | 'runner'
+export type TabType = 'request' | 'folder' | 'history' | 'runner' | 'docs'
 
 export interface RequestTab {
-  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id or "runner:" + path
+  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id or "runner:" + path or "docs:" + path
   filePath: string
   title: string
   type?: TabType
@@ -14,11 +14,12 @@ export interface RequestTab {
   isReadOnly?: boolean
   historyEntry?: HistoryEntry
   runnerConfig?: RunnerTabConfig
+  docsConfig?: DocsTabConfig
   request?: RequestDefinition
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
   lastResult: ExecutionResult | null
-  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc' | 'stream'
+  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc' | 'stream' | 'docs' | 'examples'
   scrollPosition?: number
 }
 
@@ -33,6 +34,7 @@ interface TabState {
   openFolderTab: (folderPath: string, folder?: FolderDefinition, isPreview?: boolean) => Promise<void>
   openHistoryTab: (entry: HistoryEntry) => void
   openRunnerTab: (folderPath?: string, folderName?: string) => void
+  openDocsTab: (folderPath?: string, folderName?: string) => void
   restoreRequestFromHistory: (entry: HistoryEntry) => void
   pinTab: (tabId: string) => void
   closeTab: (tabId: string, force?: boolean) => boolean
@@ -325,6 +327,45 @@ export const useTabStore = create<TabState>((set, get) => ({
       savedSnapshot: '',
       lastResult: null,
       activeSubTab: 'params',
+      scrollPosition: 0,
+    }
+
+    set((state) => ({
+      tabs: [...state.tabs, newTab],
+      activeTabId: newTab.id,
+    }))
+  },
+
+  openDocsTab: (folderPath?: string, folderName?: string) => {
+    const tabId = folderPath ? `docs:${folderPath}` : 'docs:workspace'
+    const { tabs } = get()
+    const existing = tabs.find((t) => t.id === tabId)
+    if (existing) {
+      set({ activeTabId: tabId })
+      return
+    }
+
+    const title = folderName
+      ? `Docs: ${folderName}`
+      : folderPath
+      ? `Docs: ${folderPath.split('/').pop()}`
+      : 'API Documentation'
+
+    const newTab: RequestTab = {
+      id: tabId,
+      filePath: folderPath || '',
+      title,
+      type: 'docs',
+      isPreview: false,
+      isDirty: false,
+      isReadOnly: true,
+      docsConfig: {
+        folderPath,
+        folderName,
+      },
+      savedSnapshot: '',
+      lastResult: null,
+      activeSubTab: 'docs',
       scrollPosition: 0,
     }
 

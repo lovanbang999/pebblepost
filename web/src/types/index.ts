@@ -166,6 +166,19 @@ export interface StreamSessionStatus {
   closeReason?: string
 }
 
+export interface ExampleResponse {
+  id: string
+  name: string
+  statusCode: number
+  statusText?: string
+  headers?: KeyValue[]
+  body?: string
+  contentType?: string
+  durationMs?: number
+  size?: number
+  savedAt?: string
+}
+
 export interface RequestDefinition {
   $schema?: string
   schemaVersion?: number
@@ -185,6 +198,7 @@ export interface RequestDefinition {
   stream?: StreamDefinition
   scripts: ScriptDefinition
   settings: SettingDefinition
+  examples?: ExampleResponse[]
 }
 
 export interface EnvironmentVariable {
@@ -383,6 +397,11 @@ export interface RunSummary {
 }
 
 export interface RunnerTabConfig {
+  folderPath?: string
+  folderName?: string
+}
+
+export interface DocsTabConfig {
   folderPath?: string
   folderName?: string
 }

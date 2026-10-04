@@ -2,7 +2,9 @@ package impexp
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -60,6 +62,12 @@ func ExportOpenAPI(title string, version string, items []ImportedItem) ([]byte, 
 		}
 
 		operation := buildOpenAPIOperation(req, openAPIPath)
+		if it.RelPath != "" {
+			parts := strings.Split(filepath.ToSlash(it.RelPath), "/")
+			if len(parts) > 1 && parts[0] != "" {
+				operation["tags"] = []string{parts[0]}
+			}
+		}
 		pathsMap[openAPIPath][method] = operation
 	}
 
@@ -130,6 +138,48 @@ func buildOpenAPIOperation(req *types.RequestDefinition, path string) map[string
 	}
 	if req.Description != "" {
 		op["description"] = req.Description
+	}
+
+	if len(req.Examples) > 0 {
+		responses := make(map[string]any)
+		for _, ex := range req.Examples {
+			statusKey := fmt.Sprintf("%d", ex.StatusCode)
+			if statusKey == "0" {
+				statusKey = "default"
+			}
+			desc := ex.StatusText
+			if desc == "" {
+				desc = ex.Name
+			}
+			if desc == "" {
+				desc = "Example response"
+			}
+
+			ct := ex.ContentType
+			if ct == "" {
+				ct = "application/json"
+			}
+
+			respObj := map[string]any{
+				"description": desc,
+			}
+			if ex.Body != "" {
+				var parsedJSON any
+				var exampleVal any = ex.Body
+				if json.Unmarshal([]byte(ex.Body), &parsedJSON) == nil {
+					exampleVal = parsedJSON
+				}
+				respObj["content"] = map[string]any{
+					ct: map[string]any{
+						"example": exampleVal,
+					},
+				}
+			}
+			responses[statusKey] = respObj
+		}
+		if len(responses) > 0 {
+			op["responses"] = responses
+		}
 	}
 
 	var params []map[string]any

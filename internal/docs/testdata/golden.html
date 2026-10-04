@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PetStore API - PebblePost</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #09090b;
+      --muted: #71717a;
+      --border: #e4e4e7;
+      --sidebar-bg: #f4f4f5;
+      --card-bg: #ffffff;
+      --code-bg: #18181b;
+      --code-fg: #f4f4f5;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #09090b;
+        --fg: #fafafa;
+        --muted: #a1a1aa;
+        --border: #27272a;
+        --sidebar-bg: #111113;
+        --card-bg: #18181b;
+        --code-bg: #000000;
+        --code-fg: #f4f4f5;
+        --accent: #3b82f6;
+        --accent-hover: #60a5fa;
+      }
+    }
+    [data-theme="light"] {
+      --bg: #ffffff;
+      --fg: #09090b;
+      --muted: #71717a;
+      --border: #e4e4e7;
+      --sidebar-bg: #f4f4f5;
+      --card-bg: #ffffff;
+      --code-bg: #18181b;
+      --code-fg: #f4f4f5;
+      --accent: #2563eb;
+    }
+    [data-theme="dark"] {
+      --bg: #09090b;
+      --fg: #fafafa;
+      --muted: #a1a1aa;
+      --border: #27272a;
+      --sidebar-bg: #111113;
+      --card-bg: #18181b;
+      --code-bg: #000000;
+      --code-fg: #f4f4f5;
+      --accent: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg);
+      color: var(--fg);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      line-height: 1.5;
+    }
+    /* Sidebar */
+    .sidebar {
+      width: 300px;
+      background-color: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .sidebar-desc {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .search-box {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .search-input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card-bg);
+      color: var(--fg);
+      font-size: 13px;
+    }
+    .sidebar-nav {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 8px;
+    }
+    .nav-folder {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 8px 8px 4px 8px;
+      margin-top: 8px;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      text-decoration: none;
+      color: var(--fg);
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .nav-link:hover {
+      background-color: rgba(125, 125, 125, 0.1);
+    }
+    .theme-toggle-container {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+    .theme-btn {
+      background: none;
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      border-radius: 4px;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    /* Main Content */
+    .content-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px 48px;
+      max-width: 1000px;
+    }
+    .doc-section {
+      margin-bottom: 48px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 32px;
+    }
+    .section-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .endpoint-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .endpoint-url {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      background: var(--sidebar-bg);
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      display: inline-block;
+      margin-bottom: 16px;
+    }
+    .badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .badge-get { background: #dcfce7; color: #15803d; }
+    .badge-post { background: #dbeafe; color: #1d4ed8; }
+    .badge-put { background: #fef9c3; color: #a16207; }
+    .badge-patch { background: #f3e8ff; color: #7e22ce; }
+    .badge-delete { background: #fee2e2; color: #b91c1c; }
+    .badge-grpc { background: #fce7f3; color: #be185d; }
+    .badge-ws { background: #e0e7ff; color: #4338ca; }
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+    .table th, .table td {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    .table th {
+      background: var(--sidebar-bg);
+      font-weight: 600;
+    }
+    /* Tabs & Code Snippets */
+    .tabs-container {
+      margin: 16px 0;
+      background: var(--code-bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .tab-header {
+      display: flex;
+      background: rgba(255, 255, 255, 0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 0 8px;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: #a1a1aa;
+      padding: 8px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      font-family: var(--font-sans);
+    }
+    .tab-btn.active {
+      color: #fff;
+      border-bottom-color: var(--accent);
+      font-weight: 600;
+    }
+    .code-wrapper {
+      position: relative;
+    }
+    .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255, 255, 255, 0.15);
+      border: none;
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: rgba(255, 255, 255, 0.25); }
+    pre {
+      padding: 16px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      color: var(--code-fg);
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">PetStore API</div>
+      <div class="sidebar-desc"></div>
+    </div>
+    <div class="search-box">
+      <input type="text" class="search-input" id="search" placeholder="Search endpoints..." onkeyup="filterNav()">
+    </div>
+    <div class="sidebar-nav" id="sidebar-nav">
+<div class="nav-folder">Users API</div>
+<a href="#get-get-user-details" class="nav-link"><span class="badge badge-get">GET</span><span>Get User Details</span></a>
+<a href="#post-create-new-user" class="nav-link"><span class="badge badge-post">POST</span><span>Create New User</span></a>
+<div class="nav-folder">example</div>
+<a href="#get-get-started-httpbin" class="nav-link"><span class="badge badge-get">GET</span><span>Get Started (HTTPBin)</span></a>
+
+    </div>
+    <div class="theme-toggle-container">
+      <span>Theme</span>
+      <button class="theme-btn" onclick="toggleTheme()">Toggle Dark/Light</button>
+    </div>
+  </div>
+
+  <div class="content-area">
+<div class="doc-section" id="get-get-user-details">
+<div class="endpoint-header"><span class="badge badge-get">GET</span><h2 class="section-title">Get User Details</h2></div>
+<p style="margin-bottom: 16px; color: var(--muted);">Fetch a specific user profile by user ID.</p>
+<div class="endpoint-url">GET https://api.petstore.com/v1/users/:id</div>
+<h4 style="margin-top: 16px;">Query Parameters</h4>
+<table class="table"><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>
+<tr><td><code>include_orders</code></td><td>true</td></tr>
+</tbody></table>
+<h4 style="margin-top: 16px;">Headers</h4>
+<table class="table"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>
+<tr><td><code>Accept</code></td><td>application/json</td></tr>
+</tbody></table>
+<h4 style="margin-top: 24px;">Code Snippets</h4>
+<div class="tabs-container">
+  <div class="tab-header">
+    <button class="tab-btn active" onclick="selectTab(this, 'get-get-user-details_curl')">cURL</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-user-details_go')">Go</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-user-details_node')">Node.js</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-user-details_python')">Python</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-user-details_csharp')">C#</button>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-user-details_curl" style="display: block;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>curl -X GET &#39;https://api.petstore.com/v1/users/:id?include_orders=true&#39; \
+  -H &#39;Authorization: Bearer sample_bearer_token&#39; \
+  -H &#39;Accept: application/json&#39; \
+  --insecure \
+  --no-location</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-user-details_go" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>package main
+
+import (
+	&#34;fmt&#34;
+	&#34;io&#34;
+	&#34;net/http&#34;
+	&#34;strings&#34;
+	&#34;time&#34;
+)
+
+func main() {
+	req, err := http.NewRequest(&#34;GET&#34;, &#34;https://api.petstore.com/v1/users/:id?include_orders=true&#34;, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Set(&#34;Authorization&#34;, &#34;Bearer sample_bearer_token&#34;)
+	req.Header.Set(&#34;Accept&#34;, &#34;application/json&#34;)
+
+	client := &amp;http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Printf(&#34;Status: %s\n%s\n&#34;, resp.Status, respBody)
+}</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-user-details_node" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>// Node.js 18+ built-in fetch
+const response = await fetch(&#34;https://api.petstore.com/v1/users/:id?include_orders=true&#34;, {
+  method: &#34;GET&#34;,
+  headers: {
+    &#34;Accept&#34;: &#34;application/json&#34;,
+    &#34;Authorization&#34;: &#34;Bearer sample_bearer_token&#34;
+  }
+});
+
+const data = await response.json();
+console.log(response.status, data);</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-user-details_python" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>import requests
+
+url = &#34;https://api.petstore.com/v1/users/:id?include_orders=true&#34;
+headers = {
+    &#34;Authorization&#34;: &#34;Bearer sample_bearer_token&#34;,
+    &#34;Accept&#34;: &#34;application/json&#34;
+}
+
+response = requests.get(url, headers=headers)
+
+print(response.status_code)
+print(response.text)</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-user-details_csharp" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>using System;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+var client = new HttpClient();
+var url = &#34;https://api.petstore.com/v1/users/:id?include_orders=true&#34;;
+client.DefaultRequestHeaders.Add(&#34;Authorization&#34;, &#34;Bearer sample_bearer_token&#34;);
+client.DefaultRequestHeaders.Add(&#34;Accept&#34;, &#34;application/json&#34;);
+
+var response = await client.GetAsync(url);
+var responseBody = await response.Content.ReadAsStringAsync();
+
+Console.WriteLine($&#34;Status: {response.StatusCode}&#34;);
+Console.WriteLine(responseBody);</code></pre>
+  </div>
+</div>
+<h4 style="margin-top: 24px;">Saved Response Examples</h4>
+<div style="margin: 12px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px;">
+<div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px;"><span class="badge badge-get">200</span> 200 OK User Profile</div>
+<div class="tabs-container" style="margin-top: 8px;"><div class="code-wrapper"><button class="copy-btn" onclick="copySnippet(this)">Copy</button><pre><code>{&#34;id&#34;: &#34;usr_101&#34;, &#34;name&#34;: &#34;Alice Smith&#34;, &#34;email&#34;: &#34;alice@example.com&#34;}</code></pre></div></div>
+</div>
+</div>
+<div class="doc-section" id="post-create-new-user">
+<div class="endpoint-header"><span class="badge badge-post">POST</span><h2 class="section-title">Create New User</h2></div>
+<p style="margin-bottom: 16px; color: var(--muted);">Register a new pet store customer.</p>
+<div class="endpoint-url">POST https://api.petstore.com/v1/users</div>
+<h4 style="margin-top: 16px;">Headers</h4>
+<table class="table"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>
+<tr><td><code>Content-Type</code></td><td>application/json</td></tr>
+</tbody></table>
+<h4 style="margin-top: 16px;">Request Body</h4>
+<div class="tabs-container"><pre><code>{&#34;name&#34;: &#34;Bob Jones&#34;, &#34;email&#34;: &#34;bob@example.com&#34;}</code></pre></div>
+<h4 style="margin-top: 24px;">Code Snippets</h4>
+<div class="tabs-container">
+  <div class="tab-header">
+    <button class="tab-btn active" onclick="selectTab(this, 'post-create-new-user_curl')">cURL</button>
+    <button class="tab-btn" onclick="selectTab(this, 'post-create-new-user_go')">Go</button>
+    <button class="tab-btn" onclick="selectTab(this, 'post-create-new-user_node')">Node.js</button>
+    <button class="tab-btn" onclick="selectTab(this, 'post-create-new-user_python')">Python</button>
+    <button class="tab-btn" onclick="selectTab(this, 'post-create-new-user_csharp')">C#</button>
+  </div>
+  <div class="tab-pane code-wrapper" id="post-create-new-user_curl" style="display: block;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>curl -X POST &#39;https://api.petstore.com/v1/users&#39; \
+  -H &#39;Content-Type: application/json&#39; \
+  -H &#39;Content-Type: application/json&#39; \
+  --data-raw &#39;{&#34;name&#34;: &#34;Bob Jones&#34;, &#34;email&#34;: &#34;bob@example.com&#34;}&#39; \
+  --insecure \
+  --no-location</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="post-create-new-user_go" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>package main
+
+import (
+	&#34;fmt&#34;
+	&#34;io&#34;
+	&#34;net/http&#34;
+	&#34;strings&#34;
+	&#34;time&#34;
+)
+
+func main() {
+	body := strings.NewReader(`{&#34;name&#34;: &#34;Bob Jones&#34;, &#34;email&#34;: &#34;bob@example.com&#34;}`)
+	req, err := http.NewRequest(&#34;POST&#34;, &#34;https://api.petstore.com/v1/users&#34;, body)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Set(&#34;Content-Type&#34;, &#34;application/json&#34;)
+
+	client := &amp;http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Printf(&#34;Status: %s\n%s\n&#34;, resp.Status, respBody)
+}</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="post-create-new-user_node" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>// Node.js 18+ built-in fetch
+const response = await fetch(&#34;https://api.petstore.com/v1/users&#34;, {
+  method: &#34;POST&#34;,
+  headers: {
+    &#34;Content-Type&#34;: &#34;application/json&#34;
+  },
+  body: `{&#34;name&#34;: &#34;Bob Jones&#34;, &#34;email&#34;: &#34;bob@example.com&#34;}`
+});
+
+const data = await response.json();
+console.log(response.status, data);</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="post-create-new-user_python" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>import requests
+
+url = &#34;https://api.petstore.com/v1/users&#34;
+headers = {
+    &#34;Content-Type&#34;: &#34;application/json&#34;
+}
+data = &#34;&#34;&#34;
+{&#34;name&#34;: &#34;Bob Jones&#34;, &#34;email&#34;: &#34;bob@example.com&#34;}
+&#34;&#34;&#34;
+
+response = requests.post(url, headers=headers, data=data)
+
+print(response.status_code)
+print(response.text)</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="post-create-new-user_csharp" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>using System;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+var client = new HttpClient();
+var url = &#34;https://api.petstore.com/v1/users&#34;;
+client.DefaultRequestHeaders.Add(&#34;Content-Type&#34;, &#34;application/json&#34;);
+
+var content = new StringContent(@&#34;{&#34;&#34;name&#34;&#34;: &#34;&#34;Bob Jones&#34;&#34;, &#34;&#34;email&#34;&#34;: &#34;&#34;bob@example.com&#34;&#34;}&#34;, System.Text.Encoding.UTF8, &#34;application/json&#34;);
+var response = await client.PostAsync(url, content);
+var responseBody = await response.Content.ReadAsStringAsync();
+
+Console.WriteLine($&#34;Status: {response.StatusCode}&#34;);
+Console.WriteLine(responseBody);</code></pre>
+  </div>
+</div>
+<h4 style="margin-top: 24px;">Saved Response Examples</h4>
+<div style="margin: 12px 0; border: 1px solid var(--border); border-radius: 8px; padding: 12px;">
+<div style="display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px;"><span class="badge badge-get">201</span> 201 Created Response</div>
+<div class="tabs-container" style="margin-top: 8px;"><div class="code-wrapper"><button class="copy-btn" onclick="copySnippet(this)">Copy</button><pre><code>{&#34;id&#34;: &#34;usr_102&#34;, &#34;name&#34;: &#34;Bob Jones&#34;, &#34;email&#34;: &#34;bob@example.com&#34;, &#34;createdAt&#34;: &#34;2026-10-04T12:00:00Z&#34;}</code></pre></div></div>
+</div>
+</div>
+<div class="doc-section" id="get-get-started-httpbin">
+<div class="endpoint-header"><span class="badge badge-get">GET</span><h2 class="section-title">Get Started (HTTPBin)</h2></div>
+<p style="margin-bottom: 16px; color: var(--muted);">Sample request demonstrating PebblePost offline collection capabilities</p>
+<div class="endpoint-url">GET {{BASE_URL}}/get</div>
+<h4 style="margin-top: 16px;">Query Parameters</h4>
+<table class="table"><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>
+<tr><td><code>source</code></td><td>pebblepost</td></tr>
+</tbody></table>
+<h4 style="margin-top: 16px;">Headers</h4>
+<table class="table"><thead><tr><th>Header</th><th>Value</th></tr></thead><tbody>
+<tr><td><code>Accept</code></td><td>application/json</td></tr>
+<tr><td><code>User-Agent</code></td><td>PebblePost/0.1.0</td></tr>
+</tbody></table>
+<h4 style="margin-top: 24px;">Code Snippets</h4>
+<div class="tabs-container">
+  <div class="tab-header">
+    <button class="tab-btn active" onclick="selectTab(this, 'get-get-started-httpbin_curl')">cURL</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-started-httpbin_go')">Go</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-started-httpbin_node')">Node.js</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-started-httpbin_python')">Python</button>
+    <button class="tab-btn" onclick="selectTab(this, 'get-get-started-httpbin_csharp')">C#</button>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-started-httpbin_curl" style="display: block;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>curl -X GET &#39;{{BASE_URL}}/get?source=pebblepost&#39; \
+  -H &#39;Accept: application/json&#39; \
+  -H &#39;User-Agent: PebblePost/0.1.0&#39;</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-started-httpbin_go" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>package main
+
+import (
+	&#34;fmt&#34;
+	&#34;io&#34;
+	&#34;net/http&#34;
+	&#34;strings&#34;
+	&#34;time&#34;
+)
+
+func main() {
+	req, err := http.NewRequest(&#34;GET&#34;, &#34;{{BASE_URL}}/get?source=pebblepost&#34;, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	req.Header.Set(&#34;Accept&#34;, &#34;application/json&#34;)
+	req.Header.Set(&#34;User-Agent&#34;, &#34;PebblePost/0.1.0&#34;)
+
+	client := &amp;http.Client{Timeout: 30000 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	fmt.Printf(&#34;Status: %s\n%s\n&#34;, resp.Status, respBody)
+}</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-started-httpbin_node" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>// Node.js 18+ built-in fetch
+const response = await fetch(&#34;{{BASE_URL}}/get?source=pebblepost&#34;, {
+  method: &#34;GET&#34;,
+  headers: {
+    &#34;Accept&#34;: &#34;application/json&#34;,
+    &#34;User-Agent&#34;: &#34;PebblePost/0.1.0&#34;
+  }
+});
+
+const data = await response.json();
+console.log(response.status, data);</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-started-httpbin_python" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>import requests
+
+url = &#34;{{BASE_URL}}/get?source=pebblepost&#34;
+headers = {
+    &#34;Accept&#34;: &#34;application/json&#34;,
+    &#34;User-Agent&#34;: &#34;PebblePost/0.1.0&#34;
+}
+
+response = requests.get(url, headers=headers)
+
+print(response.status_code)
+print(response.text)</code></pre>
+  </div>
+  <div class="tab-pane code-wrapper" id="get-get-started-httpbin_csharp" style="display: none;">
+    <button class="copy-btn" onclick="copySnippet(this)">Copy</button>
+    <pre><code>using System;
+using System.Net.Http;
+using System.Threading.Tasks;
+
+var client = new HttpClient();
+var url = &#34;{{BASE_URL}}/get?source=pebblepost&#34;;
+client.DefaultRequestHeaders.Add(&#34;Accept&#34;, &#34;application/json&#34;);
+client.DefaultRequestHeaders.Add(&#34;User-Agent&#34;, &#34;PebblePost/0.1.0&#34;);
+
+var response = await client.GetAsync(url);
+var responseBody = await response.Content.ReadAsStringAsync();
+
+Console.WriteLine($&#34;Status: {response.StatusCode}&#34;);
+Console.WriteLine(responseBody);</code></pre>
+  </div>
+</div>
+</div>
+
+  </div>
+
+  <script>
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme');
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+    }
+    function filterNav() {
+      const q = document.getElementById('search').value.toLowerCase();
+      const links = document.querySelectorAll('.nav-link');
+      links.forEach(l => {
+        const text = l.innerText.toLowerCase();
+        l.style.display = text.includes(q) ? 'flex' : 'none';
+      });
+    }
+    function selectTab(btn, targetId) {
+      const container = btn.closest('.tabs-container');
+      container.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      container.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+      btn.classList.add('active');
+      const target = container.querySelector('#' + targetId);
+      if (target) target.style.display = 'block';
+    }
+    function copySnippet(btn) {
+      const pre = btn.nextElementSibling;
+      if (pre) {
+        navigator.clipboard.writeText(pre.innerText).then(() => {
+          const orig = btn.innerText;
+          btn.innerText = 'Copied!';
+          setTimeout(() => btn.innerText = orig, 1500);
+        });
+      }
+    }
+  </script>
+</body>
+</html>

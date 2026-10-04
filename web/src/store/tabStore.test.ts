@@ -628,4 +628,67 @@ describe("useTabStore", () => {
     const matchingTabs = state.tabs.filter((t) => t.id === "runner:workspace");
     assert.equal(matchingTabs.length, 1);
   });
+
+  test("openDocsTab opens documentation tabs for collection or folder and activates existing tabs without duplicating", () => {
+    const store = useTabStore.getState();
+
+    // 1. Open workspace collection documentation
+    store.openDocsTab();
+    let state = useTabStore.getState();
+    const workspaceDocsTab = state.tabs.find((t) => t.id === "docs:workspace");
+    assert.ok(workspaceDocsTab);
+    assert.equal(workspaceDocsTab.type, "docs");
+    assert.equal(workspaceDocsTab.title, "API Documentation");
+    assert.equal(state.activeTabId, "docs:workspace");
+
+    // 2. Open folder-scoped documentation
+    store.openDocsTab("collections/users", "Users API");
+    state = useTabStore.getState();
+    const folderDocsTab = state.tabs.find((t) => t.id === "docs:collections/users");
+    assert.ok(folderDocsTab);
+    assert.equal(folderDocsTab.type, "docs");
+    assert.equal(folderDocsTab.title, "Docs: Users API");
+    assert.equal(folderDocsTab.docsConfig?.folderPath, "collections/users");
+    assert.equal(folderDocsTab.docsConfig?.folderName, "Users API");
+    assert.equal(state.activeTabId, "docs:collections/users");
+
+    // 3. Opening existing workspace docs tab switches activeTabId without duplicating
+    store.openDocsTab();
+    state = useTabStore.getState();
+    assert.equal(state.activeTabId, "docs:workspace");
+    const matchingTabs = state.tabs.filter((t) => t.id === "docs:workspace");
+    assert.equal(matchingTabs.length, 1);
+  });
+
+  test("persists saved examples and description on request definition in tabStore", () => {
+    const store = useTabStore.getState();
+    store.openTab("collections/user/get-user.pebble.json", sampleReq, false);
+
+    // Update request with description and saved examples
+    store.updateActiveRequest((prev) => ({
+      ...prev,
+      description: "### User Detail Endpoint\nReturns public user details by ID.",
+      examples: [
+        {
+          id: "ex-1",
+          name: "200 OK - Standard User",
+          statusCode: 200,
+          statusText: "OK",
+          body: JSON.stringify({ id: "123", name: "Alice" }),
+          contentType: "application/json",
+          durationMs: 42,
+          size: 32,
+        },
+      ],
+    }));
+
+    const state = useTabStore.getState();
+    const activeTab = state.tabs.find((t) => t.id === "collections/user/get-user.pebble.json");
+    assert.ok(activeTab?.request);
+    assert.equal(activeTab.request.description, "### User Detail Endpoint\nReturns public user details by ID.");
+    assert.equal(activeTab.request.examples?.length, 1);
+    assert.equal(activeTab.request.examples[0].statusCode, 200);
+    assert.equal(activeTab.request.examples[0].name, "200 OK - Standard User");
+    assert.equal(activeTab.isDirty, true);
+  });
 });

@@ -18,9 +18,11 @@ import {
   Terminal as CurlIcon,
   Link,
   Radio,
+  Bookmark,
 } from 'lucide-react'
 import { GrpcStreamTimeline } from '../grpc/GrpcStreamTimeline'
 import { StreamLogPanel } from '../stream/StreamLogPanel'
+import { SaveExampleDialog } from './SaveExampleDialog'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
@@ -269,11 +271,12 @@ type SubTab = 'body' | 'stream' | 'headers' | 'trailers' | 'tests' | 'timing' | 
 
 export function ResponsePanel() {
   const { theme, lastResult: wsLastResult, isExecuting } = useWorkspaceStore()
-  const { tabs, activeTabId, setLastResult } = useTabStore()
+  const { tabs, activeTabId, setLastResult, updateActiveRequest } = useTabStore()
   const currentTab = tabs.find((t) => t.id === activeTabId)
   const lastResult = currentTab ? currentTab.lastResult : wsLastResult
 
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('body')
+  const [isSaveExampleOpen, setIsSaveExampleOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [curlCopied, setCurlCopied] = useState(false)
   const [consoleFilterLevel, setConsoleFilterLevel] = useState<'all' | 'log' | 'info' | 'warn' | 'error'>('all')
@@ -497,6 +500,21 @@ export function ResponsePanel() {
               <span>{copied ? 'Copied' : 'Copy'}</span>
             </Button>
           </Tooltip>
+
+          {/* Save as Example */}
+          {currentTab && currentTab.filePath && (
+            <Tooltip content="Save as Example Response">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsSaveExampleOpen(true)}
+                className="h-7 gap-1 px-2.5 text-xs text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-white border-blue-200 dark:border-blue-900/50 hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
+              >
+                <Bookmark className="w-3.5 h-3.5 text-blue-500" />
+                <span>Save Example</span>
+              </Button>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -1067,6 +1085,22 @@ export function ResponsePanel() {
           </TabsContent>
         </div>
       </Tabs>
+
+      {/* Save Example Dialog */}
+      {currentTab && currentTab.filePath && lastResult && (
+        <SaveExampleDialog
+          isOpen={isSaveExampleOpen}
+          onClose={() => setIsSaveExampleOpen(false)}
+          filePath={currentTab.filePath}
+          result={lastResult}
+          onSaved={(newEx) => {
+            updateActiveRequest((prev) => ({
+              ...prev,
+              examples: [...(prev.examples || []).filter((e) => e.id !== newEx.id), newEx],
+            }))
+          }}
+        />
+      )}
     </div>
   )
 }
