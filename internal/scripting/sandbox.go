@@ -21,6 +21,19 @@ const maxConsoleLogs = 500
 // maxLogEntryLen caps the character length of a single console log line.
 const maxLogEntryLen = 4096
 
+// FlowControlAction tracks dynamic execution changes requested by pb.runner.
+type FlowControlAction struct {
+	NextRequest *string `json:"nextRequest,omitempty"`
+	StopAll     bool    `json:"stopAll,omitempty"`
+}
+
+// IterationContext holds iteration parameters for data-driven runs and flow control.
+type IterationContext struct {
+	Iteration      int            `json:"iteration"`
+	IterationCount int            `json:"iterationCount"`
+	DataRow        map[string]any `json:"dataRow,omitempty"`
+}
+
 // PreRequestResult holds changes produced by a pre-request script execution.
 type PreRequestResult struct {
 	Request          *types.RequestDefinition `json:"request"`
@@ -28,6 +41,8 @@ type PreRequestResult struct {
 	ConsoleLogs      []types.ConsoleLogEntry  `json:"consoleLogs"`
 	ExtractedEnvVars map[string]string        `json:"extractedEnvVars"`
 	LocalVars        map[string]string        `json:"localVars,omitempty"`
+	NextRequest      *string                  `json:"nextRequest,omitempty"`
+	StopAll          bool                     `json:"stopAll,omitempty"`
 }
 
 // PostResponseResult holds test outputs and extracted variables from a post-response script.
@@ -37,6 +52,8 @@ type PostResponseResult struct {
 	ConsoleLogs      []types.ConsoleLogEntry     `json:"consoleLogs"`
 	ExtractedEnvVars map[string]string           `json:"extractedEnvVars"`
 	LocalVars        map[string]string           `json:"localVars,omitempty"`
+	NextRequest      *string                     `json:"nextRequest,omitempty"`
+	StopAll          bool                        `json:"stopAll,omitempty"`
 }
 
 // Engine executes JavaScript scripts within isolated sandboxes.
@@ -73,6 +90,18 @@ func (e *Engine) ExecutePreRequestNamed(
 	script string,
 	req *types.RequestDefinition,
 	vars map[string]string,
+	timeout time.Duration,
+) (*PreRequestResult, error) {
+	return e.ExecutePreRequestWithContext(sourceName, script, req, vars, nil, timeout)
+}
+
+// ExecutePreRequestWithContext executes a pre-request script with iteration context and flow control.
+func (e *Engine) ExecutePreRequestWithContext(
+	sourceName string,
+	script string,
+	req *types.RequestDefinition,
+	vars map[string]string,
+	iterCtx *IterationContext,
 	timeout time.Duration,
 ) (*PreRequestResult, error) {
 	if strings.TrimSpace(script) == "" {
@@ -118,6 +147,7 @@ func (e *Engine) ExecutePreRequestNamed(
 		consoleLogs = make([]types.ConsoleLogEntry, 0)
 		envVars     = make(map[string]string)
 		localVars   = make(map[string]string)
+		action      FlowControlAction
 	)
 
 	// Copy incoming variables
@@ -138,6 +168,9 @@ func (e *Engine) ExecutePreRequestNamed(
 	envObj := e.setupEnvironmentBridge(vm, envVars)
 	varObj := e.setupVariablesBridge(vm, localVars, envVars)
 	cryptoObj := e.setupCryptoBridge(vm)
+	runnerObj := e.setupRunnerBridge(vm, &action)
+	dataObj := e.setupDataBridge(vm, iterCtx)
+	infoObj := e.setupInfoBridge(vm, iterCtx)
 
 	// 5. Bind pb and pm objects
 	pbObj := vm.NewObject()
@@ -146,6 +179,15 @@ func (e *Engine) ExecutePreRequestNamed(
 	_ = pbObj.Set("variables", varObj)
 	_ = pbObj.Set("crypto", cryptoObj)
 	_ = pbObj.Set("expect", vm.Get("expect"))
+	_ = pbObj.Set("runner", runnerObj)
+	_ = pbObj.Set("data", dataObj)
+	_ = pbObj.Set("info", infoObj)
+	_ = pbObj.Set("iterationData", dataObj) // Postman compatibility
+
+	// postman.setNextRequest compatibility
+	postmanObj := vm.NewObject()
+	_ = postmanObj.Set("setNextRequest", runnerObj.Get("setNextRequest"))
+	_ = vm.Set("postman", postmanObj)
 
 	// Bind extended pb utilities
 	e.bindExtendedPbAPIs(vm, pbObj, timeout)
@@ -180,6 +222,8 @@ func (e *Engine) ExecutePreRequestNamed(
 				ConsoleLogs:      consoleLogs,
 				ExtractedEnvVars: envVars,
 				LocalVars:        localVars,
+				NextRequest:      action.NextRequest,
+				StopAll:          action.StopAll,
 			}, fmt.Errorf("pre-request script error: %w", err)
 		}
 	case <-time.After(timeout):
@@ -200,6 +244,8 @@ func (e *Engine) ExecutePreRequestNamed(
 		ConsoleLogs:      consoleLogs,
 		ExtractedEnvVars: envVars,
 		LocalVars:        localVars,
+		NextRequest:      action.NextRequest,
+		StopAll:          action.StopAll,
 	}, nil
 }
 
@@ -221,6 +267,19 @@ func (e *Engine) ExecutePostResponseNamed(
 	req *types.RequestDefinition,
 	resp *types.ExecutionResult,
 	vars map[string]string,
+	timeout time.Duration,
+) (*PostResponseResult, error) {
+	return e.ExecutePostResponseWithContext(sourceName, script, req, resp, vars, nil, timeout)
+}
+
+// ExecutePostResponseWithContext runs a post-response test script with iteration context and flow control.
+func (e *Engine) ExecutePostResponseWithContext(
+	sourceName string,
+	script string,
+	req *types.RequestDefinition,
+	resp *types.ExecutionResult,
+	vars map[string]string,
+	iterCtx *IterationContext,
 	timeout time.Duration,
 ) (*PostResponseResult, error) {
 	if strings.TrimSpace(script) == "" {
@@ -271,6 +330,7 @@ func (e *Engine) ExecutePostResponseNamed(
 		tests       = make([]types.TestAssertionResult, 0)
 		envVars     = make(map[string]string)
 		localVars   = make(map[string]string)
+		action      FlowControlAction
 	)
 
 	// Copy incoming variables
@@ -291,6 +351,9 @@ func (e *Engine) ExecutePostResponseNamed(
 	envObj := e.setupEnvironmentBridge(vm, envVars)
 	varObj := e.setupVariablesBridge(vm, localVars, envVars)
 	cryptoObj := e.setupCryptoBridge(vm)
+	runnerObj := e.setupRunnerBridge(vm, &action)
+	dataObj := e.setupDataBridge(vm, iterCtx)
+	infoObj := e.setupInfoBridge(vm, iterCtx)
 
 	// 5. Setup Test runner function
 	testFn := func(name string, fn goja.Callable) {
@@ -327,6 +390,15 @@ func (e *Engine) ExecutePostResponseNamed(
 	_ = pbObj.Set("test", testFn)
 	_ = pbObj.Set("expect", vm.Get("expect"))
 	_ = pbObj.Set("stream", e.setupStreamBridge(vm, resp))
+	_ = pbObj.Set("runner", runnerObj)
+	_ = pbObj.Set("data", dataObj)
+	_ = pbObj.Set("info", infoObj)
+	_ = pbObj.Set("iterationData", dataObj) // Postman compatibility
+
+	// postman.setNextRequest compatibility
+	postmanObj := vm.NewObject()
+	_ = postmanObj.Set("setNextRequest", runnerObj.Get("setNextRequest"))
+	_ = vm.Set("postman", postmanObj)
 
 	// Bind extended pb utilities
 	e.bindExtendedPbAPIs(vm, pbObj, timeout)
@@ -361,6 +433,8 @@ func (e *Engine) ExecutePostResponseNamed(
 				ConsoleLogs:      consoleLogs,
 				ExtractedEnvVars: envVars,
 				LocalVars:        localVars,
+				NextRequest:      action.NextRequest,
+				StopAll:          action.StopAll,
 			}, fmt.Errorf("post-response script error: %w", err)
 		}
 	case <-time.After(timeout):
@@ -381,7 +455,65 @@ func (e *Engine) ExecutePostResponseNamed(
 		ConsoleLogs:      consoleLogs,
 		ExtractedEnvVars: envVars,
 		LocalVars:        localVars,
+		NextRequest:      action.NextRequest,
+		StopAll:          action.StopAll,
 	}, nil
+}
+
+func (e *Engine) setupRunnerBridge(vm *goja.Runtime, action *FlowControlAction) *goja.Object {
+	runnerObj := vm.NewObject()
+	_ = runnerObj.Set("setNextRequest", func(call goja.FunctionCall) goja.Value {
+		if len(call.Arguments) == 0 || goja.IsNull(call.Arguments[0]) || goja.IsUndefined(call.Arguments[0]) {
+			empty := ""
+			action.NextRequest = &empty
+			return goja.Undefined()
+		}
+		target := strings.TrimSpace(call.Arguments[0].String())
+		action.NextRequest = &target
+		return goja.Undefined()
+	})
+	_ = runnerObj.Set("stop", func() {
+		action.StopAll = true
+	})
+	return runnerObj
+}
+
+func (e *Engine) setupDataBridge(vm *goja.Runtime, iterCtx *IterationContext) *goja.Object {
+	dataObj := vm.NewObject()
+	var row map[string]any
+	if iterCtx != nil && iterCtx.DataRow != nil {
+		row = iterCtx.DataRow
+		for k, v := range row {
+			_ = dataObj.Set(k, v)
+		}
+	}
+	_ = dataObj.Set("get", func(key string) goja.Value {
+		if row != nil {
+			if v, ok := row[key]; ok {
+				return vm.ToValue(v)
+			}
+		}
+		return goja.Undefined()
+	})
+	_ = dataObj.Set("toObject", func() goja.Value {
+		if row == nil {
+			return vm.NewObject()
+		}
+		return vm.ToValue(row)
+	})
+	return dataObj
+}
+
+func (e *Engine) setupInfoBridge(vm *goja.Runtime, iterCtx *IterationContext) *goja.Object {
+	infoObj := vm.NewObject()
+	if iterCtx != nil {
+		_ = infoObj.Set("iteration", iterCtx.Iteration)
+		_ = infoObj.Set("iterationCount", iterCtx.IterationCount)
+	} else {
+		_ = infoObj.Set("iteration", 0)
+		_ = infoObj.Set("iterationCount", 1)
+	}
+	return infoObj
 }
 
 func (e *Engine) setupConsole(

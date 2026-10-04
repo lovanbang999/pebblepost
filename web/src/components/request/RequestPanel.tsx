@@ -25,6 +25,7 @@ import {
 import { CodeGeneratorDialog } from "../common/CodeGeneratorDialog";
 import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
+import { RunnerPanel } from "../runner/RunnerPanel";
 import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
 import { ScriptTrustDialog } from "./ScriptTrustDialog";
 import { VariableInput } from "../common/VariableInput";
@@ -426,6 +427,15 @@ export function RequestPanel() {
       <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
         <TabBar />
         <FolderSettingsPanel currentTab={currentTab} />
+      </div>
+    );
+  }
+
+  if (currentTab.type === "runner") {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
+        <TabBar />
+        <RunnerPanel currentTab={currentTab} />
       </div>
     );
   }

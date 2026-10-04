@@ -193,7 +193,9 @@ func (c *WSClient) readPump() {
 			}
 
 			c.closeCode.Store(int64(closeCode))
+			c.mu.Lock()
 			c.closeReason = closeReason
+			c.mu.Unlock()
 
 			desc := CloseCodeDescription(closeCode)
 			c.recordLog("system", "close", fmt.Sprintf("Connection closed: %s (Reason: %s)", desc, closeReason), false, closeCode, closeReason)
@@ -325,9 +327,9 @@ func (c *WSClient) Close(code int, reason string) error {
 			code = CloseNormalClosure
 		}
 		c.closeCode.Store(int64(code))
-		c.closeReason = reason
 
 		c.mu.Lock()
+		c.closeReason = reason
 		conn := c.conn
 		c.mu.Unlock()
 

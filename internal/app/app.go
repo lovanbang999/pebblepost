@@ -7,6 +7,7 @@ import (
 
 	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
+	"pebblepost/internal/runner"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
 	"pebblepost/internal/workspace"
@@ -112,4 +113,8 @@ func (a *App) registerRoutes() {
 	// History endpoints
 	historyHandler := history.NewHandler(a.HistorySvc)
 	historyHandler.RegisterRoutes(a.Mux)
+
+	// Collection Runner endpoints
+	runnerHandler := runner.NewHandler(runner.NewCustomRunner(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator, a.HttpClient, a.ScriptEngine))
+	runnerHandler.RegisterRoutes(a.Mux)
 }

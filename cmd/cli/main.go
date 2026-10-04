@@ -51,19 +51,24 @@ func handleRun(args []string) {
 	fs := newFlagSet()
 
 	var (
-		envFlag     = fs.String("e", "", "Environment name (e.g. dev, staging, prod)")
-		bailFlag    = fs.Bool("bail", false, "Stop execution immediately on first failure")
-		dryRunFlag  = fs.Bool("dry-run", false, "Print request order without sending any HTTP requests")
-		timeoutFlag = fs.Int("timeout", 0, "Global request timeout in milliseconds (0 = per-request setting)")
-		retryFlag   = fs.Int("retry", 0, "Number of retries on network errors (not assertion failures)")
-		delayFlag   = fs.Int("delay", 0, "Delay between requests in milliseconds")
-		envFileFlag = fs.String("env-file", "", "Path to additional environment variable file (KEY=VALUE format)")
-		folderFlag  = fs.String("folder", "", "Glob pattern to filter requests by folder path")
-		requestFlag = fs.String("request", "", "Glob pattern to filter requests by name or path")
-		tagFlag     = fs.String("tag", "", "Filter requests by tag (exact match)")
-		outFlag     = fs.String("out", "", "Output file path for the last --reporter (shorthand for reporter:path)")
-		ciFlag      = fs.Bool("ci", false, "CI/CD mode (alias for --bail, preserved for backward compatibility)")
+		envFlag        = fs.String("e", "", "Environment name (e.g. dev, staging, prod)")
+		bailFlag       = fs.Bool("bail", false, "Stop execution immediately on first failure")
+		dryRunFlag     = fs.Bool("dry-run", false, "Print request order without sending any HTTP requests")
+		timeoutFlag    = fs.Int("timeout", 0, "Global request timeout in milliseconds (0 = per-request setting)")
+		retryFlag      = fs.Int("retry", 0, "Number of retries on network errors (not assertion failures)")
+		delayFlag      = fs.Int("delay", 0, "Delay between requests in milliseconds")
+		dataFlag       = fs.String("data", "", "Path to data file (CSV or JSON) for data-driven iterations")
+		iterationsFlag = fs.Int("iterations", 0, "Number of iterations to run (0 = auto-detect from data file or 1)")
+		envFileFlag    = fs.String("env-file", "", "Path to additional environment variable file (KEY=VALUE format)")
+		folderFlag     = fs.String("folder", "", "Glob pattern to filter requests by folder path")
+		requestFlag    = fs.String("request", "", "Glob pattern to filter requests by name or path")
+		tagFlag        = fs.String("tag", "", "Filter requests by tag (exact match)")
+		outFlag        = fs.String("out", "", "Output file path for the last --reporter (shorthand for reporter:path)")
+		ciFlag         = fs.Bool("ci", false, "CI/CD mode (alias for --bail, preserved for backward compatibility)")
 	)
+
+	fs.StringVar(dataFlag, "d", "", "Path to data file (shorthand)")
+	fs.IntVar(iterationsFlag, "n", 0, "Number of iterations to run (shorthand)")
 
 	var reporterFlags multiFlag
 	var varFlags multiFlag
@@ -134,6 +139,8 @@ func handleRun(args []string) {
 		TimeoutMs:       *timeoutFlag,
 		RetryCount:      *retryFlag,
 		DelayMs:         *delayFlag,
+		DataFile:        *dataFlag,
+		Iterations:      *iterationsFlag,
 		EnvFile:         *envFileFlag,
 		ExtraVars:       extraVars,
 		Reporters:       reporters,
@@ -252,6 +259,8 @@ Flags for 'import':
 
 Flags for 'run':
   -e <name>                 Environment configuration name (e.g. dev, staging, prod)
+  -d, --data <file>         Data file (CSV or JSON) for data-driven iterations
+  -n, --iterations <n>      Number of iterations to run (auto-detected if data file provided)
   --reporter <format>       Reporter: cli (default), json, junit, html. Repeatable.
                             Append :<path> to write to file: --reporter junit:results.xml
   --out <path>              Output file path for the last --reporter
@@ -278,6 +287,7 @@ Examples:
   pebblepost import ./my-bruno-collection --out-dir collections/ecommerce
   pebblepost import ./traffic.har --json
   pebblepost run ./collections -e dev
+  pebblepost run ./collections -d users.csv -n 5
   pebblepost run ./collections -e prod --bail --reporter junit:results.xml
 `, version)
 }
@@ -296,6 +306,7 @@ func reorderArgs(args []string) []string {
 		"-e": true, "--reporter": true, "--out": true, "--var": true,
 		"--env-file": true, "--folder": true, "--request": true, "--tag": true,
 		"--timeout": true, "--retry": true, "--delay": true,
+		"-d": true, "--data": true, "-n": true, "--iterations": true,
 		"--out-dir": true, "-o": true, "--format": true, "-f": true, "--workspace": true,
 	}
 

@@ -20,6 +20,7 @@ export default function App() {
   const [envManagerOpen, setEnvManagerOpen] = useState(false)
   const { loadWorkspace, workspacePath, initWatcher, cleanupWatcher, sidebarView } = useWorkspaceStore()
   const { restoreTabs } = useTabStore()
+  const activeTab = useTabStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
 
   useEffect(() => {
     const ws = workspacePath || '.'
@@ -101,7 +102,9 @@ export default function App() {
             <RequestPanel />
 
             {/* Right Response Viewer */}
-            <ResponsePanel />
+            {activeTab?.type !== 'folder' && activeTab?.type !== 'runner' && (
+              <ResponsePanel />
+            )}
           </div>
         </div>
 

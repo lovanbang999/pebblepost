@@ -598,4 +598,34 @@ describe("useTabStore", () => {
     assert.equal(sseTab.activeSubTab, "stream");
     assert.equal(sseTab.request?.protocol, "sse");
   });
+
+  test("openRunnerTab opens runner tabs for collection or folder and activates existing tabs without duplicating", () => {
+    const store = useTabStore.getState();
+
+    // 1. Open workspace collection runner
+    store.openRunnerTab();
+    let state = useTabStore.getState();
+    const workspaceRunnerTab = state.tabs.find((t) => t.id === "runner:workspace");
+    assert.ok(workspaceRunnerTab);
+    assert.equal(workspaceRunnerTab.type, "runner");
+    assert.equal(workspaceRunnerTab.title, "Collection Runner");
+    assert.equal(state.activeTabId, "runner:workspace");
+
+    // 2. Open folder-scoped runner
+    store.openRunnerTab("collections/auth", "Authentication");
+    state = useTabStore.getState();
+    const folderRunnerTab = state.tabs.find((t) => t.id === "runner:collections/auth");
+    assert.ok(folderRunnerTab);
+    assert.equal(folderRunnerTab.type, "runner");
+    assert.equal(folderRunnerTab.title, "Runner: Authentication");
+    assert.equal(folderRunnerTab.runnerConfig?.folderPath, "collections/auth");
+    assert.equal(state.activeTabId, "runner:collections/auth");
+
+    // 3. Opening existing workspace runner tab switches activeTabId without duplicating
+    store.openRunnerTab();
+    state = useTabStore.getState();
+    assert.equal(state.activeTabId, "runner:workspace");
+    const matchingTabs = state.tabs.filter((t) => t.id === "runner:workspace");
+    assert.equal(matchingTabs.length, 1);
+  });
 });
