@@ -473,7 +473,9 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			var nextRequestSet bool
 			var preErrOccurred error
 
-			if r.scriptEngine != nil {
+			canRunScripts := opts.TrustScripts == nil || *opts.TrustScripts
+
+			if r.scriptEngine != nil && canRunScripts {
 				scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
 				for _, s := range preScripts {
 					preResult, preErr := r.scriptEngine.ExecutePreRequestWithContext(s.Source, s.Script, interpolatedReq, currentVarMap, iterCtx, scriptTimeout)
@@ -574,7 +576,15 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 			}
 
 			// ── Post-response scripts ─────────────────────────────────────────
-			if r.scriptEngine != nil {
+			if !canRunScripts && (len(preScripts) > 0 || len(postScripts) > 0) {
+				execResult.ConsoleLogs = append(execResult.ConsoleLogs, types.ConsoleLogEntry{
+					Timestamp: time.Now(),
+					Level:     "warn",
+					Source:    "security",
+					Message:   "Scripts skipped: collection is not trusted. Use --trust or a .pebbletrust file.",
+				})
+			}
+			if r.scriptEngine != nil && canRunScripts {
 				scriptTimeout := scriptTimeoutFor(interpolatedReq.Settings.ScriptTimeoutMs)
 				for _, s := range postScripts {
 					postResult, _ := r.scriptEngine.ExecutePostResponseWithContext(s.Source, s.Script, interpolatedReq, execResult, currentVarMap, iterCtx, scriptTimeout)

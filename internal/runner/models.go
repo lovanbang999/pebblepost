@@ -65,6 +65,11 @@ type RunOptions struct {
 	// Filter restricts which requests run.
 	Filter FilterOptions
 
+	// TrustScripts determines if pre-request and post-response scripts can execute.
+	// In the CLI runner, scripts are disabled unless explicitly trusted via --trust or a .pebbletrust file.
+	// If nil, defaults to true (for programmatic API callers).
+	TrustScripts *bool
+
 	// Writer is the fallback writer for legacy callers (used when Reporters is empty).
 	Writer io.Writer
 	// ReportFormat is the legacy format field (maps to a single ReporterConfig).

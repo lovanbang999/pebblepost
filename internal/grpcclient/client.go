@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
 
@@ -41,6 +43,77 @@ func (c *Client) SetWorkspace(ws string) {
 	c.workspaceRoot = ws
 }
 
+// resolveSafePath resolves a path against workspaceRoot preventing directory escapes.
+func (c *Client) resolveSafePath(untrustedPath string) (string, error) {
+	untrustedPath = strings.TrimSpace(untrustedPath)
+	if untrustedPath == "" {
+		return "", fmt.Errorf("path cannot be empty")
+	}
+
+	c.mu.Lock()
+	ws := c.workspaceRoot
+	c.mu.Unlock()
+
+	if ws == "" {
+		if err := security.RejectTraversal(untrustedPath); err != nil {
+			return "", fmt.Errorf("security: path traversal rejected: %w", err)
+		}
+		return untrustedPath, nil
+	}
+
+	if filepath.IsAbs(untrustedPath) {
+		safePath, err := security.SafeAbsolute(ws, untrustedPath)
+		if err != nil {
+			return "", fmt.Errorf("security: path outside workspace boundary is forbidden: %w", err)
+		}
+		return safePath, nil
+	}
+
+	safePath, err := security.SafeJoin(ws, untrustedPath)
+	if err != nil {
+		return "", fmt.Errorf("security: path outside workspace boundary is forbidden: %w", err)
+	}
+	return safePath, nil
+}
+
+// resolveProtoPaths resolves and validates import paths and proto file paths against workspaceRoot.
+func (c *Client) resolveProtoPaths(protoFiles []string, importPaths []string) ([]string, []string, error) {
+	c.mu.Lock()
+	ws := c.workspaceRoot
+	c.mu.Unlock()
+
+	var resolvedImportPaths []string
+	if ws != "" {
+		resolvedImportPaths = append(resolvedImportPaths, ws)
+	}
+
+	for _, ip := range importPaths {
+		safeIP, err := c.resolveSafePath(ip)
+		if err != nil {
+			return nil, nil, fmt.Errorf("security: gRPC import path %q rejected: %w", ip, err)
+		}
+		resolvedImportPaths = append(resolvedImportPaths, safeIP)
+	}
+
+	var safeProtoFiles []string
+	for _, pf := range protoFiles {
+		safePF, err := c.resolveSafePath(pf)
+		if err != nil {
+			return nil, nil, fmt.Errorf("security: gRPC proto file %q rejected: %w", pf, err)
+		}
+		dir := filepath.Dir(safePF)
+		if dir != "." && dir != "" {
+			resolvedImportPaths = append(resolvedImportPaths, dir)
+		}
+		safeProtoFiles = append(safeProtoFiles, safePF)
+	}
+
+	if len(resolvedImportPaths) == 0 {
+		resolvedImportPaths = []string{"."}
+	}
+	return resolvedImportPaths, safeProtoFiles, nil
+}
+
 // Dial creates a new gRPC connection configured with TLS or plaintext.
 func (c *Client) Dial(ctx context.Context, address string, useTLS bool, insecureSkipVerify bool, rootCAPath string) (*grpc.ClientConn, error) {
 	var opts []grpc.DialOption
@@ -50,9 +123,9 @@ func (c *Client) Dial(ctx context.Context, address string, useTLS bool, insecure
 			InsecureSkipVerify: insecureSkipVerify,
 		}
 		if rootCAPath != "" {
-			caPath := rootCAPath
-			if !filepath.IsAbs(caPath) && c.workspaceRoot != "" {
-				caPath = filepath.Join(c.workspaceRoot, caPath)
+			caPath, err := c.resolveSafePath(rootCAPath)
+			if err != nil {
+				return nil, fmt.Errorf("security: gRPC root CA cert path %q rejected: %w", rootCAPath, err)
 			}
 			caCert, err := os.ReadFile(caPath)
 			if err != nil {
@@ -130,40 +203,16 @@ func (c *Client) ReflectServices(ctx context.Context, address string, useTLS boo
 	return result, nil
 }
 
-// LoadProtoServices parses .proto files from the workspace (or absolute paths)
+// LoadProtoServices parses .proto files from the workspace
 // using protoparse with configured import paths.
 func (c *Client) LoadProtoServices(protoFiles []string, importPaths []string) ([]types.GrpcServiceInfo, error) {
 	if len(protoFiles) == 0 {
 		return nil, fmt.Errorf("no .proto files specified")
 	}
 
-	var resolvedImportPaths []string
-	if c.workspaceRoot != "" {
-		resolvedImportPaths = append(resolvedImportPaths, c.workspaceRoot)
-	}
-	for _, ip := range importPaths {
-		if filepath.IsAbs(ip) {
-			resolvedImportPaths = append(resolvedImportPaths, ip)
-		} else if c.workspaceRoot != "" {
-			resolvedImportPaths = append(resolvedImportPaths, filepath.Join(c.workspaceRoot, ip))
-		} else {
-			resolvedImportPaths = append(resolvedImportPaths, ip)
-		}
-	}
-	for _, pf := range protoFiles {
-		dir := filepath.Dir(pf)
-		if dir != "." && dir != "" {
-			if filepath.IsAbs(dir) {
-				resolvedImportPaths = append(resolvedImportPaths, dir)
-			} else if c.workspaceRoot != "" {
-				resolvedImportPaths = append(resolvedImportPaths, filepath.Join(c.workspaceRoot, dir))
-			} else {
-				resolvedImportPaths = append(resolvedImportPaths, dir)
-			}
-		}
-	}
-	if len(resolvedImportPaths) == 0 {
-		resolvedImportPaths = []string{"."}
+	resolvedImportPaths, safeProtoFiles, err := c.resolveProtoPaths(protoFiles, importPaths)
+	if err != nil {
+		return nil, err
 	}
 
 	parser := protoparse.Parser{
@@ -172,9 +221,9 @@ func (c *Client) LoadProtoServices(protoFiles []string, importPaths []string) ([
 		IncludeSourceCodeInfo: true,
 	}
 
-	resolvedFiles, err := protoparse.ResolveFilenames(resolvedImportPaths, protoFiles...)
+	resolvedFiles, err := protoparse.ResolveFilenames(resolvedImportPaths, safeProtoFiles...)
 	if err != nil {
-		resolvedFiles = protoFiles
+		resolvedFiles = safeProtoFiles
 	}
 
 	fds, err := parser.ParseFiles(resolvedFiles...)
@@ -232,42 +281,19 @@ func (c *Client) ResolveMethodDescriptor(ctx context.Context, g *types.GrpcDefin
 			}
 		}
 
-		var resolvedImportPaths []string
-		if c.workspaceRoot != "" {
-			resolvedImportPaths = append(resolvedImportPaths, c.workspaceRoot)
-		}
-		for _, ip := range g.ImportPaths {
-			if filepath.IsAbs(ip) {
-				resolvedImportPaths = append(resolvedImportPaths, ip)
-			} else if c.workspaceRoot != "" {
-				resolvedImportPaths = append(resolvedImportPaths, filepath.Join(c.workspaceRoot, ip))
-			} else {
-				resolvedImportPaths = append(resolvedImportPaths, ip)
-			}
-		}
-		for _, pf := range g.ProtoFiles {
-			dir := filepath.Dir(pf)
-			if dir != "." && dir != "" {
-				if filepath.IsAbs(dir) {
-					resolvedImportPaths = append(resolvedImportPaths, dir)
-				} else if c.workspaceRoot != "" {
-					resolvedImportPaths = append(resolvedImportPaths, filepath.Join(c.workspaceRoot, dir))
-				} else {
-					resolvedImportPaths = append(resolvedImportPaths, dir)
-				}
-			}
-		}
-		if len(resolvedImportPaths) == 0 {
-			resolvedImportPaths = []string{"."}
+		resolvedImportPaths, safeProtoFiles, err := c.resolveProtoPaths(g.ProtoFiles, g.ImportPaths)
+		if err != nil {
+			cleanup()
+			return nil, nil, nil, err
 		}
 
 		parser := protoparse.Parser{
 			ImportPaths:      resolvedImportPaths,
 			InferImportPaths: true,
 		}
-		resolvedFiles, err := protoparse.ResolveFilenames(resolvedImportPaths, g.ProtoFiles...)
+		resolvedFiles, err := protoparse.ResolveFilenames(resolvedImportPaths, safeProtoFiles...)
 		if err != nil {
-			resolvedFiles = g.ProtoFiles
+			resolvedFiles = safeProtoFiles
 		}
 
 		fds, err := parser.ParseFiles(resolvedFiles...)

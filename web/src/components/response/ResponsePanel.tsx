@@ -662,7 +662,7 @@ export function ResponsePanel() {
                   </div>
                   <iframe
                     srcDoc={displayBody}
-                    sandbox="allow-scripts"
+                    sandbox=""
                     title="HTML Preview"
                     className="w-full h-64 bg-white"
                   />

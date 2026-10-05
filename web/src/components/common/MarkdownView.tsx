@@ -204,12 +204,15 @@ export function MarkdownView({ content, className = '', emptyMessage = 'No descr
           </strong>
         )
       } else if (first.type === 'link') {
+        const trimmedHref = first.href?.trim() ?? ''
+        const isSafeProtocol = /^(https?:|mailto:|#)/i.test(trimmedHref)
+        const safeHref = isSafeProtocol ? trimmedHref : '#'
         parts.push(
           <a
             key={keyIdx++}
-            href={first.href}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={safeHref}
+            target={safeHref.startsWith('#') ? undefined : '_blank'}
+            rel={safeHref.startsWith('#') ? undefined : 'noopener noreferrer'}
             className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
           >
             {first.text}

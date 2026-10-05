@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"pebblepost"
 	"pebblepost/internal/app"
@@ -53,7 +54,17 @@ func main() {
 		authToken = generateToken()
 	}
 
-	log.Printf("PebblePost API token: %s", authToken)
+	tokenFilePath := filepath.Join(*dataDir, ".token")
+	_ = os.MkdirAll(*dataDir, 0700)
+	if err := os.WriteFile(tokenFilePath, []byte(authToken), 0600); err != nil {
+		log.Printf("warning: failed to write token file: %v", err)
+	}
+
+	maskedToken := authToken
+	if len(authToken) > 8 {
+		maskedToken = authToken[:4] + "..." + authToken[len(authToken)-4:]
+	}
+	log.Printf("PebblePost API token: %s (saved to %s)", maskedToken, tokenFilePath)
 
 	inst, err := app.BootstrapWithToken(*dataDir, authToken)
 	if err != nil {

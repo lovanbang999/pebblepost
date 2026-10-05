@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,5 +256,144 @@ func TestService_OptionsAndParseKey(t *testing.T) {
 	svc := NewService("1.0.0", t.TempDir(), WithHTTPClient(customClient))
 	if svc.httpClient != customClient {
 		t.Errorf("expected custom HTTP client")
+	}
+}
+
+func TestApplyUpdate_SecurityGates(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	validBinaryPayload := []byte("#!/bin/sh\necho upgraded pebblepost\n")
+	validSignature := ed25519.Sign(priv, validBinaryPayload)
+
+	// Spin up real HTTP server serving artifacts
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/binary":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(validBinaryPayload)
+		case "/binary-tampered":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write([]byte("#!/bin/sh\necho malicious backdoor\n"))
+		case "/signature":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(validSignature)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	targetDir := t.TempDir()
+	targetBinary := filepath.Join(targetDir, "pebblepost")
+	_ = os.WriteFile(targetBinary, []byte("original binary"), 0755)
+
+	// 1. Refuse Downgrade Test
+	{
+		svc := NewService("2.0.0", targetDir, WithPublicKey(pub), WithHTTPClient(ts.Client()))
+		info := &UpdateInfo{
+			LatestVersion: "1.9.0",
+			AssetURL:      "https://example.com/binary",
+			SignatureURL:  "https://example.com/signature",
+		}
+		err := svc.ApplyUpdate(context.Background(), targetBinary, info)
+		if err == nil || !strings.Contains(err.Error(), "refusing to downgrade") {
+			t.Fatalf("expected downgrade refusal error, got: %v", err)
+		}
+	}
+
+	// 2. Refuse Insecure HTTP Test (production mode)
+	{
+		svc := NewService("1.0.0", targetDir, WithPublicKey(pub), WithHTTPClient(ts.Client()))
+		info := &UpdateInfo{
+			LatestVersion: "2.0.0",
+			AssetURL:      ts.URL + "/binary", // http://...
+			SignatureURL:  "https://example.com/signature",
+		}
+		err := svc.ApplyUpdate(context.Background(), targetBinary, info)
+		if err == nil || !strings.Contains(err.Error(), "HTTPS is required") {
+			t.Fatalf("expected HTTPS required error, got: %v", err)
+		}
+	}
+
+	// 3. Missing Signature URL Test
+	{
+		svc := NewService("1.0.0", targetDir, WithPublicKey(pub), WithHTTPClient(ts.Client()), WithAllowInsecureHTTP(true))
+		info := &UpdateInfo{
+			LatestVersion: "2.0.0",
+			AssetURL:      ts.URL + "/binary",
+			SignatureURL:  "",
+		}
+		err := svc.ApplyUpdate(context.Background(), targetBinary, info)
+		if err == nil || !strings.Contains(err.Error(), "missing signature URL") {
+			t.Fatalf("expected missing signature error, got: %v", err)
+		}
+	}
+
+	// 4. Missing Public Key Test
+	{
+		svc := NewService("1.0.0", targetDir, WithHTTPClient(ts.Client()), WithAllowInsecureHTTP(true))
+		info := &UpdateInfo{
+			LatestVersion: "2.0.0",
+			AssetURL:      ts.URL + "/binary",
+			SignatureURL:  ts.URL + "/signature",
+		}
+		err := svc.ApplyUpdate(context.Background(), targetBinary, info)
+		if err == nil || !strings.Contains(err.Error(), "trusted public key not configured") {
+			t.Fatalf("expected missing public key error, got: %v", err)
+		}
+	}
+
+	// 5. Tampered Artifact Test (signature mismatch)
+	{
+		svc := NewService("1.0.0", targetDir, WithPublicKey(pub), WithHTTPClient(ts.Client()), WithAllowInsecureHTTP(true))
+		info := &UpdateInfo{
+			LatestVersion: "2.0.0",
+			AssetURL:      ts.URL + "/binary-tampered",
+			SignatureURL:  ts.URL + "/signature",
+		}
+		err := svc.ApplyUpdate(context.Background(), targetBinary, info)
+		if err == nil || !strings.Contains(err.Error(), "verification failed") {
+			t.Fatalf("expected signature verification failure for tampered artifact, got: %v", err)
+		}
+
+		// Ensure original binary was NOT modified or replaced
+		origContent, _ := os.ReadFile(targetBinary)
+		if string(origContent) != "original binary" {
+			t.Fatalf("target binary was altered after failed verification: %s", string(origContent))
+		}
+	}
+
+	// 6. Successful Update Test
+	{
+		svc := NewService("1.0.0", targetDir, WithPublicKey(pub), WithHTTPClient(ts.Client()), WithAllowInsecureHTTP(true))
+		info := &UpdateInfo{
+			LatestVersion: "2.0.0",
+			AssetURL:      ts.URL + "/binary",
+			SignatureURL:  ts.URL + "/signature",
+		}
+		err := svc.ApplyUpdate(context.Background(), targetBinary, info)
+		if err != nil {
+			t.Fatalf("ApplyUpdate failed: %v", err)
+		}
+
+		// Check new binary replaced and executable permissions set
+		newContent, err := os.ReadFile(targetBinary)
+		if err != nil {
+			t.Fatalf("failed to read updated binary: %v", err)
+		}
+		if string(newContent) != string(validBinaryPayload) {
+			t.Fatalf("binary content mismatch: %s", string(newContent))
+		}
+
+		fi, err := os.Stat(targetBinary)
+		if err != nil {
+			t.Fatalf("failed to stat binary: %v", err)
+		}
+		if fi.Mode().Perm()&0111 == 0 {
+			t.Fatalf("expected binary to be executable, got perm: %v", fi.Mode().Perm())
+		}
 	}
 }

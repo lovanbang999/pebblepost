@@ -272,3 +272,75 @@ func TestDocs_WriteDocs(t *testing.T) {
 		t.Errorf("expected non-empty output file at %s", customFile)
 	}
 }
+
+func TestDocs_XSS_Prevention(t *testing.T) {
+	// Create collection with hostile XSS payloads across fields
+	hostileName := `<script>alert("XSS_NAME")</script>`
+	hostileDesc := `<script>alert("XSS_DESC")</script>`
+	hostileParam := `<script>alert("XSS_PARAM")</script>`
+	hostileBody := `<script>alert("XSS_BODY")</script>`
+
+	col := &docs.DocCollection{
+		Title:       `<script>alert("XSS_TITLE")</script>`,
+		Description: hostileDesc,
+		Items: []*docs.DocItem{
+			{
+				IsFolder: false,
+				Request: &docs.DocRequest{
+					Name:        hostileName,
+					Description: hostileDesc,
+					Method:      "POST",
+					URL:         "https://example.com/api?q=" + hostileParam,
+					Params: []types.KeyValue{
+						{Key: "q", Value: hostileParam, Enabled: true},
+					},
+					Headers: []types.KeyValue{
+						{Key: "X-Hostile", Value: hostileParam, Enabled: true},
+					},
+					Body: types.BodyDefinition{
+						Type: "raw",
+						Raw:  hostileBody,
+					},
+					Examples: []types.ExampleResponse{
+						{
+							Name:       `<script>alert("XSS_EX")</script>`,
+							StatusCode: 200,
+							Body:       `<script>alert("XSS_EX_BODY")</script>`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// 1. Verify HTML Generator
+	htmlOutput := docs.GenerateHTML(col)
+
+	// Ensure NO raw unescaped script tag appears for our payloads
+	forbiddenPayloads := []string{
+		`<script>alert("XSS_TITLE")</script>`,
+		`<script>alert("XSS_NAME")</script>`,
+		`<script>alert("XSS_DESC")</script>`,
+		`<script>alert("XSS_PARAM")</script>`,
+		`<script>alert("XSS_BODY")</script>`,
+		`<script>alert("XSS_EX")</script>`,
+		`<script>alert("XSS_EX_BODY")</script>`,
+	}
+
+	for _, p := range forbiddenPayloads {
+		if strings.Contains(htmlOutput, p) {
+			t.Errorf("HTML generator contains unescaped hostile payload: %q", p)
+		}
+	}
+
+	// Verify properly escaped versions exist
+	if !strings.Contains(htmlOutput, "&lt;script&gt;alert(&#34;XSS_NAME&#34;)&lt;/script&gt;") {
+		t.Errorf("HTML generator does not contain escaped hostile name")
+	}
+
+	// 2. Verify Markdown Generator
+	mdOutput := docs.GenerateMarkdown(col)
+	if strings.Contains(mdOutput, "[<script>") {
+		t.Errorf("Markdown TOC contains unescaped square bracket script payload")
+	}
+}

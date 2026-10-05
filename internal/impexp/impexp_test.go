@@ -1,6 +1,7 @@
 package impexp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -558,5 +559,78 @@ func TestPostman_URLReconstruction_HostAndPath(t *testing.T) {
 	}
 	if len(req.Request.Params) != 1 || req.Request.Params[0].Key != "limit" {
 		t.Errorf("expected 1 query param, got %+v", req.Request.Params)
+	}
+}
+
+func TestImporters_HostileScriptPayloadsAndPathGuard(t *testing.T) {
+	svc := NewService()
+	tmpDir := t.TempDir()
+
+	hostileName := `<script>alert("XSS")</script>`
+	hostileDesc := `<script>alert("XSS_DESC")</script>`
+
+	res := &ImportResult{
+		CollectionName: "Security Test",
+		Requests: []ImportedItem{
+			{
+				Name:    hostileName,
+				RelPath: "safe-sub/xss-req.pebble.json",
+				Request: &types.RequestDefinition{
+					Name:        hostileName,
+					Description: hostileDesc,
+					Method:      "GET",
+					URL:         "https://example.com/api",
+				},
+			},
+			{
+				Name:    "Malicious Path Traversal Request",
+				RelPath: "../../outside.pebble.json",
+				Request: &types.RequestDefinition{
+					Name:   "Escape Attempt",
+					Method: "GET",
+					URL:    "https://example.com/escape",
+				},
+			},
+		},
+		Folders: []ImportedFolder{
+			{
+				Name:    "Malicious Folder Traversal",
+				RelPath: "../../outside-folder",
+				Definition: types.FolderDefinition{
+					Name: "Malicious Folder",
+				},
+			},
+		},
+	}
+
+	report, err := svc.SaveToWorkspace(tmpDir, "collections/sec-test", res)
+	if err != nil {
+		t.Fatalf("SaveToWorkspace failed: %v", err)
+	}
+
+	// Traversal items must be skipped safely
+	if len(report.Skipped) < 2 {
+		t.Errorf("expected at least 2 skipped items for directory traversal attempts, got %d", len(report.Skipped))
+	}
+
+	// Safe request with hostile script payload in name/desc must be saved without crashing or escaping target
+	savedReqFile := filepath.Join(tmpDir, "collections/sec-test/safe-sub/xss-req.pebble.json")
+	data, err := os.ReadFile(savedReqFile)
+	if err != nil {
+		t.Fatalf("expected saved request at %s: %v", savedReqFile, err)
+	}
+
+	var savedReq types.RequestDefinition
+	if err := json.Unmarshal(data, &savedReq); err != nil {
+		t.Fatalf("failed to unmarshal saved request: %v", err)
+	}
+	if savedReq.Name != hostileName {
+		t.Errorf("expected name to be preserved: %s", savedReq.Name)
+	}
+
+	// Verify nothing was written outside targetBase
+	outsideFile := filepath.Join(tmpDir, "outside.pebble.json")
+	if _, err := os.Stat(outsideFile); !os.IsNotExist(err) {
+		t.Fatalf("file was written outside targetBase: %s", outsideFile)
 	}
 }

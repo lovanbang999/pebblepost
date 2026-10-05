@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -40,6 +41,7 @@ type OAuth2Manager struct {
 var (
 	globalOAuth2Manager *OAuth2Manager
 	oauth2Once          sync.Once
+	openURL             = browser.OpenURL
 )
 
 // GetOAuth2Manager returns the shared OAuth2Manager instance.
@@ -272,26 +274,46 @@ func (m *OAuth2Manager) AuthorizeCodePKCE(ctx context.Context, auth *types.AuthD
 
 	codeChan := make(chan string, 1)
 	errChan := make(chan error, 1)
+	var once sync.Once
 
-	// 3. Setup temporary HTTP server
+	// 3. Setup temporary HTTP server with Host header and timing-safe state validation
 	mux := http.NewServeMux()
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("state") != state {
-			http.Error(w, "State mismatch", http.StatusBadRequest)
-			errChan <- fmt.Errorf("state mismatch in OAuth2 callback")
+		// Validate Host header against DNS rebinding
+		reqHost := r.Host
+		if strings.Contains(reqHost, ":") {
+			if sh, _, err := net.SplitHostPort(reqHost); err == nil {
+				reqHost = sh
+			}
+		}
+		if reqHost != "127.0.0.1" && reqHost != "localhost" {
+			http.Error(w, "Invalid Host header", http.StatusBadRequest)
 			return
 		}
+
+		q := r.URL.Query()
+		incomingState := q.Get("state")
+		if subtle.ConstantTimeCompare([]byte(incomingState), []byte(state)) != 1 {
+			http.Error(w, "State mismatch", http.StatusBadRequest)
+			// Do not push to errChan: a mismatched probe should not abort legitimate waiting flow
+			return
+		}
+
 		if errMsg := q.Get("error"); errMsg != "" {
 			desc := q.Get("error_description")
 			http.Error(w, fmt.Sprintf("OAuth error: %s (%s)", errMsg, desc), http.StatusBadRequest)
-			errChan <- fmt.Errorf("oauth error: %s - %s", errMsg, desc)
+			once.Do(func() {
+				errChan <- fmt.Errorf("oauth error: %s - %s", errMsg, desc)
+			})
 			return
 		}
+
 		code := q.Get("code")
 		if code == "" {
 			http.Error(w, "Missing authorization code", http.StatusBadRequest)
-			errChan <- fmt.Errorf("missing code in callback")
+			once.Do(func() {
+				errChan <- fmt.Errorf("missing code in callback")
+			})
 			return
 		}
 
@@ -314,7 +336,9 @@ p { color: #a1a1aa; font-size: 0.9rem; }
 </body>
 </html>`))
 
-		codeChan <- code
+		once.Do(func() {
+			codeChan <- code
+		})
 	})
 
 	server := &http.Server{Handler: mux}
@@ -349,7 +373,7 @@ p { color: #a1a1aa; font-size: 0.9rem; }
 
 	// Open browser
 	targetURL := authURLParsed.String()
-	_ = browser.OpenURL(targetURL)
+	_ = openURL(targetURL)
 
 	// 5. Wait for callback or timeout (2 minutes)
 	select {

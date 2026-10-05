@@ -1,6 +1,9 @@
 package workspace
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"pebblepost/internal/types"
@@ -130,5 +133,48 @@ func TestEnvironmentService_SecretSplitting(t *testing.T) {
 
 	if !foundDBPass || !foundAPIUrl {
 		t.Errorf("missing expected variables in loaded env: foundDBPass=%v, foundAPIUrl=%v", foundDBPass, foundAPIUrl)
+	}
+}
+
+func TestEnvironmentService_SecretFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping POSIX file mode assertions on Windows")
+	}
+
+	tempDir := t.TempDir()
+	envSvc := NewEnvironmentService()
+
+	env := types.EnvironmentDefinition{
+		Name: "secure-env",
+		Variables: []types.KeyValue{
+			{Key: "PUBLIC_VAR", Value: "123", Enabled: true, Secret: false},
+			{Key: "SECRET_VAR", Value: "secret-token-xyz", Enabled: true, Secret: true},
+		},
+	}
+
+	if err := envSvc.SaveEnvironment(tempDir, env, false); err != nil {
+		t.Fatalf("SaveEnvironment failed: %v", err)
+	}
+
+	envDir := filepath.Join(tempDir, PebbleDir, EnvironmentsDir)
+
+	// Public env file should be 0644
+	publicFile := filepath.Join(envDir, "secure-env.env.json")
+	pubFi, err := os.Stat(publicFile)
+	if err != nil {
+		t.Fatalf("stat public env file failed: %v", err)
+	}
+	if perm := pubFi.Mode().Perm(); perm != 0644 {
+		t.Errorf("public env file mode = %o; want 0644", perm)
+	}
+
+	// Secret env file MUST be 0600
+	secretFile := filepath.Join(envDir, "secure-env.secret.env.json")
+	secFi, err := os.Stat(secretFile)
+	if err != nil {
+		t.Fatalf("stat secret env file failed: %v", err)
+	}
+	if perm := secFi.Mode().Perm(); perm != 0600 {
+		t.Errorf("secret env file mode = %o; want 0600", perm)
 	}
 }

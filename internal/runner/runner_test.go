@@ -411,3 +411,64 @@ func TestRunner_FolderInheritance(t *testing.T) {
 		t.Errorf("expected 2 passed tests (1 req + 1 folder), got %d", summary.PassedTests)
 	}
 }
+
+func TestRunner_UntrustedScriptsSkipped(t *testing.T) {
+	var receivedHeaders http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer ts.Close()
+
+	workspaceDir := t.TempDir()
+	reqDir := filepath.Join(workspaceDir, "test-col")
+	_ = os.MkdirAll(reqDir, 0755)
+
+	reqFile := filepath.Join(reqDir, "get-user.pebble.json")
+	reqObj := types.RequestDefinition{
+		ID:     "req-trust-1",
+		Name:   "Get User",
+		Method: "GET",
+		URL:    ts.URL + "/test",
+		Scripts: types.ScriptDefinition{
+			PreRequest: `pb.request.headers.set("X-Script-Ran", "true");`,
+		},
+	}
+	reqData, _ := json.Marshal(reqObj)
+	_ = os.WriteFile(reqFile, reqData, 0644)
+
+	r := NewRunner()
+
+	// Case 1: Untrusted (TrustScripts: &false)
+	untrusted := false
+	summary1, err := r.Run(context.Background(), RunOptions{
+		TargetPath:   workspaceDir,
+		TrustScripts: &untrusted,
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if !summary1.Success {
+		t.Fatalf("expected run to succeed")
+	}
+	if receivedHeaders.Get("X-Script-Ran") != "" {
+		t.Fatalf("expected pre-request script NOT to run when untrusted, got %s", receivedHeaders.Get("X-Script-Ran"))
+	}
+
+	// Case 2: Trusted (TrustScripts: &true)
+	trusted := true
+	summary2, err := r.Run(context.Background(), RunOptions{
+		TargetPath:   workspaceDir,
+		TrustScripts: &trusted,
+	})
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if !summary2.Success {
+		t.Fatalf("expected run to succeed")
+	}
+	if receivedHeaders.Get("X-Script-Ran") != "true" {
+		t.Fatalf("expected pre-request script to run when trusted, got %s", receivedHeaders.Get("X-Script-Ran"))
+	}
+}

@@ -32,14 +32,25 @@ func GenerateMarkdown(col *DocCollection) string {
 }
 
 func slugify(text string) string {
-	clean := strings.ToLower(text)
-	clean = strings.ReplaceAll(clean, " ", "-")
-	clean = strings.ReplaceAll(clean, "/", "-")
-	clean = strings.ReplaceAll(clean, ".", "-")
-	clean = strings.ReplaceAll(clean, "(", "")
-	clean = strings.ReplaceAll(clean, ")", "")
-	clean = strings.ReplaceAll(clean, ":", "")
-	return clean
+	var sb strings.Builder
+	for _, r := range strings.ToLower(text) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			sb.WriteRune(r)
+		} else if r == ' ' || r == '/' || r == '.' || r == '-' || r == ':' {
+			sb.WriteRune('-')
+		}
+	}
+	res := strings.Trim(sb.String(), "-")
+	if res == "" {
+		res = "item"
+	}
+	return res
+}
+
+func sanitizeMarkdownTOC(text string) string {
+	s := strings.ReplaceAll(text, "[", "\\[")
+	s = strings.ReplaceAll(s, "]", "\\]")
+	return s
 }
 
 func writeTOC(sb *strings.Builder, items []*DocItem, depth int) {
@@ -47,7 +58,7 @@ func writeTOC(sb *strings.Builder, items []*DocItem, depth int) {
 	for _, item := range items {
 		if item.IsFolder && item.Folder != nil {
 			anchor := slugify(item.Folder.Name)
-			sb.WriteString(fmt.Sprintf("%s- [%s](#%s)\n", indent, item.Folder.Name, anchor))
+			sb.WriteString(fmt.Sprintf("%s- [%s](#%s)\n", indent, sanitizeMarkdownTOC(item.Folder.Name), anchor))
 			writeTOC(sb, item.Folder.Items, depth+1)
 		} else if !item.IsFolder && item.Request != nil {
 			req := item.Request
@@ -56,7 +67,7 @@ func writeTOC(sb *strings.Builder, items []*DocItem, depth int) {
 				method = "GET"
 			}
 			anchor := slugify(fmt.Sprintf("%s-%s", method, req.Name))
-			sb.WriteString(fmt.Sprintf("%s- [`%s` %s](#%s)\n", indent, method, req.Name, anchor))
+			sb.WriteString(fmt.Sprintf("%s- [`%s` %s](#%s)\n", indent, method, sanitizeMarkdownTOC(req.Name), anchor))
 		}
 	}
 }

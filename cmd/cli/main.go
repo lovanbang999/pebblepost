@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -80,6 +81,7 @@ func handleRun(args []string) {
 		tagFlag        = fs.String("tag", "", "Filter requests by tag (exact match)")
 		outFlag        = fs.String("out", "", "Output file path for the last --reporter (shorthand for reporter:path)")
 		ciFlag         = fs.Bool("ci", false, "CI/CD mode (alias for --bail, preserved for backward compatibility)")
+		trustFlag      = fs.Bool("trust", false, "Trust and execute pre-request and test scripts in collections")
 	)
 
 	fs.StringVar(dataFlag, "d", "", "Path to data file (shorthand)")
@@ -104,6 +106,12 @@ func handleRun(args []string) {
 		if fi, err := os.Stat("collections"); err == nil && fi.IsDir() {
 			targetPath = "collections"
 		}
+	}
+
+	// ── Script Trust ──────────────────────────────────────────────────────────
+	trusted := *trustFlag || isCollectionTrusted(targetPath) || os.Getenv("PEBBLEPOST_TRUST") == "1" || os.Getenv("PEBBLEPOST_TRUST_SCRIPTS") == "1"
+	if !trusted {
+		fmt.Fprintln(os.Stderr, "Notice: Scripts are disabled for untrusted collection. Pass --trust or create a .pebbletrust file to enable script execution.")
 	}
 
 	// ── Parse --var flags ─────────────────────────────────────────────────────
@@ -159,6 +167,7 @@ func handleRun(args []string) {
 		EnvFile:         *envFileFlag,
 		ExtraVars:       extraVars,
 		Reporters:       reporters,
+		TrustScripts:    &trusted,
 		Filter: runner.FilterOptions{
 			Folder:  *folderFlag,
 			Request: *requestFlag,
@@ -356,6 +365,7 @@ Flags for 'run':
   --bail                    Stop immediately on the first failure
   --dry-run                 Print request order without sending HTTP requests
   --ci                      CI/CD mode (alias for --bail)
+  --trust                   Trust and execute pre-request and test scripts in collections
 
 Exit Codes:
   0   Success (all requests passed or import successful)
@@ -462,4 +472,29 @@ func envOr(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+// isCollectionTrusted checks for a .pebbletrust file in targetPath or any parent directory.
+func isCollectionTrusted(targetPath string) bool {
+	candidates := []string{
+		filepath.Join(targetPath, ".pebbletrust"),
+		".pebbletrust",
+	}
+	if abs, err := filepath.Abs(targetPath); err == nil {
+		dir := abs
+		for {
+			candidates = append(candidates, filepath.Join(dir, ".pebbletrust"))
+			parent := filepath.Dir(dir)
+			if parent == dir || parent == "" {
+				break
+			}
+			dir = parent
+		}
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return true
+		}
+	}
+	return false
 }

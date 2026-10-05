@@ -143,7 +143,7 @@ func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.Environm
 			s.watcher.Suppress(secretFilePath, 1000*time.Millisecond)
 		}
 		env.SchemaVersion = CurrentSchemaVersion
-		return WriteFileStable(secretFilePath, env)
+		return WriteFileStableWithMode(secretFilePath, env, 0600)
 	}
 
 	// Partition variables by Secret flag
@@ -177,7 +177,7 @@ func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.Environm
 			Name:          env.Name,
 			Variables:     secretVars,
 		}
-		if err := WriteFileStable(secretFilePath, secretEnv); err != nil {
+		if err := WriteFileStableWithMode(secretFilePath, secretEnv, 0600); err != nil {
 			return err
 		}
 	} else {

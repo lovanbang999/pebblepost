@@ -2,6 +2,8 @@ package history
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -284,3 +286,36 @@ func containsStr(s, substr string) bool {
 }
 
 var _ = os.Stderr // keep import
+
+func TestHistory_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping POSIX file mode assertions on Windows")
+	}
+
+	dir := t.TempDir()
+	historyDir := filepath.Join(dir, "history")
+	s, err := Open(historyDir)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer s.Close()
+
+	// Verify directory permissions 0700
+	dirFi, err := os.Stat(historyDir)
+	if err != nil {
+		t.Fatalf("stat historyDir failed: %v", err)
+	}
+	if perm := dirFi.Mode().Perm(); perm != 0700 {
+		t.Errorf("history directory mode = %o; want 0700", perm)
+	}
+
+	// Verify database file permissions 0600
+	dbPath := filepath.Join(historyDir, "history.db")
+	dbFi, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat history.db failed: %v", err)
+	}
+	if perm := dbFi.Mode().Perm(); perm != 0600 {
+		t.Errorf("history.db mode = %o; want 0600", perm)
+	}
+}

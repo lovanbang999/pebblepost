@@ -306,9 +306,10 @@ func (j *PersistentJar) saveLocked() error {
 		return nil
 	}
 	pebbleDir := filepath.Join(j.workspacePath, ".pebble")
-	if err := os.MkdirAll(pebbleDir, 0755); err != nil {
+	if err := os.MkdirAll(pebbleDir, 0700); err != nil {
 		return err
 	}
+	_ = os.Chmod(pebbleDir, 0700)
 
 	var items []types.CookieItem
 	now := time.Now().UTC()
@@ -329,7 +330,11 @@ func (j *PersistentJar) saveLocked() error {
 		return err
 	}
 
-	return os.WriteFile(filePath, data, 0600)
+	if err := os.WriteFile(filePath, data, 0600); err != nil {
+		return err
+	}
+	_ = os.Chmod(filePath, 0600)
+	return nil
 }
 
 func (j *PersistentJar) setLocked(item types.CookieItem) {

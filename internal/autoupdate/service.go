@@ -27,19 +27,27 @@ const (
 
 // Service manages update checks, settings, and signature verifications.
 type Service struct {
-	mu             sync.RWMutex
-	currentVersion string
-	repoOwner      string
-	repoName       string
-	apiBaseURL     string
-	publicKey      ed25519.PublicKey
-	settingsPath   string
-	settings       UpdateSettings
-	httpClient     *http.Client
+	mu                sync.RWMutex
+	currentVersion    string
+	repoOwner         string
+	repoName          string
+	apiBaseURL        string
+	publicKey         ed25519.PublicKey
+	settingsPath      string
+	settings          UpdateSettings
+	httpClient        *http.Client
+	allowInsecureHTTP bool
 }
 
 // Option configures Service.
 type Option func(*Service)
+
+// WithAllowInsecureHTTP allows HTTP download URLs (intended only for local tests).
+func WithAllowInsecureHTTP(allow bool) Option {
+	return func(s *Service) {
+		s.allowInsecureHTTP = allow
+	}
+}
 
 // WithAPIBase sets a custom GitHub API base URL (useful for testing).
 func WithAPIBase(url string) Option {
@@ -326,4 +334,143 @@ func VerifySignature(message []byte, signatureData []byte, pubKey ed25519.Public
 		return false
 	}
 	return ed25519.Verify(pubKey, message, sig)
+}
+
+// ApplyUpdate downloads the binary and signature, verifies the signature against the trusted public key,
+// checks semver to prevent downgrades, enforces HTTPS-only downloads, ensures secure temporary file permissions (0600),
+// and replaces the binary at targetBinaryPath only if all verification checks pass.
+func (s *Service) ApplyUpdate(ctx context.Context, targetBinaryPath string, info *UpdateInfo) error {
+	if info == nil {
+		return errors.New("update info cannot be nil")
+	}
+
+	// 1. Refuse downgrade or same-version reinstall
+	if CompareSemver(info.LatestVersion, s.currentVersion) <= 0 {
+		return fmt.Errorf("refusing to downgrade or reinstall version %s when current version is %s", info.LatestVersion, s.currentVersion)
+	}
+
+	// 2. Enforce HTTPS only (unless explicitly allowed in tests)
+	if !s.allowInsecureHTTP {
+		if !strings.HasPrefix(strings.ToLower(info.AssetURL), "https://") {
+			return fmt.Errorf("insecure asset URL: HTTPS is required (got %s)", info.AssetURL)
+		}
+		if !strings.HasPrefix(strings.ToLower(info.SignatureURL), "https://") {
+			return fmt.Errorf("insecure signature URL: HTTPS is required (got %s)", info.SignatureURL)
+		}
+	}
+
+	// 3. Verify signature presence and public key configuration
+	if strings.TrimSpace(info.SignatureURL) == "" {
+		return errors.New("missing signature URL: update artifact cannot be verified")
+	}
+	s.mu.RLock()
+	pubKey := s.publicKey
+	s.mu.RUnlock()
+	if len(pubKey) == 0 {
+		return errors.New("trusted public key not configured: cannot verify update signature")
+	}
+
+	// 4. Download signature
+	sigReq, err := http.NewRequestWithContext(ctx, http.MethodGet, info.SignatureURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create signature request: %w", err)
+	}
+	sigResp, err := s.httpClient.Do(sigReq)
+	if err != nil {
+		return fmt.Errorf("failed to download signature: %w", err)
+	}
+	defer sigResp.Body.Close()
+	if sigResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("signature download failed with status %d", sigResp.StatusCode)
+	}
+	sigBytes, err := io.ReadAll(io.LimitReader(sigResp.Body, 64*1024))
+	if err != nil {
+		return fmt.Errorf("failed to read signature: %w", err)
+	}
+
+	// 5. Download asset to temporary file with secure 0600 permissions in 0700 dir
+	tempDir, err := os.MkdirTemp("", "pebblepost-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	_ = os.Chmod(tempDir, 0700)
+	defer os.RemoveAll(tempDir)
+
+	tempFile := filepath.Join(tempDir, "update-binary.tmp")
+	f, err := os.OpenFile(tempFile, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to create secure temp file: %w", err)
+	}
+
+	assetReq, err := http.NewRequestWithContext(ctx, http.MethodGet, info.AssetURL, nil)
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("failed to create asset request: %w", err)
+	}
+	assetResp, err := s.httpClient.Do(assetReq)
+	if err != nil {
+		f.Close()
+		return fmt.Errorf("failed to download asset: %w", err)
+	}
+	defer assetResp.Body.Close()
+	if assetResp.StatusCode != http.StatusOK {
+		f.Close()
+		return fmt.Errorf("asset download failed with status %d", assetResp.StatusCode)
+	}
+
+	written, err := io.Copy(f, assetResp.Body)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("failed to write update asset: %w", err)
+	}
+	if written == 0 {
+		return errors.New("downloaded update asset is empty")
+	}
+
+	assetBytes, err := os.ReadFile(tempFile)
+	if err != nil {
+		return fmt.Errorf("failed to read downloaded update asset: %w", err)
+	}
+
+	// 6. Signature verification gate: MUST PASS before touching target binary
+	if !VerifySignature(assetBytes, sigBytes, pubKey) {
+		return errors.New("update signature verification failed: tampered artifact or invalid signature")
+	}
+
+	// 7. Make binary executable (0755) and replace targetBinaryPath
+	if err := os.Chmod(tempFile, 0755); err != nil {
+		return fmt.Errorf("failed to set executable permissions: %w", err)
+	}
+
+	if targetBinaryPath == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to resolve current executable path: %w", err)
+		}
+		targetBinaryPath = exe
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetBinaryPath), 0755); err != nil {
+		return fmt.Errorf("failed to create target binary parent directory: %w", err)
+	}
+
+	if err := os.Rename(tempFile, targetBinaryPath); err != nil {
+		// Fallback for cross-device moves
+		in, errCopy := os.Open(tempFile)
+		if errCopy != nil {
+			return fmt.Errorf("failed to replace binary: %w", errCopy)
+		}
+		defer in.Close()
+		out, errCreate := os.OpenFile(targetBinaryPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if errCreate != nil {
+			return fmt.Errorf("failed to replace binary: %w", errCreate)
+		}
+		if _, errCopyData := io.Copy(out, in); errCopyData != nil {
+			out.Close()
+			return fmt.Errorf("failed to copy binary: %w", errCopyData)
+		}
+		out.Close()
+	}
+
+	return nil
 }

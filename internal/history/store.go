@@ -31,6 +31,8 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("history: mkdir %s: %w", dir, err)
 	}
+	_ = os.Chmod(dir, 0o700)
+
 	dbPath := filepath.Join(dir, "history.db")
 	db, err := sql.Open("sqlite", dbPath+"?_journal=WAL&_timeout=5000")
 	if err != nil {
@@ -43,6 +45,11 @@ func Open(dir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+
+	_ = os.Chmod(dbPath, 0o600)
+	_ = os.Chmod(dbPath+"-wal", 0o600)
+	_ = os.Chmod(dbPath+"-shm", 0o600)
+
 	return s, nil
 }
 
