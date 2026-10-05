@@ -147,7 +147,7 @@ jobs:
 
 ```yaml
 api-tests:
-  image: golang:1.22-alpine
+  image: golang:1.25-alpine
   stage: test
   script:
     - go install pebblepost/cmd/cli@latest
