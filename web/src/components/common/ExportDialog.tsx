@@ -30,7 +30,11 @@ interface ExportResponse {
   count: number;
 }
 
-export function ExportDialog() {
+interface ExportDialogProps {
+  trigger?: React.ReactElement;
+}
+
+export function ExportDialog({ trigger }: ExportDialogProps = {}) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<ExportFormat>("postman");
   const [loading, setLoading] = useState(false);
@@ -117,20 +121,24 @@ export function ExportDialog() {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <Tooltip content="Export Collection">
-        <DialogTrigger
-          id="export-trigger"
-          render={
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-            />
-          }
-        >
-          <Download className="w-3.5 h-3.5" />
-        </DialogTrigger>
-      </Tooltip>
+      {trigger ? (
+        <DialogTrigger render={trigger} />
+      ) : (
+        <Tooltip content="Export Collection">
+          <DialogTrigger
+            id="export-trigger"
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              />
+            }
+          >
+            <Download className="w-3.5 h-3.5" />
+          </DialogTrigger>
+        </Tooltip>
+      )}
 
       <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>

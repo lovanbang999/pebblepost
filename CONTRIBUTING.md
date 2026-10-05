@@ -14,7 +14,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](./
 
 ### Prerequisites
 
-- **Go**: 1.22 or higher ([Download](https://go.dev/dl/))
+- **Go**: 1.25 or higher ([Download](https://go.dev/dl/))
 - **Node.js**: v20 or higher & npm ([Download](https://nodejs.org/))
 - **Wails v2 CLI**: For desktop application development
   ```bash

@@ -32,8 +32,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Ensure web/dist placeholder for go:embed
-        run: mkdir -p web/dist && touch web/dist/.gitkeep
+      - name: Ensure web/dist placeholder and isolate node_modules
+        run: |
+          mkdir -p web/dist && touch web/dist/.gitkeep
+          if [ -d web/node_modules ]; then echo "module pebblepost/web/node_modules" > web/node_modules/go.mod; fi
 
       - name: go vet
         run: go vet ./...
@@ -115,11 +117,54 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Ensure web/dist placeholder for go:embed
-        run: mkdir -p web/dist && touch web/dist/.gitkeep
+      - name: Ensure web/dist placeholder and isolate node_modules
+        run: |
+          mkdir -p web/dist && touch web/dist/.gitkeep
+          if [ -d web/node_modules ]; then echo "module pebblepost/web/node_modules" > web/node_modules/go.mod; fi
 
       - name: Build CLI
         run: go build -v ./cmd/cli/...
 
       - name: Build server
         run: go build -v ./cmd/server/...
+
+  # ─── Playwright E2E smoke tests ──────────────────────────────────────────────
+  e2e:
+    name: Playwright E2E (ubuntu-latest)
+    runs-on: ubuntu-latest
+    needs: [build, frontend]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: cd web && npm ci
+
+      - name: Build frontend bundle
+        run: cd web && npm run build
+
+      - name: Build pebblepost CLI binary
+        run: go build -o bin/pebblepost ./cmd/cli
+
+      - name: Install Playwright Chromium
+        run: cd web && npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E smoke tests
+        run: cd web && npm run test:e2e
+

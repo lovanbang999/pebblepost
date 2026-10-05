@@ -1,6 +1,6 @@
 # PebblePost
 
-A local-first, Git-friendly API client, runner, and documentation studio for REST, GraphQL, gRPC, and WebSocket/SSE. Built with Go 1.26, React 19, Tailwind CSS v4, and Wails v2.
+A local-first, Git-friendly API client, runner, and documentation studio for REST, GraphQL, gRPC, and WebSocket/SSE. Built with Go 1.25, React 19, Tailwind CSS v4, and Wails v2.
 
 [![Release](https://img.shields.io/github/v/release/lovanbang999/pebblepost?style=flat-square)](https://github.com/lovanbang999/pebblepost/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](./LICENSE)
@@ -272,7 +272,24 @@ if (body?.access_token) {
 
 ---
 
+## Performance & Benchmarks
+
+PebblePost is engineered for instant execution and minimal resource consumption compared to Electron-based alternatives:
+
+| Metric | PebblePost CLI | PebblePost Server | Postman (v11) | Bruno (v1.38) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Cold Startup Time** | **< 10 ms** | **22.45 ms** | ~2,400 ms | ~1,100 ms |
+| **Idle Memory (RSS)** | Ephemeral (~16.7 MB peak) | **19.56 MB** | ~420 MB | ~170 MB |
+| **Executable Size** | **29.1 MB** *(with web UI)* | **29.1 MB** *(with web UI)* | ~180 MB installer | ~95 MB installer |
+| **Runtime Architecture** | Standalone static ELF | Standalone static ELF | Electron / Chromium | Electron / Chromium |
+| **CGO / Dependencies** | None (`CGO_ENABLED=0`) | None (`CGO_ENABLED=0`) | Node.js + Chromium | Node.js + Chromium |
+
+*Measurements conducted on Linux x86_64, Go 1.25.1 (`-trimpath -ldflags="-s -w"`). See [docs/benchmarks.md](./docs/benchmarks.md) for full reproduction commands and methodology.*
+
+---
+
 ## Security & Code Signing
+
 
 PebblePost releases are cryptographically signed using Minisign (Ed25519). For detailed instructions on verifying signatures or bypassing macOS Gatekeeper and Windows SmartScreen without commercial enterprise certificates, see [docs/packaging.md](./docs/packaging.md).
 

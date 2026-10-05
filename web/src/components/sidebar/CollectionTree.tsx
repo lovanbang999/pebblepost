@@ -18,6 +18,9 @@ import {
   Settings,
   Play,
   BookOpen,
+  MoreHorizontal,
+  Upload,
+  Download,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
@@ -162,6 +165,22 @@ export function CollectionTree() {
 
   // Delete confirmation modal state
   const [deleteConfirmNode, setDeleteConfirmNode] = useState<TreeNode | null>(null)
+
+  // Secondary actions overflow menu state
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false)
+  const moreMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false)
+      }
+    }
+    if (isMoreMenuOpen) {
+      document.addEventListener('mousedown', handleOutsideClick)
+      return () => document.removeEventListener('mousedown', handleOutsideClick)
+    }
+  }, [isMoreMenuOpen])
 
   // Drag & drop state
   const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null)
@@ -820,6 +839,7 @@ export function CollectionTree() {
         <div className="flex items-center gap-0.5">
           <Tooltip content="New Request (Enter to create, Esc to cancel)">
             <Button
+              aria-label="New Request"
               variant="ghost"
               size="icon"
               onClick={() => startInlineCreation('file')}
@@ -830,6 +850,7 @@ export function CollectionTree() {
           </Tooltip>
           <Tooltip content="New Folder (Enter to create, Esc to cancel)">
             <Button
+              aria-label="New Folder"
               variant="ghost"
               size="icon"
               onClick={() => startInlineCreation('folder')}
@@ -838,50 +859,9 @@ export function CollectionTree() {
               <FolderPlus className="w-3.5 h-3.5" />
             </Button>
           </Tooltip>
-          <Tooltip content="Refresh Files from Disk">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleRefresh}
-              disabled={isRefreshing || isLoadingWorkspace}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 disabled:opacity-70"
-            >
-              <RefreshCw
-                className={cn(
-                  'w-3.5 h-3.5 transition-all duration-300',
-                  (isRefreshing || isLoadingWorkspace) && 'animate-spin text-zinc-700 dark:text-zinc-300'
-                )}
-              />
-            </Button>
-          </Tooltip>
-          <Tooltip content={isAnyFolderExpanded ? 'Collapse All Folders' : 'Expand All Folders'}>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleToggleExpandCollapseAll}
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-            >
-              {isAnyFolderExpanded ? (
-                <ChevronsDownUp className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronsUpDown className="w-3.5 h-3.5" />
-              )}
-            </Button>
-          </Tooltip>
-          <ImportDialog />
-          <ExportDialog />
-          <Tooltip content="Documentation">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => openDocsTab()}
-              className="h-6 w-6 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-            </Button>
-          </Tooltip>
           <Tooltip content="Collection Runner">
             <Button
+              aria-label="Collection Runner"
               variant="ghost"
               size="icon"
               onClick={() => openRunnerTab()}
@@ -890,6 +870,102 @@ export function CollectionTree() {
               <Play className="w-3.5 h-3.5 fill-current" />
             </Button>
           </Tooltip>
+
+          {/* Secondary Actions Overflow Menu */}
+          <div className="relative" ref={moreMenuRef}>
+            <Tooltip content="More Actions">
+              <Button
+                aria-label="More Actions"
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsMoreMenuOpen((v) => !v)}
+                className={cn(
+                  'h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900',
+                  isMoreMenuOpen && 'bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100'
+                )}
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </Button>
+            </Tooltip>
+
+            {isMoreMenuOpen && (
+              <div className="absolute right-0 top-7 z-50 w-52 py-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg text-xs animate-in fade-in zoom-in-95 duration-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleRefresh()
+                    setIsMoreMenuOpen(false)
+                  }}
+                  disabled={isRefreshing || isLoadingWorkspace}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-left disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw
+                    className={cn(
+                      'w-3.5 h-3.5',
+                      (isRefreshing || isLoadingWorkspace) && 'animate-spin text-zinc-700 dark:text-zinc-300'
+                    )}
+                  />
+                  <span>Refresh Files from Disk</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleToggleExpandCollapseAll()
+                    setIsMoreMenuOpen(false)
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-left cursor-pointer"
+                >
+                  {isAnyFolderExpanded ? (
+                    <ChevronsDownUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronsUpDown className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isAnyFolderExpanded ? 'Collapse All Folders' : 'Expand All Folders'}</span>
+                </button>
+
+                <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+
+                <ImportDialog
+                  trigger={
+                    <button
+                      type="button"
+                      onClick={() => setIsMoreMenuOpen(false)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-left cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Import Request / Collection...</span>
+                    </button>
+                  }
+                />
+                <ExportDialog
+                  trigger={
+                    <button
+                      type="button"
+                      onClick={() => setIsMoreMenuOpen(false)}
+                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors text-left cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Export Collection...</span>
+                    </button>
+                  }
+                />
+
+                <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    openDocsTab()
+                    setIsMoreMenuOpen(false)
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-left cursor-pointer"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>API Documentation</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

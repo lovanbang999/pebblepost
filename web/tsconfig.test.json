@@ -10,5 +10,6 @@
     "strict": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.test.ts"]
+  "include": ["src/**/*.test.ts", "e2e/**/*.ts"]
 }
+

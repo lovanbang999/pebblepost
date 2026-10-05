@@ -1120,14 +1120,14 @@ export function RequestPanel() {
                         </TableCell>
                         <TableCell className="p-1">
                           <div className="flex items-center gap-1.5">
-                            <input
-                              type="text"
+                            <VariableInput
                               value={header.key}
-                              onChange={(e) =>
-                                handleUpdateHeader(idx, "key", e.target.value)
+                              onChange={(val) =>
+                                handleUpdateHeader(idx, "key", val)
                               }
+                              onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                               placeholder="Header Name"
-                              className="flex-1 bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                              className="h-7 border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 bg-transparent px-2"
                             />
                             {header.key.trim() && resolvedInfo?.overriddenHeaders?.[header.key.trim().toLowerCase()] && (
                               <Badge
@@ -1140,14 +1140,14 @@ export function RequestPanel() {
                           </div>
                         </TableCell>
                         <TableCell className="p-1">
-                          <input
-                            type="text"
+                          <VariableInput
                             value={header.value}
-                            onChange={(e) =>
-                              handleUpdateHeader(idx, "value", e.target.value)
+                            onChange={(val) =>
+                              handleUpdateHeader(idx, "value", val)
                             }
+                            onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                             placeholder="Value or {{VAR}}"
-                            className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                            className="h-7 border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 bg-transparent px-2"
                           />
                         </TableCell>
                         <TableCell className="p-1 text-center">
@@ -1479,25 +1479,25 @@ export function RequestPanel() {
                             />
                           </TableCell>
                           <TableCell className="p-1">
-                            <input
-                              type="text"
+                            <VariableInput
                               value={param.key}
-                              onChange={(e) =>
-                                handleUpdateParam(idx, "key", e.target.value)
+                              onChange={(val) =>
+                                handleUpdateParam(idx, "key", val)
                               }
+                              onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                               placeholder="param_key"
-                              className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                              className="h-7 border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 bg-transparent px-2"
                             />
                           </TableCell>
                           <TableCell className="p-1">
-                            <input
-                              type="text"
+                            <VariableInput
                               value={param.value}
-                              onChange={(e) =>
-                                handleUpdateParam(idx, "value", e.target.value)
+                              onChange={(val) =>
+                                handleUpdateParam(idx, "value", val)
                               }
+                              onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                               placeholder="value or {{VAR}}"
-                              className="w-full bg-transparent px-2 py-1 text-zinc-800 dark:text-zinc-200 focus:outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
+                              className="h-7 border-transparent hover:border-zinc-200 dark:hover:border-zinc-800 bg-transparent px-2"
                             />
                           </TableCell>
                           <TableCell className="p-1 text-center">
@@ -1613,15 +1613,15 @@ export function RequestPanel() {
                   <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
                     Bearer Token
                   </label>
-                  <Input
-                    type="text"
+                  <VariableInput
                     value={activeRequest.auth.token || ""}
-                    onChange={(e) =>
+                    onChange={(val) =>
                       updateActiveRequest((prev) => ({
                         ...prev,
-                        auth: { ...prev.auth, token: e.target.value },
+                        auth: { ...prev.auth, token: val },
                       }))
                     }
+                    onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                     placeholder="Enter token or {{TOKEN_VAR}}"
                     className="w-full bg-white dark:bg-zinc-950 font-mono"
                   />
@@ -1638,15 +1638,15 @@ export function RequestPanel() {
                     <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
                       Username
                     </label>
-                    <Input
-                      type="text"
+                    <VariableInput
                       value={activeRequest.auth.username || ""}
-                      onChange={(e) =>
+                      onChange={(val) =>
                         updateActiveRequest((prev) => ({
                           ...prev,
-                          auth: { ...prev.auth, username: e.target.value },
+                          auth: { ...prev.auth, username: val },
                         }))
                       }
+                      onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                       placeholder="username or {{USERNAME}}"
                       className="w-full bg-white dark:bg-zinc-950"
                     />
@@ -1655,15 +1655,16 @@ export function RequestPanel() {
                     <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
                       Password
                     </label>
-                    <Input
+                    <VariableInput
                       type="password"
                       value={activeRequest.auth.password || ""}
-                      onChange={(e) =>
+                      onChange={(val) =>
                         updateActiveRequest((prev) => ({
                           ...prev,
-                          auth: { ...prev.auth, password: e.target.value },
+                          auth: { ...prev.auth, password: val },
                         }))
                       }
+                      onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                       placeholder="password or {{PASSWORD}}"
                       className="w-full bg-white dark:bg-zinc-950"
                     />
@@ -1682,15 +1683,15 @@ export function RequestPanel() {
                       <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
                         Key Name
                       </label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.key || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, key: e.target.value },
+                            auth: { ...prev.auth, key: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="X-API-KEY or {{API_KEY_NAME}}"
                         className="w-full bg-white dark:bg-zinc-950"
                       />
@@ -1699,15 +1700,16 @@ export function RequestPanel() {
                       <label className="block text-zinc-500 dark:text-zinc-400 mb-1">
                         Value
                       </label>
-                      <Input
+                      <VariableInput
                         type="password"
                         value={activeRequest.auth.value || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, value: e.target.value },
+                            auth: { ...prev.auth, value: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="secret-key or {{API_KEY_VALUE}}"
                         className="w-full bg-white dark:bg-zinc-950"
                       />
@@ -1755,30 +1757,31 @@ export function RequestPanel() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-zinc-500 mb-1">Username</label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.username || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, username: e.target.value },
+                            auth: { ...prev.auth, username: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="username or {{DIGEST_USER}}"
                         className="h-8 bg-white dark:bg-zinc-950"
                       />
                     </div>
                     <div>
                       <label className="block text-zinc-500 mb-1">Password</label>
-                      <Input
+                      <VariableInput
                         type="password"
                         value={activeRequest.auth.password || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, password: e.target.value },
+                            auth: { ...prev.auth, password: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="password or {{DIGEST_PASS}}"
                         className="h-8 bg-white dark:bg-zinc-950"
                       />
@@ -1849,15 +1852,15 @@ export function RequestPanel() {
 
                     <div>
                       <label className="block text-zinc-500 mb-1">Token URL *</label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.tokenUrl || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, tokenUrl: e.target.value },
+                            auth: { ...prev.auth, tokenUrl: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="https://oauth2.example.com/token or {{TOKEN_URL}}"
                         className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
                       />
@@ -1869,15 +1872,15 @@ export function RequestPanel() {
                       <label className="block font-medium text-amber-700 dark:text-amber-400">
                         Authorization URL * (PKCE S256)
                       </label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.authUrl || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, authUrl: e.target.value },
+                            auth: { ...prev.auth, authUrl: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="https://oauth2.example.com/authorize"
                         className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
                       />
@@ -1890,30 +1893,31 @@ export function RequestPanel() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-zinc-500 mb-1">Client ID</label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.clientId || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, clientId: e.target.value },
+                            auth: { ...prev.auth, clientId: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="client-id or {{CLIENT_ID}}"
                         className="h-8 bg-white dark:bg-zinc-950 text-xs"
                       />
                     </div>
                     <div>
                       <label className="block text-zinc-500 mb-1">Client Secret</label>
-                      <Input
+                      <VariableInput
                         type="password"
                         value={activeRequest.auth.clientSecret || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, clientSecret: e.target.value },
+                            auth: { ...prev.auth, clientSecret: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="client-secret or {{CLIENT_SECRET}}"
                         className="h-8 bg-white dark:bg-zinc-950 text-xs"
                       />
@@ -1998,30 +2002,31 @@ export function RequestPanel() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-zinc-500 mb-1">Access Key ID *</label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.accessKey || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, accessKey: e.target.value },
+                            auth: { ...prev.auth, accessKey: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="AKIAIOSFODNN7EXAMPLE"
                         className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
                       />
                     </div>
                     <div>
                       <label className="block text-zinc-500 mb-1">Secret Access Key *</label>
-                      <Input
+                      <VariableInput
                         type="password"
                         value={activeRequest.auth.secretKey || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, secretKey: e.target.value },
+                            auth: { ...prev.auth, secretKey: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                         className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
                       />
@@ -2031,30 +2036,30 @@ export function RequestPanel() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-zinc-500 mb-1">AWS Region</label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.region || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, region: e.target.value },
+                            auth: { ...prev.auth, region: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="us-east-1"
                         className="h-8 bg-white dark:bg-zinc-950 text-xs"
                       />
                     </div>
                     <div>
                       <label className="block text-zinc-500 mb-1">AWS Service</label>
-                      <Input
-                        type="text"
+                      <VariableInput
                         value={activeRequest.auth.service || ""}
-                        onChange={(e) =>
+                        onChange={(val) =>
                           updateActiveRequest((prev) => ({
                             ...prev,
-                            auth: { ...prev.auth, service: e.target.value },
+                            auth: { ...prev.auth, service: val },
                           }))
                         }
+                        onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                         placeholder="s3 or execute-api"
                         className="h-8 bg-white dark:bg-zinc-950 text-xs"
                       />
@@ -2063,15 +2068,16 @@ export function RequestPanel() {
 
                   <div>
                     <label className="block text-zinc-500 mb-1">Session Token (Optional)</label>
-                    <Input
+                    <VariableInput
                       type="password"
                       value={activeRequest.auth.sessionToken || ""}
-                      onChange={(e) =>
+                      onChange={(val) =>
                         updateActiveRequest((prev) => ({
                           ...prev,
-                          auth: { ...prev.auth, sessionToken: e.target.value },
+                          auth: { ...prev.auth, sessionToken: val },
                         }))
                       }
+                      onOpenManageEnvironments={() => setIsEnvManagerOpen(true)}
                       placeholder="Security STS token or {{AWS_SESSION_TOKEN}}"
                       className="h-8 bg-white dark:bg-zinc-950 font-mono text-xs"
                     />

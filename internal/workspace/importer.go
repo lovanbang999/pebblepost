@@ -257,6 +257,8 @@ type postmanReq struct {
 
 type postmanURL struct {
 	Raw   string `json:"raw"`
+	Host  any    `json:"host"`
+	Path  any    `json:"path"`
 	Query []struct {
 		Key      string `json:"key"`
 		Value    string `json:"value"`
@@ -327,10 +329,47 @@ func (s *ImportService) flattenPostmanItems(items []postmanItem, out *[]*types.R
 			continue
 		}
 		r := item.Request
+		reqURL := r.URL.Raw
+		var pathSegments []string
+		if pathArr, ok := r.URL.Path.([]any); ok {
+			for _, p := range pathArr {
+				if s, ok := p.(string); ok && s != "" {
+					pathSegments = append(pathSegments, s)
+				}
+			}
+		} else if pathStr, ok := r.URL.Path.(string); ok && pathStr != "" {
+			pathSegments = strings.Split(strings.Trim(pathStr, "/"), "/")
+		}
+
+		if len(pathSegments) > 0 {
+			fullPath := strings.Join(pathSegments, "/")
+			if reqURL == "" {
+				hostStr := ""
+				if hostArr, ok := r.URL.Host.([]any); ok {
+					var hostParts []string
+					for _, h := range hostArr {
+						if s, ok := h.(string); ok {
+							hostParts = append(hostParts, s)
+						}
+					}
+					hostStr = strings.Join(hostParts, ".")
+				} else if hStr, ok := r.URL.Host.(string); ok {
+					hostStr = hStr
+				}
+				if hostStr != "" {
+					reqURL = hostStr + "/" + fullPath
+				} else {
+					reqURL = "/" + fullPath
+				}
+			} else if !strings.Contains(reqURL, fullPath) && !strings.HasSuffix(strings.TrimRight(reqURL, "/"), "/"+pathSegments[len(pathSegments)-1]) {
+				reqURL = strings.TrimRight(reqURL, "/") + "/" + fullPath
+			}
+		}
+
 		req := &types.RequestDefinition{
 			Name:    item.Name,
 			Method:  strings.ToUpper(r.Method),
-			URL:     r.URL.Raw,
+			URL:     reqURL,
 			Auth:    types.AuthDefinition{Type: "none"},
 			Body:    types.BodyDefinition{Type: "none"},
 			Scripts: types.ScriptDefinition{},

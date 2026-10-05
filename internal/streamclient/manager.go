@@ -59,8 +59,10 @@ func (s *StreamSession) Subscribe() (chan StreamEvent, func()) {
 	unsubscribe := func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		delete(s.subscribers, ch)
-		close(ch)
+		if _, ok := s.subscribers[ch]; ok {
+			delete(s.subscribers, ch)
+			close(ch)
+		}
 	}
 
 	return ch, unsubscribe

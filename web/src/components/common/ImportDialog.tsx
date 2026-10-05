@@ -53,6 +53,7 @@ interface ImportResponse {
 
 interface Props {
   onImported?: (requests: RequestDefinition[]) => void;
+  trigger?: React.ReactElement;
 }
 
 const TABS: {
@@ -112,7 +113,7 @@ const TABS: {
   },
 ];
 
-export function ImportDialog({ onImported }: Props) {
+export function ImportDialog({ onImported, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<ImportSource>("auto");
   const [content, setContent] = useState("");
@@ -222,20 +223,24 @@ export function ImportDialog({ onImported }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Tooltip content="Import Request / Collection">
-        <DialogTrigger
-          id="import-trigger"
-          render={
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-            />
-          }
-        >
-          <Upload className="w-3.5 h-3.5" />
-        </DialogTrigger>
-      </Tooltip>
+      {trigger ? (
+        <DialogTrigger render={trigger} />
+      ) : (
+        <Tooltip content="Import Request / Collection">
+          <DialogTrigger
+            id="import-trigger"
+            render={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              />
+            }
+          >
+            <Upload className="w-3.5 h-3.5" />
+          </DialogTrigger>
+        </Tooltip>
+      )}
 
       <DialogContent className="max-w-2xl w-full max-h-[88vh] overflow-hidden flex flex-col">
         <DialogHeader>

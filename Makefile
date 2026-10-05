@@ -15,14 +15,17 @@ init-hooks: ## Configure git to use project pre-commit hooks
 
 # ─── Go ───────────────────────────────────────────────────────────────────────
 
-.PHONY: test
-test: ## Run all Go tests with race detector
+.PHONY: ensure-env
+ensure-env:
 	@mkdir -p web/dist && touch web/dist/.gitkeep
+	@[ -d web/node_modules ] && [ ! -f web/node_modules/go.mod ] && echo "module pebblepost/web/node_modules" > web/node_modules/go.mod || true
+
+.PHONY: test
+test: ensure-env ## Run all Go tests with race detector
 	go test -race -count=1 ./...
 
 .PHONY: coverage
-coverage: ## Run Go tests and show coverage report
-	@mkdir -p web/dist && touch web/dist/.gitkeep
+coverage: ensure-env ## Run Go tests and show coverage report
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go tool cover -func=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
@@ -36,8 +39,7 @@ coverage-open: coverage ## Open HTML coverage report in browser
 lint: lint-go lint-fe ## Run all linters (Go + frontend)
 
 .PHONY: lint-go
-lint-go: ## Run go vet
-	@mkdir -p web/dist && touch web/dist/.gitkeep
+lint-go: ensure-env ## Run go vet
 	go vet ./...
 
 .PHONY: lint-fe
@@ -84,6 +86,10 @@ fe-build: ## Build frontend production bundle
 .PHONY: fe-tsc
 fe-tsc: ## TypeScript type-check
 	cd web && npm run tsc
+
+.PHONY: fe-e2e
+fe-e2e: fe-build build-cli ## Run Playwright E2E smoke tests
+	cd web && npm run test:e2e
 
 # ─── Combined ─────────────────────────────────────────────────────────────────
 

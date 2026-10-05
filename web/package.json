@@ -12,7 +12,9 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 100",
-    "tsc": "tsc --noEmit"
+    "tsc": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "postinstall": "echo 'module pebblepost/web/node_modules' > node_modules/go.mod"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.0.9",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

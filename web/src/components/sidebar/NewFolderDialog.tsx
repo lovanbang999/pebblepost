@@ -63,8 +63,8 @@ export function NewFolderDialog({
       setError(null)
       await onSubmit(cleanName, parentFolder)
       onOpenChange(false)
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create folder')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create folder')
     } finally {
       setIsSubmitting(false)
     }

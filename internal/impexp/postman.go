@@ -407,6 +407,47 @@ func parsePostmanURL(raw any) (string, []types.KeyValue) {
 		return v, nil
 	case map[string]any:
 		rawURL, _ := v["raw"].(string)
+
+		// Reconstruct or append path if raw is empty or missing path segments
+		var pathSegments []string
+		if pathArr, ok := v["path"].([]any); ok {
+			for _, p := range pathArr {
+				if s, ok := p.(string); ok && s != "" {
+					pathSegments = append(pathSegments, s)
+				}
+			}
+		} else if pathStr, ok := v["path"].(string); ok && pathStr != "" {
+			pathSegments = strings.Split(strings.Trim(pathStr, "/"), "/")
+		}
+
+		if len(pathSegments) > 0 {
+			fullPath := strings.Join(pathSegments, "/")
+			if rawURL == "" {
+				hostStr := ""
+				if hostArr, ok := v["host"].([]any); ok {
+					var hostParts []string
+					for _, h := range hostArr {
+						if s, ok := h.(string); ok {
+							hostParts = append(hostParts, s)
+						}
+					}
+					hostStr = strings.Join(hostParts, ".")
+				} else if hStr, ok := v["host"].(string); ok {
+					hostStr = hStr
+				}
+				proto, _ := v["protocol"].(string)
+				if proto != "" && !strings.Contains(hostStr, "://") {
+					rawURL = proto + "://" + hostStr + "/" + fullPath
+				} else if hostStr != "" {
+					rawURL = hostStr + "/" + fullPath
+				} else {
+					rawURL = "/" + fullPath
+				}
+			} else if !strings.Contains(rawURL, fullPath) && !strings.HasSuffix(strings.TrimRight(rawURL, "/"), "/"+pathSegments[len(pathSegments)-1]) {
+				rawURL = strings.TrimRight(rawURL, "/") + "/" + fullPath
+			}
+		}
+
 		var params []types.KeyValue
 		if queryRaw, ok := v["query"].([]any); ok {
 			for _, q := range queryRaw {
