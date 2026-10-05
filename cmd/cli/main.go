@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"pebblepost"
+	"pebblepost/internal/app"
 	"pebblepost/internal/docs"
 	"pebblepost/internal/impexp"
 	"pebblepost/internal/runner"
@@ -35,6 +40,8 @@ func main() {
 		handleImport(os.Args[2:])
 	case "docs":
 		handleDocs(os.Args[2:])
+	case "serve":
+		handleServe(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("PebblePost CLI Runner v%s (commit: %s, date: %s, built by: %s)\n", version, commit, date, builtBy)
 	case "help", "-h", "--help":
@@ -401,4 +408,58 @@ func reorderArgs(args []string) []string {
 		i++
 	}
 	return append(flags, pos...)
+}
+
+func handleServe(args []string) {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	host := fs.String("host", envOr("PEBBLEPOST_HOST", envOr("PEBBLE_HOST", "127.0.0.1")), "Interface to listen on.")
+	port := fs.String("port", envOr("PORT", "8080"), "Port to listen on.")
+	tokenEnv := envOr("PEBBLEPOST_TOKEN", os.Getenv("PEBBLE_TOKEN"))
+	token := fs.String("token", tokenEnv, "Bearer token for API authentication.")
+	dataDir := fs.String("data-dir", envOr("PEBBLEPOST_DATA_DIR", envOr("DATA_DIR", "./data")), "Data directory.")
+	_ = fs.Parse(args)
+
+	authToken := *token
+	isLoopback := *host == "127.0.0.1" || *host == "::1" || *host == "localhost"
+	if !isLoopback && authToken == "" {
+		fmt.Fprintln(os.Stderr, "ERROR: --token or PEBBLEPOST_TOKEN is required when --host is not 127.0.0.1.")
+		os.Exit(1)
+	}
+	if authToken == "" {
+		authToken = generateToken()
+	}
+
+	inst, err := app.BootstrapWithToken(*dataDir, authToken)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bootstrap error: %v\n", err)
+		os.Exit(1)
+	}
+	defer inst.Close()
+
+	frontendFS, err := pebblepost.FrontendFS()
+	if err == nil {
+		inst.Mux.Handle("/", http.FileServer(http.FS(frontendFS)))
+	}
+
+	addr := fmt.Sprintf("%s:%s", *host, *port)
+	fmt.Printf("PebblePost server listening on %s (token: %s)\n", addr, authToken)
+	if err := http.ListenAndServe(addr, inst); err != nil {
+		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func generateToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "pebblepost-token-default"
+	}
+	return hex.EncodeToString(b)
+}
+
+func envOr(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
 }
