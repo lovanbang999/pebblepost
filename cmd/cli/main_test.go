@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -28,4 +30,24 @@ func TestMultiFlag(t *testing.T) {
 func TestPrintUsage(t *testing.T) {
 	// Ensure printUsage runs without panic
 	printUsage()
+}
+
+func TestIsCollectionTrusted(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "sub", "col")
+	_ = os.MkdirAll(subDir, 0755)
+
+	if isCollectionTrusted(subDir) {
+		t.Fatalf("expected untrusted directory when no .pebbletrust file exists")
+	}
+
+	// Create .pebbletrust in parent dir
+	trustFile := filepath.Join(dir, ".pebbletrust")
+	if err := os.WriteFile(trustFile, []byte("trusted"), 0644); err != nil {
+		t.Fatalf("failed to write trust file: %v", err)
+	}
+
+	if !isCollectionTrusted(subDir) {
+		t.Fatalf("expected subDir to be trusted via parent .pebbletrust")
+	}
 }

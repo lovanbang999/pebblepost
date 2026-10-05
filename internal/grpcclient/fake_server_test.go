@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -611,4 +614,70 @@ func TestGrpcAssertionsAndScripts(t *testing.T) {
 			t.Errorf("assertion failed: %s (%s)", tc.Name, tc.Message)
 		}
 	}
+}
+
+func TestGrpcClient_ProtoPathGuard(t *testing.T) {
+	wsDir := t.TempDir()
+	secretDir := t.TempDir()
+
+	// Copy test.proto into workspace
+	protoData, err := os.ReadFile("testdata/test.proto")
+	if err != nil {
+		t.Fatalf("failed to read test.proto: %v", err)
+	}
+	wsProto := filepath.Join(wsDir, "test.proto")
+	if err := os.WriteFile(wsProto, protoData, 0644); err != nil {
+		t.Fatalf("failed to write ws proto: %v", err)
+	}
+
+	outsideProto := filepath.Join(secretDir, "outside.proto")
+	if err := os.WriteFile(outsideProto, protoData, 0644); err != nil {
+		t.Fatalf("failed to write outside proto: %v", err)
+	}
+
+	client := NewClient(wsDir)
+
+	// 1. Valid workspace proto succeeds
+	t.Run("Valid workspace proto loads", func(t *testing.T) {
+		services, err := client.LoadProtoServices([]string{"test.proto"}, nil)
+		if err != nil {
+			t.Fatalf("expected proto loading to succeed, got: %v", err)
+		}
+		if len(services) == 0 {
+			t.Fatalf("expected at least 1 service loaded")
+		}
+	})
+
+	// 2. Traversal in import path rejected
+	t.Run("Import path traversal rejected", func(t *testing.T) {
+		_, err := client.LoadProtoServices([]string{"test.proto"}, []string{"../../outside"})
+		if err == nil {
+			t.Fatalf("expected traversal import path to fail, got nil")
+		}
+		if !strings.Contains(err.Error(), "rejected") && !strings.Contains(err.Error(), "forbidden") {
+			t.Errorf("expected security rejection error, got: %v", err)
+		}
+	})
+
+	// 3. Absolute proto file outside workspace rejected
+	t.Run("External absolute proto file rejected", func(t *testing.T) {
+		_, err := client.LoadProtoServices([]string{outsideProto}, nil)
+		if err == nil {
+			t.Fatalf("expected external proto path to fail, got nil")
+		}
+		if !strings.Contains(err.Error(), "forbidden") && !strings.Contains(err.Error(), "rejected") {
+			t.Errorf("expected security rejection error, got: %v", err)
+		}
+	})
+
+	// 4. Root CA path traversal in Dial rejected
+	t.Run("Root CA path traversal in Dial rejected", func(t *testing.T) {
+		_, err := client.Dial(context.Background(), "127.0.0.1:50051", true, false, "../../etc/ca.pem")
+		if err == nil {
+			t.Fatalf("expected traversal CA path to fail, got nil")
+		}
+		if !strings.Contains(err.Error(), "rejected") && !strings.Contains(err.Error(), "forbidden") {
+			t.Errorf("expected security rejection error, got: %v", err)
+		}
+	})
 }

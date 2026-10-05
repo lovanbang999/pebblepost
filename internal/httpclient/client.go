@@ -22,6 +22,7 @@ import (
 
 	"golang.org/x/net/proxy"
 	"pebblepost/internal/grpcclient"
+	"pebblepost/internal/security"
 	"pebblepost/internal/streamclient"
 	"pebblepost/internal/types"
 )
@@ -40,6 +41,8 @@ type Client interface {
 
 // DefaultClient implements the Client interface using Go's net/http.
 type DefaultClient struct {
+	mu             sync.RWMutex
+	workspaceRoot  string
 	defaultTimeout time.Duration
 	cookieJar      *PersistentJar
 	oauth2Manager  *OAuth2Manager
@@ -58,6 +61,10 @@ func NewClient() *DefaultClient {
 
 // SetWorkspace updates the workspace path for the client's cookie jar and grpc client.
 func (c *DefaultClient) SetWorkspace(wsPath string) {
+	c.mu.Lock()
+	c.workspaceRoot = wsPath
+	c.mu.Unlock()
+
 	if c.cookieJar == nil {
 		c.cookieJar = NewPersistentJar(wsPath)
 	} else {
@@ -68,6 +75,43 @@ func (c *DefaultClient) SetWorkspace(wsPath string) {
 	} else {
 		c.grpcClient.SetWorkspace(wsPath)
 	}
+}
+
+// resolveSafeFilePath safely resolves a file path against the active workspace root,
+// preventing path traversal, symlink escapes, and unauthorized filesystem reads.
+func (c *DefaultClient) resolveSafeFilePath(untrustedPath string) (string, error) {
+	untrustedPath = strings.TrimSpace(untrustedPath)
+	if untrustedPath == "" {
+		return "", fmt.Errorf("file path cannot be empty")
+	}
+	if strings.HasPrefix(untrustedPath, "@file:") {
+		untrustedPath = strings.TrimSpace(strings.TrimPrefix(untrustedPath, "@file:"))
+	}
+
+	c.mu.RLock()
+	ws := c.workspaceRoot
+	c.mu.RUnlock()
+
+	if ws == "" {
+		if err := security.RejectTraversal(untrustedPath); err != nil {
+			return "", fmt.Errorf("security: path traversal rejected: %w", err)
+		}
+		return untrustedPath, nil
+	}
+
+	if filepath.IsAbs(untrustedPath) {
+		safePath, err := security.SafeAbsolute(ws, untrustedPath)
+		if err != nil {
+			return "", fmt.Errorf("security: file access outside workspace boundary is forbidden: %w", err)
+		}
+		return safePath, nil
+	}
+
+	safePath, err := security.SafeJoin(ws, untrustedPath)
+	if err != nil {
+		return "", fmt.Errorf("security: file access outside workspace boundary is forbidden: %w", err)
+	}
+	return safePath, nil
 }
 
 // GetCookieJar returns the persistent cookie jar attached to this client.
@@ -343,9 +387,37 @@ func (c *DefaultClient) buildURL(rawURL string, params []types.KeyValue) (*url.U
 func (c *DefaultClient) buildBodyBytes(body types.BodyDefinition) ([]byte, string, error) {
 	bodyType := strings.ToLower(strings.TrimSpace(body.Type))
 
-	// If body references an external file, load content from disk
+	// 1. Support @file: syntax reference resolver across body types (Roadmap 2.5 & 19.2)
+	trimmedRaw := strings.TrimSpace(body.Raw)
+	if strings.HasPrefix(trimmedRaw, "@file:") && bodyType != "formdata" && bodyType != "urlencoded" {
+		refPath := strings.TrimSpace(strings.TrimPrefix(trimmedRaw, "@file:"))
+		safePath, err := c.resolveSafeFilePath(refPath)
+		if err != nil {
+			return nil, "", err
+		}
+		data, err := os.ReadFile(safePath)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read body file %s: %w", refPath, err)
+		}
+		contentType := "application/octet-stream"
+		switch bodyType {
+		case "json":
+			contentType = "application/json"
+		case "raw", "text":
+			contentType = "text/plain"
+		case "xml":
+			contentType = "application/xml"
+		}
+		return data, contentType, nil
+	}
+
+	// 2. If body references an external file via FilePath, load content from disk safely
 	if body.FilePath != "" {
-		data, err := os.ReadFile(body.FilePath)
+		safePath, err := c.resolveSafeFilePath(body.FilePath)
+		if err != nil {
+			return nil, "", err
+		}
+		data, err := os.ReadFile(safePath)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to read body file %s: %w", body.FilePath, err)
 		}
@@ -353,8 +425,10 @@ func (c *DefaultClient) buildBodyBytes(body types.BodyDefinition) ([]byte, strin
 		switch bodyType {
 		case "json":
 			contentType = "application/json"
-		case "raw":
+		case "raw", "text":
 			contentType = "text/plain"
+		case "xml":
+			contentType = "application/xml"
 		}
 		return data, contentType, nil
 	}
@@ -368,7 +442,11 @@ func (c *DefaultClient) buildBodyBytes(body types.BodyDefinition) ([]byte, strin
 		if filePath == "" {
 			return nil, "", nil
 		}
-		data, err := os.ReadFile(filePath)
+		safePath, err := c.resolveSafeFilePath(filePath)
+		if err != nil {
+			return nil, "", err
+		}
+		data, err := os.ReadFile(safePath)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to read body file %s: %w", filePath, err)
 		}
@@ -408,15 +486,14 @@ func (c *DefaultClient) buildBodyBytes(body types.BodyDefinition) ([]byte, strin
 					continue
 				}
 
-				fileName := filepath.Base(filePath)
-				fileData, err := os.ReadFile(filePath)
+				safePath, err := c.resolveSafeFilePath(filePath)
 				if err != nil {
-					part, partErr := writer.CreateFormFile(kv.Key, fileName)
-					if partErr != nil {
-						return nil, "", partErr
-					}
-					_, _ = part.Write([]byte(kv.Value))
-					continue
+					return nil, "", err
+				}
+				fileName := filepath.Base(safePath)
+				fileData, err := os.ReadFile(safePath)
+				if err != nil {
+					return nil, "", fmt.Errorf("failed to read form file %s: %w", filePath, err)
 				}
 
 				part, err := writer.CreateFormFile(kv.Key, fileName)

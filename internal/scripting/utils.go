@@ -3,11 +3,14 @@ package scripting
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -183,25 +186,76 @@ func (r *RandomModule) String(length int, charset string) (string, error) {
 	return string(res), nil
 }
 
+// isBlockedMetadataHost checks if the target host points to cloud instance metadata services.
+func isBlockedMetadataHost(host string) bool {
+	h := strings.ToLower(host)
+	if strings.Contains(h, ":") {
+		if sh, _, err := net.SplitHostPort(h); err == nil {
+			h = sh
+		}
+	}
+	return h == "169.254.169.254" || h == "instance-data" || h == "metadata.google.internal" || h == "100.100.100.200"
+}
+
 // AuxiliaryClient handles synchronous auxiliary HTTP requests (pb.sendRequest).
 type AuxiliaryClient struct {
 	client *http.Client
 }
 
-// NewAuxiliaryClient creates a new AuxiliaryClient.
+// NewAuxiliaryClient creates a new AuxiliaryClient configured with redirect and timeout guards.
 func NewAuxiliaryClient() *AuxiliaryClient {
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &AuxiliaryClient{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 3 {
+					return fmt.Errorf("stopped after 3 redirects")
+				}
+				// Prevent redirect downgrade from HTTPS to HTTP
+				if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme == "http" {
+					return fmt.Errorf("security: redirect from HTTPS to HTTP disallowed")
+				}
+				// Prevent redirect to cloud instance metadata
+				if isBlockedMetadataHost(req.URL.Host) {
+					return fmt.Errorf("security: redirect to cloud metadata service %q blocked", req.URL.Host)
+				}
+				return nil
+			},
 		},
 	}
 }
 
-// SendRequest performs a synchronous auxiliary HTTP call bounded by maxTimeout.
+// SendRequest performs a synchronous auxiliary HTTP call bounded by maxTimeout, redirect, TLS, and SSRF policies.
 func (ac *AuxiliaryClient) SendRequest(config map[string]any, maxTimeout time.Duration) (map[string]any, error) {
 	rawURL, _ := config["url"].(string)
 	if strings.TrimSpace(rawURL) == "" {
 		return nil, fmt.Errorf("pb.sendRequest requires a valid 'url'")
+	}
+
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return nil, fmt.Errorf("pb.sendRequest requires a valid URL with http or https scheme: %q", rawURL)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("pb.sendRequest unsupported scheme %q (only http and https supported)", parsedURL.Scheme)
+	}
+
+	// Block SSRF to cloud instance metadata
+	if isBlockedMetadataHost(parsedURL.Host) {
+		return nil, fmt.Errorf("security: requests to cloud metadata service %q are blocked", parsedURL.Host)
 	}
 
 	method, _ := config["method"].(string)
@@ -251,8 +305,18 @@ func (ac *AuxiliaryClient) SendRequest(config map[string]any, maxTimeout time.Du
 		}
 	}
 
+	// TLS policy support via config: "insecureSkipVerify": true
+	httpClient := ac.client
+	if insecure, ok := config["insecureSkipVerify"].(bool); ok && insecure {
+		customTransport := ac.client.Transport.(*http.Transport).Clone()
+		customTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		customClient := *ac.client
+		customClient.Transport = customTransport
+		httpClient = &customClient
+	}
+
 	start := time.Now()
-	resp, err := ac.client.Do(httpReq)
+	resp, err := httpClient.Do(httpReq)
 	duration := time.Since(start)
 
 	if err != nil {

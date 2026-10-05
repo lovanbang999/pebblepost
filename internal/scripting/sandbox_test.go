@@ -422,6 +422,105 @@ func TestEngine_SendRequest(t *testing.T) {
 	}
 }
 
+func TestEngine_SendRequest_Security(t *testing.T) {
+	engine := NewEngine()
+
+	// 1. Call limit: maximum 5 calls per script execution
+	t.Run("Call limit enforcement", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer ts.Close()
+
+		script := fmt.Sprintf(`
+			for (let i = 0; i < 6; i++) {
+				pb.sendRequest({ url: "%s" });
+			}
+		`, ts.URL)
+		req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+		_, err := engine.ExecutePreRequest(script, req, nil, 0)
+		if err == nil {
+			t.Fatalf("expected error exceeding 5 calls, got nil")
+		}
+		if !strings.Contains(err.Error(), "limit exceeded") {
+			t.Errorf("expected limit exceeded error, got: %v", err)
+		}
+	})
+
+	// 2. SSRF block to cloud instance metadata
+	t.Run("Cloud metadata SSRF blocked", func(t *testing.T) {
+		script := `pb.sendRequest({ url: "http://169.254.169.254/latest/meta-data/" });`
+		req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+		_, err := engine.ExecutePreRequest(script, req, nil, 0)
+		if err == nil {
+			t.Fatalf("expected error targeting cloud metadata, got nil")
+		}
+		if !strings.Contains(err.Error(), "blocked") {
+			t.Errorf("expected blocked error, got: %v", err)
+		}
+	})
+
+	// 3. Secret masking in error messages
+	t.Run("Secret masking in errors", func(t *testing.T) {
+		secretToken := "SUPER_SECRET_API_TOKEN_999"
+		// Port that won't connect
+		script := fmt.Sprintf(`pb.sendRequest({ url: "http://127.0.0.1:59999/api?token=%s", timeoutMs: 500 });`, secretToken)
+		req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+		vars := map[string]string{"SECRET_KEY": secretToken}
+		_, err := engine.ExecutePreRequest(script, req, vars, 0)
+		if err == nil {
+			t.Fatalf("expected connection error, got nil")
+		}
+		if strings.Contains(err.Error(), secretToken) {
+			t.Errorf("error contains raw secret token: %v", err)
+		}
+		if !strings.Contains(err.Error(), "***") {
+			t.Errorf("expected masked placeholder *** in error: %v", err)
+		}
+	})
+
+	// 4. Redirect limit: maximum 3 redirects
+	t.Run("Redirect limit capped at 3", func(t *testing.T) {
+		var loopServer *httptest.Server
+		loopServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, loopServer.URL+"/loop", http.StatusFound)
+		}))
+		defer loopServer.Close()
+
+		script := fmt.Sprintf(`pb.sendRequest({ url: "%s" });`, loopServer.URL)
+		req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+		_, err := engine.ExecutePreRequest(script, req, nil, 0)
+		if err == nil {
+			t.Fatalf("expected error from redirect loop, got nil")
+		}
+		if !strings.Contains(err.Error(), "stopped after 3 redirects") {
+			t.Errorf("expected stopped after 3 redirects, got: %v", err)
+		}
+	})
+
+	// 5. TLS policy: insecureSkipVerify support
+	t.Run("TLS insecureSkipVerify support", func(t *testing.T) {
+		tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"tls":true}`))
+		}))
+		defer tlsServer.Close()
+
+		script := fmt.Sprintf(`
+			const res = pb.sendRequest({
+				url: "%s",
+				insecureSkipVerify: true
+			});
+			if (res.status !== 200) throw new Error("status: " + res.status);
+		`, tlsServer.URL)
+		req := &types.RequestDefinition{Method: "GET", URL: "http://example.com"}
+		_, err := engine.ExecutePreRequest(script, req, nil, 0)
+		if err != nil {
+			t.Fatalf("expected insecureSkipVerify to succeed on self-signed cert: %v", err)
+		}
+	})
+}
+
 // TestEngine_NewMatchers verifies status, have.length, deep.equal, exist, oneOf, jsonSchema.
 func TestEngine_NewMatchers(t *testing.T) {
 	engine := NewEngine()

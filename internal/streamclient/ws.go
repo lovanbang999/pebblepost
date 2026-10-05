@@ -183,6 +183,10 @@ func (c *WSClient) readPump() {
 
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
+			if c.isClosed.Load() {
+				break
+			}
+
 			closeCode := CloseAbnormalClosure
 			closeReason := err.Error()
 

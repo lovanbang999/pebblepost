@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
 
@@ -189,8 +190,23 @@ func (e *Engine) ExecutePreRequestWithContext(
 	_ = postmanObj.Set("setNextRequest", runnerObj.Get("setNextRequest"))
 	_ = vm.Set("postman", postmanObj)
 
+	var secretsToMask []string
+	if req != nil {
+		if req.Auth.Token != "" {
+			secretsToMask = append(secretsToMask, req.Auth.Token)
+		}
+		if req.Auth.Password != "" {
+			secretsToMask = append(secretsToMask, req.Auth.Password)
+		}
+	}
+	for _, v := range vars {
+		if len(v) >= 3 {
+			secretsToMask = append(secretsToMask, v)
+		}
+	}
+
 	// Bind extended pb utilities
-	e.bindExtendedPbAPIs(vm, pbObj, timeout)
+	e.bindExtendedPbAPIs(vm, pbObj, timeout, secretsToMask)
 
 	_ = vm.Set("pb", pbObj)
 	_ = vm.Set("pm", pbObj) // Postman compatibility
@@ -400,8 +416,23 @@ func (e *Engine) ExecutePostResponseWithContext(
 	_ = postmanObj.Set("setNextRequest", runnerObj.Get("setNextRequest"))
 	_ = vm.Set("postman", postmanObj)
 
+	var secretsToMask []string
+	if req != nil {
+		if req.Auth.Token != "" {
+			secretsToMask = append(secretsToMask, req.Auth.Token)
+		}
+		if req.Auth.Password != "" {
+			secretsToMask = append(secretsToMask, req.Auth.Password)
+		}
+	}
+	for _, v := range vars {
+		if len(v) >= 3 {
+			secretsToMask = append(secretsToMask, v)
+		}
+	}
+
 	// Bind extended pb utilities
-	e.bindExtendedPbAPIs(vm, pbObj, timeout)
+	e.bindExtendedPbAPIs(vm, pbObj, timeout, secretsToMask)
 
 	_ = vm.Set("pb", pbObj)
 	_ = vm.Set("pm", pbObj)
@@ -562,7 +593,7 @@ func (e *Engine) setupConsole(
 	_ = vm.Set("console", console)
 }
 
-func (e *Engine) bindExtendedPbAPIs(vm *goja.Runtime, pbObj *goja.Object, timeout time.Duration) {
+func (e *Engine) bindExtendedPbAPIs(vm *goja.Runtime, pbObj *goja.Object, timeout time.Duration, secretsToMask []string) {
 	// 1. pb.uuid()
 	_ = pbObj.Set("uuid", func() string {
 		return e.crypto.UUID()
@@ -656,8 +687,14 @@ func (e *Engine) bindExtendedPbAPIs(vm *goja.Runtime, pbObj *goja.Object, timeou
 	})
 	_ = pbObj.Set("random", randomObj)
 
-	// 8. pb.sendRequest(config)
+	// 8. pb.sendRequest(config) with call limit (max 5) and secret masking
+	var sendRequestCount int
 	_ = pbObj.Set("sendRequest", func(call goja.FunctionCall) goja.Value {
+		sendRequestCount++
+		if sendRequestCount > 5 {
+			panic(vm.ToValue("pb.sendRequest limit exceeded (maximum 5 requests allowed per script execution)"))
+		}
+
 		if len(call.Arguments) == 0 {
 			panic(vm.ToValue("pb.sendRequest requires a request configuration object"))
 		}
@@ -674,7 +711,8 @@ func (e *Engine) bindExtendedPbAPIs(vm *goja.Runtime, pbObj *goja.Object, timeou
 
 		res, err := e.auxiliary.SendRequest(cfgMap, timeout)
 		if err != nil {
-			panic(vm.ToValue(fmt.Sprintf("pb.sendRequest failed: %v", err)))
+			maskedErr := security.MaskSecrets(err.Error(), secretsToMask)
+			panic(vm.ToValue(fmt.Sprintf("pb.sendRequest failed: %v", maskedErr)))
 		}
 
 		resObj := vm.NewObject()

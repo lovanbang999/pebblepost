@@ -1,9 +1,52 @@
 package security
 
 import (
+	"net"
 	"net/http"
 	"strings"
 )
+
+// HostHeaderMiddleware validates incoming request Host headers against DNS rebinding attacks.
+// By default, it allows localhost, 127.0.0.1, and [::1] (with any port).
+func HostHeaderMiddleware(allowedHosts ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			host := r.Host
+			if sh, _, err := net.SplitHostPort(host); err == nil {
+				host = sh
+			}
+			host = strings.ToLower(strings.TrimSpace(host))
+
+			if r.URL.Path == "/api/health" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			allowed := false
+			if len(allowedHosts) == 0 {
+				if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+					allowed = true
+				}
+			} else {
+				for _, h := range allowedHosts {
+					if strings.EqualFold(host, h) {
+						allowed = true
+						break
+					}
+				}
+			}
+
+			if !allowed {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":"forbidden: invalid host header"}`))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 // TokenMiddleware returns middleware that enforces Bearer token authentication.
 // All routes except /api/health require a valid token. When token is empty the

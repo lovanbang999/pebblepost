@@ -167,3 +167,38 @@ func okHandler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 	})
 }
+
+// ---------- HostHeaderMiddleware ----------
+
+func TestHostHeaderMiddleware(t *testing.T) {
+	defaultMw := HostHeaderMiddleware()(okHandler())
+
+	tests := []struct {
+		name     string
+		host     string
+		mw       http.Handler
+		wantCode int
+	}{
+		{"localhost allowed", "localhost", defaultMw, http.StatusOK},
+		{"localhost with port allowed", "localhost:8080", defaultMw, http.StatusOK},
+		{"127.0.0.1 allowed", "127.0.0.1", defaultMw, http.StatusOK},
+		{"127.0.0.1 with port allowed", "127.0.0.1:3000", defaultMw, http.StatusOK},
+		{"ipv6 loopback allowed", "[::1]:8080", defaultMw, http.StatusOK},
+		{"attacker dns rebinding blocked", "attacker.evil.com", defaultMw, http.StatusForbidden},
+		{"attacker with port blocked", "attacker.evil.com:8080", defaultMw, http.StatusForbidden},
+		{"custom allowed host", "my-intranet.local", HostHeaderMiddleware("my-intranet.local")(okHandler()), http.StatusOK},
+		{"custom blocked host", "other.local", HostHeaderMiddleware("my-intranet.local")(okHandler()), http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+			req.Host = tt.host
+			rr := httptest.NewRecorder()
+			tt.mw.ServeHTTP(rr, req)
+			if rr.Code != tt.wantCode {
+				t.Errorf("host %q got status %d, want %d", tt.host, rr.Code, tt.wantCode)
+			}
+		})
+	}
+}

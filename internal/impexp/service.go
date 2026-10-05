@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
 
@@ -154,7 +155,16 @@ func (s *Service) SaveToWorkspace(workspaceRoot string, outDir string, result *I
 	for _, folder := range result.Folders {
 		folderPath := targetBase
 		if folder.RelPath != "." && folder.RelPath != "" {
-			folderPath = filepath.Join(targetBase, folder.RelPath)
+			var safeErr error
+			folderPath, safeErr = security.SafeJoin(targetBase, folder.RelPath)
+			if safeErr != nil {
+				report.Skipped = append(report.Skipped, SkippedItem{
+					Name:   folder.Name,
+					Path:   folder.RelPath,
+					Reason: fmt.Sprintf("insecure folder path outside target: %v", safeErr),
+				})
+				continue
+			}
 		}
 		if err := os.MkdirAll(folderPath, 0755); err != nil {
 			continue
@@ -180,7 +190,15 @@ func (s *Service) SaveToWorkspace(workspaceRoot string, outDir string, result *I
 			continue
 		}
 
-		destPath := filepath.Join(targetBase, item.RelPath)
+		destPath, safeErr := security.SafeJoin(targetBase, item.RelPath)
+		if safeErr != nil {
+			report.Skipped = append(report.Skipped, SkippedItem{
+				Name:   item.Name,
+				Path:   item.RelPath,
+				Reason: fmt.Sprintf("insecure request path outside target: %v", safeErr),
+			})
+			continue
+		}
 		parentDir := filepath.Dir(destPath)
 		if err := os.MkdirAll(parentDir, 0755); err != nil {
 			report.Skipped = append(report.Skipped, SkippedItem{

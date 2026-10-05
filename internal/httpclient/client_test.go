@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -867,5 +868,141 @@ func TestClient_CustomUserAgentAndSettings(t *testing.T) {
 	}
 	if receivedUA != "CustomAgent/2.5" {
 		t.Errorf("expected custom user agent 'CustomAgent/2.5', got %q", receivedUA)
+	}
+}
+
+func TestClient_FileBodyPathGuardAndAtFileSyntax(t *testing.T) {
+	wsDir := t.TempDir()
+	secretDir := t.TempDir()
+
+	secretFile := filepath.Join(secretDir, "outside_secret.txt")
+	_ = os.WriteFile(secretFile, []byte("super-secret-outside"), 0644)
+
+	sampleFile := filepath.Join(wsDir, "sample.json")
+	_ = os.WriteFile(sampleFile, []byte(`{"message":"safe workspace body"}`), 0644)
+
+	client := NewClient()
+	client.SetWorkspace(wsDir)
+
+	var lastReceivedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, _ := io.ReadAll(r.Body)
+		lastReceivedBody = string(bodyBytes)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	// 1. @file: syntax within workspace succeeds
+	t.Run("Valid @file syntax inside workspace", func(t *testing.T) {
+		req := &types.RequestDefinition{
+			Method: "POST",
+			URL:    server.URL,
+			Body: types.BodyDefinition{
+				Type: "json",
+				Raw:  "@file:sample.json",
+			},
+		}
+		res, err := client.Execute(context.Background(), req)
+		if err != nil || res.StatusCode != 200 {
+			t.Fatalf("execute failed: %v", err)
+		}
+		if lastReceivedBody != `{"message":"safe workspace body"}` {
+			t.Errorf("expected body from sample.json, got: %s", lastReceivedBody)
+		}
+	})
+
+	// 2. Traversal attempt with @file: escaping workspace fails
+	t.Run("Traversal with @file escapes workspace rejected", func(t *testing.T) {
+		req := &types.RequestDefinition{
+			Method: "POST",
+			URL:    server.URL,
+			Body: types.BodyDefinition{
+				Type: "json",
+				Raw:  "@file:../../outside_secret.txt",
+			},
+		}
+		_, err := client.Execute(context.Background(), req)
+		if err == nil {
+			t.Fatalf("expected path traversal error, got nil")
+		}
+		if !strings.Contains(err.Error(), "forbidden") && !strings.Contains(err.Error(), "traversal") {
+			t.Errorf("expected security traversal error, got: %v", err)
+		}
+	})
+
+	// 3. Absolute path pointing outside workspace fails
+	t.Run("Absolute file path outside workspace rejected", func(t *testing.T) {
+		req := &types.RequestDefinition{
+			Method: "POST",
+			URL:    server.URL,
+			Body: types.BodyDefinition{
+				Type:     "json",
+				FilePath: secretFile,
+			},
+		}
+		_, err := client.Execute(context.Background(), req)
+		if err == nil {
+			t.Fatalf("expected error for file outside workspace, got nil")
+		}
+		if !strings.Contains(err.Error(), "forbidden") && !strings.Contains(err.Error(), "outside workspace") {
+			t.Errorf("expected security forbidden error, got: %v", err)
+		}
+	})
+
+	// 4. Multipart form-data file outside workspace fails
+	t.Run("Multipart file outside workspace rejected", func(t *testing.T) {
+		req := &types.RequestDefinition{
+			Method: "POST",
+			URL:    server.URL,
+			Body: types.BodyDefinition{
+				Type: "formdata",
+				FormData: []types.KeyValue{
+					{Key: "file", Value: secretFile, Type: "file", Enabled: true},
+				},
+			},
+		}
+		_, err := client.Execute(context.Background(), req)
+		if err == nil {
+			t.Fatalf("expected error for multipart file outside workspace, got nil")
+		}
+	})
+}
+
+func TestPersistentJar_FilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping POSIX file mode assertions on Windows")
+	}
+
+	wsDir := t.TempDir()
+	jar := NewPersistentJar(wsDir)
+
+	err := jar.SetCookie(types.CookieItem{
+		Name:   "sid",
+		Value:  "secret-session-token",
+		Domain: "example.com",
+		Path:   "/",
+	})
+	if err != nil {
+		t.Fatalf("SetCookie failed: %v", err)
+	}
+
+	// Verify .pebble directory permissions 0700
+	pebbleDir := filepath.Join(wsDir, ".pebble")
+	dirFi, err := os.Stat(pebbleDir)
+	if err != nil {
+		t.Fatalf("stat .pebble dir failed: %v", err)
+	}
+	if perm := dirFi.Mode().Perm(); perm != 0700 {
+		t.Errorf(".pebble dir mode = %o; want 0700", perm)
+	}
+
+	// Verify cookies.json file permissions 0600
+	cookieFile := filepath.Join(pebbleDir, "cookies.json")
+	fileFi, err := os.Stat(cookieFile)
+	if err != nil {
+		t.Fatalf("stat cookies.json failed: %v", err)
+	}
+	if perm := fileFi.Mode().Perm(); perm != 0600 {
+		t.Errorf("cookies.json mode = %o; want 0600", perm)
 	}
 }

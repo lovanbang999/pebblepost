@@ -78,8 +78,9 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 	a.registerRoutes()
 
 	// Wrap the raw mux with the security middleware stack.
-	// Order: security headers → CORS → body limit → token auth → mux.
+	// Order: host header validation → security headers → CORS → body limit → token auth → mux.
 	a.handler = security.Chain(
+		security.HostHeaderMiddleware(),
 		security.SecurityHeadersMiddleware,
 		security.CORSMiddleware,
 		security.BodyLimitMiddleware(maxBodyBytes),

@@ -21,6 +21,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/update/check", h.handleCheck)
 	mux.HandleFunc("/api/update/settings", h.handleSettings)
 	mux.HandleFunc("/api/update/verify", h.handleVerify)
+	mux.HandleFunc("/api/update/apply", h.handleApply)
 }
 
 func (h *Handler) handleCheck(w http.ResponseWriter, r *http.Request) {
@@ -129,5 +130,34 @@ func (h *Handler) handleVerify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"valid": valid,
+	})
+}
+
+func (h *Handler) handleApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req UpdateInfo
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json payload", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.ApplyUpdate(r.Context(), "", &req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":   err.Error(),
+			"success": false,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
+		"message": "Update applied successfully",
 	})
 }
