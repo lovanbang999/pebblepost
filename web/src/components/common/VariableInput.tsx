@@ -5,7 +5,9 @@ import {
   getAvailableVariables,
   tokenizeVariables,
   VariableInfo,
+  TokenPart,
 } from "../../lib/variables";
+
 import { Button } from "../ui/button";
 
 interface VariableInputProps
@@ -28,15 +30,72 @@ export function VariableInput({
   const { environments, activeEnv } = useWorkspaceStore();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = () => {
+    if (inputRef.current && backdropRef.current) {
+      backdropRef.current.scrollLeft = inputRef.current.scrollLeft;
+    }
+  };
 
   const [isFocused, setIsFocused] = useState(false);
+
   const [hoveredVar, setHoveredVar] = useState<{
     key: string;
     info?: VariableInfo;
     rect: DOMRect;
   } | null>(null);
 
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleBadgeMouseEnter = (token: TokenPart, e: React.MouseEvent<HTMLElement>) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setHoveredVar({
+      key: token.varKey || "",
+      info: token.varInfo,
+      rect,
+    });
+  };
+
+  const handleBadgeMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredVar(null);
+    }, 250);
+  };
+
+  const handleTooltipMouseEnter = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+  };
+
+  const handleTooltipMouseLeave = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredVar(null);
+    }, 150);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Autocomplete state
+
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
   const [autocompleteQuery, setAutocompleteQuery] = useState("");
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
@@ -162,13 +221,14 @@ export function VariableInput({
       {/* Backdrop: Highlights {{VAR}} in green/red */}
       {hasVariables && (
         <div
+          ref={backdropRef}
           aria-hidden="true"
           className="absolute inset-0 pointer-events-none flex items-center px-3 py-1.5 overflow-hidden whitespace-pre select-none font-mono text-xs leading-normal"
         >
           {tokens.map((token, idx) => {
             if (token.type === "text") {
               return (
-                <span key={idx} className="opacity-0">
+                <span key={idx} className="text-zinc-900 dark:text-zinc-100">
                   {token.content}
                 </span>
               );
@@ -180,16 +240,9 @@ export function VariableInput({
             return (
               <span
                 key={idx}
-                onMouseEnter={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setHoveredVar({
-                    key: token.varKey || "",
-                    info: token.varInfo,
-                    rect,
-                  });
-                }}
-                onMouseLeave={() => setHoveredVar(null)}
-                className={`pointer-events-auto inline-flex items-center px-1 rounded transition-colors text-[11px] font-mono ${
+                onMouseEnter={(e) => handleBadgeMouseEnter(token, e)}
+                onMouseLeave={handleBadgeMouseLeave}
+                className={`pointer-events-auto inline-flex items-center px-1 rounded transition-colors text-xs font-mono ${
                   isDefined
                     ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 font-semibold"
                     : "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 font-semibold"
@@ -208,8 +261,15 @@ export function VariableInput({
         ref={inputRef}
         type="text"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setIsFocused(true)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          handleScroll();
+        }}
+        onScroll={handleScroll}
+        onFocus={() => {
+          setIsFocused(true);
+          handleScroll();
+        }}
         onBlur={() => {
           setIsFocused(false);
           // Small timeout so click on autocomplete option can trigger
@@ -223,16 +283,19 @@ export function VariableInput({
         {...props}
       />
 
+
       {/* Hover Tooltip for {{VAR}} */}
       {hoveredVar && (
         <div
+          onMouseEnter={handleTooltipMouseEnter}
+          onMouseLeave={handleTooltipMouseLeave}
           style={{
             position: "fixed",
             left: `${hoveredVar.rect.left}px`,
             top: `${hoveredVar.rect.bottom + 6}px`,
             zIndex: 9999,
           }}
-          className="bg-zinc-900 text-zinc-100 dark:bg-zinc-950 dark:border dark:border-zinc-800 rounded-lg shadow-xl p-3 text-xs w-72 animate-in fade-in duration-100 pointer-events-auto"
+          className="bg-zinc-900 text-zinc-100 dark:bg-zinc-950 dark:border dark:border-zinc-800 rounded-lg shadow-xl p-3 text-xs w-72 animate-in fade-in duration-100 pointer-events-auto before:absolute before:-top-3 before:left-0 before:right-0 before:h-3 before:content-['']"
         >
           <div className="flex items-center justify-between pb-1.5 border-b border-zinc-800">
             <span className="font-mono font-bold text-xs flex items-center gap-1.5">
@@ -283,19 +346,25 @@ export function VariableInput({
                   variant="outline"
                   size="sm"
                   onClick={() => {
+                    if (hoverTimeoutRef.current) {
+                      clearTimeout(hoverTimeoutRef.current);
+                      hoverTimeoutRef.current = null;
+                    }
                     setHoveredVar(null);
                     onOpenManageEnvironments();
                   }}
-                  className="h-6 text-[11px] gap-1 px-2 text-zinc-300 hover:text-white cursor-pointer"
+                  className="h-6 text-[11px] gap-1 px-2.5 bg-zinc-800 hover:bg-zinc-700 border-zinc-700 hover:border-zinc-600 text-zinc-200 hover:text-white transition-colors cursor-pointer"
                 >
                   <ExternalLink className="w-3 h-3" />
                   Open Definition
                 </Button>
               </div>
             )}
+
           </div>
         </div>
       )}
+
 
       {/* Autocomplete Menu Popover */}
       {autocompleteOpen && filteredOptions.length > 0 && (

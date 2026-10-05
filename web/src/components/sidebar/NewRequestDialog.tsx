@@ -83,8 +83,8 @@ export function NewRequestDialog({
       setError(null)
       await onSubmit(cleanName, method, folder)
       onOpenChange(false)
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create request')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create request')
     } finally {
       setIsSubmitting(false)
     }

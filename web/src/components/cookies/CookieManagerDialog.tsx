@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Cookie,
   Trash2,
@@ -41,7 +41,7 @@ export function CookieManagerDialog({
   const [newSecure, setNewSecure] = useState(false);
   const [newHttpOnly, setNewHttpOnly] = useState(false);
 
-  const fetchCookies = async () => {
+  const fetchCookies = useCallback(async () => {
     if (!workspacePath) return;
     setIsLoading(true);
     try {
@@ -61,13 +61,13 @@ export function CookieManagerDialog({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [workspacePath, selectedDomain]);
 
   useEffect(() => {
     if (isOpen) {
       fetchCookies();
     }
-  }, [isOpen, workspacePath]);
+  }, [isOpen, fetchCookies]);
 
   const handleAddCookie = async (e: React.FormEvent) => {
     e.preventDefault();

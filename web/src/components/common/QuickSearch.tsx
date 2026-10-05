@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Search, FileCode, Folder, ArrowRight, Command } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import type { TreeNode } from '../../types'
@@ -58,10 +58,10 @@ export function QuickSearch({ open, onClose }: QuickSearchProps) {
     setSelected(0)
   }, [query])
 
-  const handleSelect = (node: TreeNode) => {
+  const handleSelect = useCallback((node: TreeNode) => {
     loadRequest(node.path)
     onClose()
-  }
+  }, [loadRequest, onClose])
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -80,7 +80,7 @@ export function QuickSearch({ open, onClose }: QuickSearchProps) {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [open, filtered, selected])
+  }, [open, filtered, selected, handleSelect, onClose])
 
   // Scroll selected item into view
   useEffect(() => {
