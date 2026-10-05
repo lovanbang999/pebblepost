@@ -1,10 +1,12 @@
 package grpcclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -203,6 +205,14 @@ func (c *Client) ReflectServices(ctx context.Context, address string, useTLS boo
 	return result, nil
 }
 
+func fileAccessor(filename string) (io.ReadCloser, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(data)), nil
+}
+
 // LoadProtoServices parses .proto files from the workspace
 // using protoparse with configured import paths.
 func (c *Client) LoadProtoServices(protoFiles []string, importPaths []string) ([]types.GrpcServiceInfo, error) {
@@ -219,6 +229,7 @@ func (c *Client) LoadProtoServices(protoFiles []string, importPaths []string) ([
 		ImportPaths:           resolvedImportPaths,
 		InferImportPaths:      true,
 		IncludeSourceCodeInfo: true,
+		Accessor:              fileAccessor,
 	}
 
 	resolvedFiles, err := protoparse.ResolveFilenames(resolvedImportPaths, safeProtoFiles...)
@@ -290,6 +301,7 @@ func (c *Client) ResolveMethodDescriptor(ctx context.Context, g *types.GrpcDefin
 		parser := protoparse.Parser{
 			ImportPaths:      resolvedImportPaths,
 			InferImportPaths: true,
+			Accessor:         fileAccessor,
 		}
 		resolvedFiles, err := protoparse.ResolveFilenames(resolvedImportPaths, safeProtoFiles...)
 		if err != nil {

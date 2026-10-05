@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -392,8 +393,10 @@ func TestApplyUpdate_SecurityGates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to stat binary: %v", err)
 		}
-		if fi.Mode().Perm()&0111 == 0 {
-			t.Fatalf("expected binary to be executable, got perm: %v", fi.Mode().Perm())
+		if runtime.GOOS != "windows" {
+			if fi.Mode().Perm()&0111 == 0 {
+				t.Fatalf("expected binary to be executable, got perm: %v", fi.Mode().Perm())
+			}
 		}
 	}
 }
