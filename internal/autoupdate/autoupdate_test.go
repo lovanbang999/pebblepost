@@ -219,4 +219,39 @@ func TestHandlerEndpoints(t *testing.T) {
 	if !verifyResp.Valid {
 		t.Errorf("expected valid signature verification")
 	}
+
+	// 4. GET /api/update/check
+	req = httptest.NewRequest(http.MethodGet, "/api/update/check?force=true", nil)
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	// Server returns 200 or 502 depending on network, both verify handler path
+	if rr.Code != http.StatusOK && rr.Code != http.StatusBadGateway {
+		t.Errorf("GET /api/update/check status = %d", rr.Code)
+	}
+}
+
+func TestService_OptionsAndParseKey(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	// Test ParsePublicKey with raw and hex
+	parsed, err := ParsePublicKey(pub)
+	if err != nil || len(parsed) != ed25519.PublicKeySize {
+		t.Fatalf("ParsePublicKey raw failed: %v", err)
+	}
+
+	b64Key := base64.StdEncoding.EncodeToString(pub)
+	parsedB64, err := ParsePublicKey([]byte(b64Key))
+	if err != nil || len(parsedB64) != ed25519.PublicKeySize {
+		t.Fatalf("ParsePublicKey b64 failed: %v", err)
+	}
+
+	// Test WithHTTPClient
+	customClient := &http.Client{}
+	svc := NewService("1.0.0", t.TempDir(), WithHTTPClient(customClient))
+	if svc.httpClient != customClient {
+		t.Errorf("expected custom HTTP client")
+	}
 }
