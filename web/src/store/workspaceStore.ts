@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { RequestDefinition, ExecutionResult, TreeNode, EnvironmentDefinition } from '../types'
+import { useGitStore } from './gitStore'
 
 export interface DiskConflict {
   filePath: string
@@ -167,6 +168,9 @@ function setupWatcher(
 
       // Always reload workspace tree to reflect file renames/additions/deletions/ordering
       state.loadWorkspace(state.workspacePath || '.')
+      if (state.workspacePath) {
+        void useGitStore.getState().refresh(state.workspacePath)
+      }
     } catch (err) {
       console.error('Error handling workspace event:', err)
     }
@@ -348,6 +352,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       console.warn('Could not scan workspace via API (running offline or standalone mode):', err)
     } finally {
       set({ isLoadingWorkspace: false })
+      if (path) {
+        void useGitStore.getState().refresh(path)
+      }
     }
   },
 
@@ -397,6 +404,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         })
         if (workspacePath) {
           get().loadWorkspace(workspacePath)
+          void useGitStore.getState().refresh(workspacePath)
         }
         return true
       }

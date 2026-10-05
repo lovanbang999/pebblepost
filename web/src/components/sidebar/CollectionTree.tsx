@@ -31,6 +31,8 @@ import { Tooltip } from '../ui/tooltip'
 import { Skeleton } from '../ui/skeleton'
 import { ImportDialog } from '../common/ImportDialog'
 import { ExportDialog } from '../common/ExportDialog'
+import { GitBadge } from '../git/GitBadge'
+import { GitPanel } from '../git/GitPanel'
 import {
   Dialog,
   DialogContent,
@@ -710,6 +712,20 @@ export function CollectionTree() {
                 <span className="truncate font-medium text-xs text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">
                   {node.displayName || node.name}
                 </span>
+                {node.gitStatus && (
+                  <span
+                    className={cn(
+                      'text-[9px] font-mono font-bold px-1 py-0.2 rounded shrink-0 ml-1',
+                      node.gitStatus === 'M' && 'text-amber-600 dark:text-amber-400 bg-amber-500/10',
+                      node.gitStatus === 'A' && 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10',
+                      node.gitStatus === 'D' && 'text-rose-600 dark:text-rose-400 bg-rose-500/10',
+                      node.gitStatus === '?' && 'text-zinc-500 bg-zinc-500/10'
+                    )}
+                    title={`Git status: ${node.gitStatus}`}
+                  >
+                    {node.gitStatus}
+                  </span>
+                )}
               </button>
             )}
 
@@ -823,6 +839,20 @@ export function CollectionTree() {
             <span className="truncate flex-1">
               {(node.displayName || node.name).replace('.pebble.json', '')}
             </span>
+            {node.gitStatus && (
+              <span
+                className={cn(
+                  'text-[9px] font-mono font-bold px-1 py-0.2 rounded shrink-0 ml-1',
+                  node.gitStatus === 'M' && 'text-amber-600 dark:text-amber-400 bg-amber-500/10',
+                  node.gitStatus === 'A' && 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10',
+                  node.gitStatus === 'D' && 'text-rose-600 dark:text-rose-400 bg-rose-500/10',
+                  node.gitStatus === '?' && 'text-zinc-500 bg-zinc-500/10'
+                )}
+                title={`Git status: ${node.gitStatus}`}
+              >
+                {node.gitStatus}
+              </span>
+            )}
           </button>
         )}
       </div>
@@ -992,10 +1022,9 @@ export function CollectionTree() {
         )}
       </div>
 
-      {/* Footer */}
-      <div className="p-2 border-t border-zinc-200 dark:border-zinc-900 text-[10px] text-zinc-500 flex items-center justify-between bg-zinc-50 dark:bg-zinc-950/50">
-        <span>Format: *.pebble.json</span>
-        <span className="text-emerald-600 dark:text-emerald-500 font-mono font-medium">Git-synced</span>
+      {/* Footer / Status Bar */}
+      <div className="h-9 px-3 border-t border-zinc-200 dark:border-zinc-800 text-xs flex items-center justify-between bg-zinc-50/80 dark:bg-zinc-900/50 select-none shrink-0">
+        <GitBadge workspacePath={workspacePath} />
       </div>
 
       {/* Context Menu Popup */}
@@ -1193,6 +1222,9 @@ export function CollectionTree() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Slide-in Git Panel */}
+      <GitPanel workspacePath={workspacePath} />
     </aside>
   )
 }
