@@ -24,7 +24,7 @@ func HostHeaderMiddleware(allowedHosts ...string) func(http.Handler) http.Handle
 
 			allowed := false
 			if len(allowedHosts) == 0 {
-				if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+				if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
 					allowed = true
 				}
 			} else {

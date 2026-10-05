@@ -1,9 +1,11 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -177,7 +179,13 @@ func (s *WorkspaceService) ScanTree(rootPath string) ([]*types.TreeNode, error) 
 		scanRoot = collDir
 	}
 
-	return s.scanDir(scanRoot, rootPath)
+	nodes, err := s.scanDir(scanRoot, rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	annotateTreeWithGit(nodes, rootPath)
+	return nodes, nil
 }
 
 func (s *WorkspaceService) scanDir(dirPath string, workspaceRoot string) ([]*types.TreeNode, error) {
@@ -515,4 +523,111 @@ func (s *WorkspaceService) TrashPath(workspaceRoot, targetPath string) error {
 	}
 
 	return os.RemoveAll(targetPath)
+}
+
+func annotateTreeWithGit(nodes []*types.TreeNode, workspaceRoot string) {
+	if len(nodes) == 0 || workspaceRoot == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "-C", workspaceRoot, "status", "--porcelain=v1", "-uall")
+	out, err := cmd.Output()
+	if err != nil {
+		return
+	}
+
+	statusMap := make(map[string]string)
+	lines := strings.Split(string(out), "\n")
+	for _, line := range lines {
+		if len(line) < 3 {
+			continue
+		}
+		x := line[0]
+		y := line[1]
+		rest := strings.TrimSpace(line[2:])
+		if rest == "" {
+			continue
+		}
+		if strings.Contains(rest, " -> ") {
+			pts := strings.SplitN(rest, " -> ", 2)
+			rest = strings.Trim(pts[1], "\"")
+		} else {
+			rest = strings.Trim(rest, "\"")
+		}
+
+		code := "M"
+		if x == '?' && y == '?' {
+			code = "?"
+		} else if x == 'A' || y == 'A' {
+			code = "A"
+		} else if x == 'D' || y == 'D' {
+			code = "D"
+		}
+
+		statusMap[filepath.Clean(rest)] = code
+	}
+
+	for _, node := range nodes {
+		annotateNodeGitStatus(node, statusMap)
+	}
+}
+
+func annotateNodeGitStatus(node *types.TreeNode, statusMap map[string]string) string {
+	if !node.IsDir {
+		cleanRel := filepath.Clean(node.RelPath)
+		if code, ok := statusMap[cleanRel]; ok {
+			node.GitStatus = code
+			return code
+		}
+		return ""
+	}
+
+	hasM := false
+	hasA := false
+	hasD := false
+	hasUntracked := false
+
+	for _, child := range node.Children {
+		cStatus := annotateNodeGitStatus(child, statusMap)
+		switch cStatus {
+		case "M":
+			hasM = true
+		case "A":
+			hasA = true
+		case "D":
+			hasD = true
+		case "?":
+			hasUntracked = true
+		}
+	}
+
+	folderPrefix := filepath.Clean(node.RelPath) + string(filepath.Separator)
+	for path, code := range statusMap {
+		if strings.HasPrefix(path, folderPrefix) {
+			switch code {
+			case "M":
+				hasM = true
+			case "A":
+				hasA = true
+			case "D":
+				hasD = true
+			case "?":
+				hasUntracked = true
+			}
+		}
+	}
+
+	if hasM {
+		node.GitStatus = "M"
+	} else if hasA {
+		node.GitStatus = "A"
+	} else if hasD {
+		node.GitStatus = "D"
+	} else if hasUntracked {
+		node.GitStatus = "?"
+	}
+	return node.GitStatus
 }

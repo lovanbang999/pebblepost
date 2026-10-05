@@ -355,5 +355,6 @@ type TreeNode struct {
 	IsDir       bool        `json:"isDir"`
 	Order       int         `json:"order,omitempty"`
 	Method      string      `json:"method,omitempty"`
+	GitStatus   string      `json:"gitStatus,omitempty"` // "M", "A", "D", "?"
 	Children    []*TreeNode `json:"children,omitempty"`
 }

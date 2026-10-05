@@ -320,7 +320,59 @@ export interface TreeNode {
   relPath: string
   isDir: boolean
   method?: string
+  gitStatus?: string
   children?: TreeNode[]
+}
+
+// ── Git Types ────────────────────────────────────────────────────────────────
+
+export interface GitFileStatus {
+  path: string
+  code: string
+  staged: boolean
+  old?: string
+}
+
+export interface GitStatus {
+  isRepo: boolean
+  branch: string
+  ahead: number
+  behind: number
+  dirty: boolean
+  files: GitFileStatus[]
+}
+
+export interface GitBranch {
+  name: string
+  current: boolean
+  remote?: string
+}
+
+export interface GitCommit {
+  hash: string
+  short: string
+  author: string
+  date: string
+  subject: string
+}
+
+export interface GitDiffEntry {
+  field: string
+  before: string
+  after: string
+  type: 'text' | 'json' | 'kv' | 'js'
+}
+
+export interface GitPushPullResponse {
+  success: boolean
+  output: string
+  error?: string
+}
+
+export interface GitCheckoutResponse {
+  success: boolean
+  message: string
+  stashed: boolean
 }
 
 export interface HistoryEntry {

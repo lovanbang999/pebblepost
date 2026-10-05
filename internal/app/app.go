@@ -7,6 +7,7 @@ import (
 
 	"pebblepost/internal/autoupdate"
 	"pebblepost/internal/docs"
+	"pebblepost/internal/gitclient"
 	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/runner"
@@ -30,6 +31,7 @@ type App struct {
 	ScriptEngine   *scripting.Engine
 	HistorySvc     *history.Store
 	UpdateSvc      *autoupdate.Service
+	GitSvc         *gitclient.Service
 }
 
 // ServeHTTP implements http.Handler, running requests through the full
@@ -53,6 +55,7 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 	interpolator := workspace.NewInterpolator()
 	client := httpclient.NewClient()
 	scriptEngine := scripting.NewEngine()
+	gitSvc := gitclient.NewService()
 
 	// Open history SQLite store under <dataDir>/history/
 	historySvc, err := history.Open(filepath.Join(dataDir, "history"))
@@ -73,6 +76,7 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 		ScriptEngine:   scriptEngine,
 		HistorySvc:     historySvc,
 		UpdateSvc:      updateSvc,
+		GitSvc:         gitSvc,
 	}
 
 	a.registerRoutes()
@@ -114,6 +118,10 @@ func (a *App) registerRoutes() {
 	// Workspace & Collection endpoints
 	wsHandler := workspace.NewHandler(a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator)
 	wsHandler.RegisterRoutes(a.Mux)
+
+	// Git integration endpoints
+	gitHandler := gitclient.NewHandler(a.GitSvc)
+	gitHandler.RegisterRoutes(a.Mux)
 
 	// HTTP Execution endpoints with Scripting sandbox
 	httpHandler := httpclient.NewHandler(a.HttpClient, a.WorkspaceSvc, a.EnvironmentSvc, a.Interpolator, a.ScriptEngine, a.HistorySvc)
