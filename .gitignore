@@ -35,6 +35,13 @@ data/
 *.swp
 *.swo
 
-# Go cache
+# Go cache & coverage
 *.out
 *.test
+*.cov
+
+# Test output & temporary runner data
+tmp-smoke-data/
+web/test-results/
+web/playwright-report/
+
