@@ -290,3 +290,41 @@ func TestParseOpenAPI_EmptyPaths(t *testing.T) {
 		t.Error("expected error for spec with no operations, got nil")
 	}
 }
+
+func TestParsePostman_URLReconstruction_HostAndPath(t *testing.T) {
+	rawJSON := `{
+		"info": { "name": "Test Col" },
+		"item": [
+			{
+				"name": "List Users",
+				"request": {
+					"method": "GET",
+					"url": {
+						"raw": "{{BASE_URL}}",
+						"host": ["{{BASE_URL}}"],
+						"path": ["api", "v1", "users"],
+						"query": [
+							{ "key": "limit", "value": "20" }
+						]
+					}
+				}
+			}
+		]
+	}`
+
+	svc := NewImportService()
+	reqs, err := svc.ParsePostman([]byte(rawJSON))
+	if err != nil {
+		t.Fatalf("ParsePostman error: %v", err)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(reqs))
+	}
+	req := reqs[0]
+	if req.URL != "{{BASE_URL}}/api/v1/users" {
+		t.Errorf("want URL {{BASE_URL}}/api/v1/users, got %s", req.URL)
+	}
+	if len(req.Params) != 1 || req.Params[0].Key != "limit" {
+		t.Errorf("expected 1 query param, got %+v", req.Params)
+	}
+}

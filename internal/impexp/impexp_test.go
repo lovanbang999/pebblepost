@@ -523,3 +523,40 @@ func TestSaveToWorkspace(t *testing.T) {
 		t.Fatalf("folder definition was not created at %s", folderFile)
 	}
 }
+
+func TestPostman_URLReconstruction_HostAndPath(t *testing.T) {
+	rawJSON := `{
+		"info": { "name": "Test Col" },
+		"item": [
+			{
+				"name": "List Users",
+				"request": {
+					"method": "GET",
+					"url": {
+						"raw": "{{BASE_URL}}",
+						"host": ["{{BASE_URL}}"],
+						"path": ["api", "v1", "users"],
+						"query": [
+							{ "key": "limit", "value": "20" }
+						]
+					}
+				}
+			}
+		]
+	}`
+
+	res, err := ParsePostman([]byte(rawJSON))
+	if err != nil {
+		t.Fatalf("ParsePostman error: %v", err)
+	}
+	if len(res.Requests) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(res.Requests))
+	}
+	req := res.Requests[0]
+	if req.Request.URL != "{{BASE_URL}}/api/v1/users" {
+		t.Errorf("want URL {{BASE_URL}}/api/v1/users, got %s", req.Request.URL)
+	}
+	if len(req.Request.Params) != 1 || req.Request.Params[0].Key != "limit" {
+		t.Errorf("expected 1 query param, got %+v", req.Request.Params)
+	}
+}
