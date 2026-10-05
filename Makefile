@@ -65,6 +65,10 @@ build-server: ## Build server binary
 	@mkdir -p web/dist && touch web/dist/.gitkeep
 	go build -o bin/pebblepost-server ./cmd/server
 
+.PHONY: deb
+deb: ## Build Linux desktop binary and package installable .deb
+	./scripts/build-linux.sh
+
 # ─── Frontend ─────────────────────────────────────────────────────────────────
 
 .PHONY: fe-install

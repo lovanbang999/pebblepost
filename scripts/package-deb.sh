@@ -67,7 +67,13 @@ mkdir -p "$PKG_DIR/usr/share/icons/hicolor/scalable/apps"
 cp -f "build/bin/pebblepost" "$PKG_DIR/usr/bin/pebblepost"
 chmod 755 "$PKG_DIR/usr/bin/pebblepost"
 
-# 2. Install desktop launcher
+# 2. Install application icon
+if [ -f "web/public/favicon.svg" ]; then
+  cp -f "web/public/favicon.svg" "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/pebblepost.svg"
+  cp -f "web/public/favicon.svg" "$PKG_DIR/usr/share/pixmaps/pebblepost.svg"
+fi
+
+# 3. Install desktop launcher
 cat <<EOF > "$PKG_DIR/usr/share/applications/pebblepost.desktop"
 [Desktop Entry]
 Name=PebblePost Studio
