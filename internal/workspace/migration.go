@@ -3,12 +3,13 @@ package workspace
 import "pebblepost/internal/types"
 
 const (
-	DefaultRequestSchema = "https://pebblepost.dev/schemas/v1/request.json"
-	DefaultSchemaVersion = 1
+	DefaultRequestSchema        = "https://pebblepost.dev/schemas/v2/request.json"
+	DefaultRequestSchemaVersion = 2
+	DefaultSchemaVersion        = 1
 )
 
-// MigrateRequest migrates a request in-memory to schemaVersion 1.
-// If the request is already at schemaVersion >= 1, it returns wasMigrated=false.
+// MigrateRequest migrates a request in-memory to schemaVersion 2.
+// If the request is already at schemaVersion >= 2, it returns wasMigrated=false.
 // It never touches the disk.
 func MigrateRequest(req *types.RequestDefinition) (*types.RequestDefinition, bool) {
 	if req == nil {
@@ -16,17 +17,24 @@ func MigrateRequest(req *types.RequestDefinition) (*types.RequestDefinition, boo
 	}
 
 	wasMigrated := false
-	if req.SchemaVersion < DefaultSchemaVersion {
-		req.SchemaVersion = DefaultSchemaVersion
-		wasMigrated = true
-		if req.Auth.Type == "" {
-			req.Auth.Type = "none"
+	if req.SchemaVersion < DefaultRequestSchemaVersion {
+		if req.SchemaVersion < 1 {
+			if req.Auth.Type == "" {
+				req.Auth.Type = "none"
+			}
+		} else if req.Auth.Type == "" {
+			req.Auth.Type = "inherit"
 		}
+		if req.Extractors == nil {
+			req.Extractors = make([]types.ExtractorDefinition, 0)
+		}
+		req.SchemaVersion = DefaultRequestSchemaVersion
+		wasMigrated = true
 	} else if req.Auth.Type == "" {
 		req.Auth.Type = "inherit"
 	}
 
-	if req.Schema == "" {
+	if req.Schema == "" || req.Schema == "https://pebblepost.dev/schemas/v1/request.json" {
 		req.Schema = DefaultRequestSchema
 	}
 	if req.Version == "" {

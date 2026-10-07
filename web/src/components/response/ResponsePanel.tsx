@@ -23,6 +23,8 @@ import {
 import { GrpcStreamTimeline } from '../grpc/GrpcStreamTimeline'
 import { StreamLogPanel } from '../stream/StreamLogPanel'
 import { SaveExampleDialog } from './SaveExampleDialog'
+import { ResponseJsonTree } from './ResponseJsonTree'
+import { SetVariableDialog } from './SetVariableDialog'
 import CodeMirror from '@uiw/react-codemirror'
 import { json } from '@codemirror/lang-json'
 import { javascript } from '@codemirror/lang-javascript'
@@ -31,7 +33,7 @@ import { JSONPath } from 'jsonpath-plus'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
 import { formatBytes, formatDuration } from '../../lib/utils'
-import type { ConsoleLogEntry, RedirectHop, ExecutionResult } from '../../types'
+import type { ConsoleLogEntry, RedirectHop, ExecutionResult, ExtractorDefinition } from '../../types'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs'
@@ -286,6 +288,80 @@ export function ResponsePanel() {
   const [loadedBody, setLoadedBody] = useState<string | null>(null)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [loadOffset, setLoadOffset] = useState(0)
+
+  // JSON View Mode ('pretty' | 'tree' | 'raw') and Variable Extraction Dialog
+  const [jsonViewMode, setJsonViewMode] = useState<'pretty' | 'tree' | 'raw'>('pretty')
+  const [variableDialogOpen, setVariableDialogOpen] = useState(false)
+  const [dialogJsonPath, setDialogJsonPath] = useState('')
+  const [dialogNodeValue, setDialogNodeValue] = useState('')
+  const [dialogSuggestedName, setDialogSuggestedName] = useState('')
+
+  const handleSelectTreeNode = (jsonPath: string, formattedValue: string, suggestedName: string) => {
+    setDialogJsonPath(jsonPath)
+    setDialogNodeValue(formattedValue)
+    setDialogSuggestedName(suggestedName)
+    setVariableDialogOpen(true)
+  }
+
+  const handleSaveExtractor = (name: string, scope: 'runtime' | 'environment' | 'folder', path: string) => {
+    const { updateActiveRequest, setLastResult, updateActiveFolder } = useTabStore.getState()
+    const { environments, activeEnv, setEnvironments } = useWorkspaceStore.getState()
+
+    // 1. Add extractor to active request definition
+    const newExtractor: ExtractorDefinition = {
+      id: `ext_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      type: 'jsonpath',
+      path,
+      scope,
+      enabled: true,
+    }
+
+    updateActiveRequest((prev) => ({
+      ...prev,
+      extractors: [...(prev.extractors || []), newExtractor],
+    }))
+
+    // 2. Immediately populate variable into selected in-memory scope
+    if (scope === 'runtime') {
+      setLastResult((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          extractedEnvVars: {
+            ...(prev.extractedEnvVars || {}),
+            [name]: dialogNodeValue,
+          },
+        }
+      })
+    } else if (scope === 'environment' && activeEnv) {
+      const updated = environments.map((env) => {
+        if (env.name !== activeEnv) return env
+        const existingIdx = (env.variables || []).findIndex((v) => v.key === name)
+        const newVar = { key: name, value: dialogNodeValue, enabled: true }
+        const newVars = [...(env.variables || [])]
+        if (existingIdx !== -1) {
+          newVars[existingIdx] = newVar
+        } else {
+          newVars.push(newVar)
+        }
+        return { ...env, variables: newVars }
+      })
+      setEnvironments(updated)
+    } else if (scope === 'folder') {
+      updateActiveFolder((prev) => {
+        const existingIdx = (prev.variables || []).findIndex((v) => v.key === name)
+        const newVar = { key: name, value: dialogNodeValue, enabled: true }
+        const newVars = [...(prev.variables || [])]
+        if (existingIdx !== -1) {
+          newVars[existingIdx] = newVar
+        } else {
+          newVars.push(newVar)
+        }
+        return { ...prev, variables: newVars }
+      })
+    }
+  }
 
   // Reset per-result state when the result changes
   useEffect(() => {
@@ -592,9 +668,45 @@ export function ResponsePanel() {
           {/* ── BODY TAB ── */}
           <TabsContent value="body">
             <div className="space-y-2">
-              {/* JSONPath Filter Toggle */}
+              {/* JSON Toolbar: Mode Switcher (Pretty / Tree / Raw) & JSONPath filter */}
               {category === 'json' && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2 pb-1">
+                  <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 p-0.5 rounded-md border border-zinc-200 dark:border-zinc-800">
+                    <button
+                      type="button"
+                      onClick={() => setJsonViewMode('pretty')}
+                      className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                        jsonViewMode === 'pretty'
+                          ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium shadow-2xs'
+                          : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                      }`}
+                    >
+                      Pretty
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJsonViewMode('tree')}
+                      className={`px-2 py-0.5 text-[11px] rounded transition-colors flex items-center gap-1 ${
+                        jsonViewMode === 'tree'
+                          ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium shadow-2xs'
+                          : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                      }`}
+                    >
+                      Tree
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setJsonViewMode('raw')}
+                      className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
+                        jsonViewMode === 'raw'
+                          ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-medium shadow-2xs'
+                          : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
+                      }`}
+                    >
+                      Raw
+                    </button>
+                  </div>
+
                   <button
                     onClick={() => setShowJsonPath((p) => !p)}
                     className="text-[11px] flex items-center gap-1 text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
@@ -677,10 +789,26 @@ export function ResponsePanel() {
                 </div>
               ) : category === 'binary' ? (
                 <HexViewer data={displayBody} maxBytes={1024} />
+              ) : category === 'json' && jsonViewMode === 'tree' ? (
+                <div className="rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950 min-h-64">
+                  <ResponseJsonTree body={displayBody} onSelectNode={handleSelectTreeNode} />
+                </div>
               ) : (
                 <div className="rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-950">
                   <CodeMirror
-                    value={displayBody}
+                    value={
+                      category === 'json' && jsonViewMode === 'raw'
+                        ? displayBody
+                        : category === 'json'
+                        ? (function () {
+                            try {
+                              return JSON.stringify(JSON.parse(displayBody), null, 2)
+                            } catch {
+                              return displayBody
+                            }
+                          })()
+                        : displayBody
+                    }
                     height="100%"
                     minHeight="200px"
                     extensions={langExtensions}
@@ -1101,6 +1229,16 @@ export function ResponsePanel() {
           }}
         />
       )}
+
+      {/* Set as Variable Dialog */}
+      <SetVariableDialog
+        open={variableDialogOpen}
+        onClose={() => setVariableDialogOpen(false)}
+        jsonPath={dialogJsonPath}
+        initialValue={dialogNodeValue}
+        suggestedName={dialogSuggestedName}
+        onSave={handleSaveExtractor}
+      />
     </div>
   )
 }

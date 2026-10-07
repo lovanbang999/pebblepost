@@ -20,7 +20,7 @@ interface WorkspaceState {
   isExecuting: boolean
   isLoadingWorkspace: boolean
   lastResult: ExecutionResult | null
-  activeTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings'
+  activeTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'extract'
 
   sidebarView: 'collections' | 'history'
   setSidebarView: (view: 'collections' | 'history') => void
@@ -31,7 +31,7 @@ interface WorkspaceState {
   setActiveRequest: (req: RequestDefinition | null, filePath?: string | null) => void
   setIsExecuting: (isExecuting: boolean) => void
   setLastResult: (result: ExecutionResult | null) => void
-  setActiveTab: (tab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings') => void
+  setActiveTab: (tab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'extract') => void
   updateActiveRequest: (updater: (prev: RequestDefinition) => RequestDefinition) => void
   isDirty: () => boolean
   resolveConflict: (choice: 'mine' | 'disk') => void

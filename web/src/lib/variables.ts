@@ -1,4 +1,4 @@
-import type { AuthDefinition, EnvironmentDefinition, FolderDefinition } from "../types";
+import type { AuthDefinition, EnvironmentDefinition, FolderDefinition, RequestDefinition } from "../types";
 
 export interface VariableInfo {
   key: string;
@@ -46,11 +46,15 @@ export const DYNAMIC_VARIABLES: VariableInfo[] = [
  * 1. Built-in dynamic variables ($uuid, $timestamp, etc.)
  * 2. Active environment variables (public & secret)
  * 3. Folder-scoped variables (if any)
+ * 4. Extractor definitions on active request
+ * 5. Session runtime variables
  */
 export function getAvailableVariables(
   environments: EnvironmentDefinition[],
   activeEnvName?: string,
-  folder?: FolderDefinition | null
+  folder?: FolderDefinition | null,
+  activeRequest?: RequestDefinition | null,
+  runtimeVariables?: Record<string, string>
 ): Map<string, VariableInfo> {
   const map = new Map<string, VariableInfo>();
 
@@ -86,6 +90,36 @@ export function getAvailableVariables(
           secret: Boolean(v.secret),
           source: `Folder (${folder.name || "current"})`,
         });
+      }
+    }
+  }
+
+  // 4. Request extractors (highest precedence for chained execution context)
+  if (activeRequest && activeRequest.extractors) {
+    for (const ext of activeRequest.extractors) {
+      if (ext.enabled !== false && ext.name) {
+        const val = runtimeVariables?.[ext.name] || `Extracted via ${ext.path}`;
+        map.set(ext.name, {
+          key: ext.name,
+          value: val,
+          source: `Extractor (${activeRequest.name || "Request"}) • ${ext.scope || "runtime"} [${ext.path}]`,
+        });
+      }
+    }
+  }
+
+  // 5. Additional runtime variables (if any from execution not yet registered)
+  if (runtimeVariables) {
+    for (const [k, v] of Object.entries(runtimeVariables)) {
+      if (!map.has(k)) {
+        map.set(k, {
+          key: k,
+          value: v,
+          source: "Runtime (session)",
+        });
+      } else {
+        const existing = map.get(k)!;
+        existing.value = v;
       }
     }
   }

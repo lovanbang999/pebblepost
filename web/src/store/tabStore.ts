@@ -19,7 +19,7 @@ export interface RequestTab {
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
   lastResult: ExecutionResult | null
-  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc' | 'stream' | 'docs' | 'examples'
+  activeSubTab: 'params' | 'headers' | 'auth' | 'body' | 'scripts' | 'settings' | 'vars' | 'grpc' | 'stream' | 'docs' | 'examples' | 'extract'
   scrollPosition?: number
 }
 

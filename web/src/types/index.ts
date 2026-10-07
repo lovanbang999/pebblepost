@@ -203,6 +203,16 @@ export interface RequestDefinition {
   scripts: ScriptDefinition
   settings: SettingDefinition
   examples?: ExampleResponse[]
+  extractors?: ExtractorDefinition[]
+}
+
+export interface ExtractorDefinition {
+  id: string
+  name: string
+  type?: 'jsonpath' | string
+  path: string
+  scope?: 'runtime' | 'environment' | 'folder'
+  enabled: boolean
 }
 
 export interface EnvironmentVariable {

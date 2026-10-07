@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import { Lock, Sparkles, ExternalLink, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useWorkspaceStore } from "../../store/workspaceStore";
+import { useTabStore } from "../../store/tabStore";
 import {
   getAvailableVariables,
   tokenizeVariables,
@@ -101,10 +102,15 @@ export function VariableInput({
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState(0);
 
+  const { tabs, activeTabId } = useTabStore();
+  const currentTab = useMemo(() => tabs.find((t) => t.id === activeTabId), [tabs, activeTabId]);
+  const activeRequest = currentTab?.request;
+  const runtimeVars = currentTab?.lastResult?.extractedEnvVars;
+
   // Build available variables map
   const availableMap = useMemo(() => {
-    return getAvailableVariables(environments, activeEnv);
-  }, [environments, activeEnv]);
+    return getAvailableVariables(environments, activeEnv, currentTab?.folder, activeRequest, runtimeVars);
+  }, [environments, activeEnv, currentTab?.folder, activeRequest, runtimeVars]);
 
   // Tokenize text into literals and {{VAR}}
   const tokens = useMemo(() => {
