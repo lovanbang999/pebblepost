@@ -64,3 +64,20 @@ func TestReorderArgs_MockFlags(t *testing.T) {
 		t.Errorf("expected positional arg at end, got %s", reordered[len(reordered)-1])
 	}
 }
+
+func TestReorderArgs_SyncFlags(t *testing.T) {
+	args := []string{"./collections/users", "--spec", "spec.yaml", "--check", "--force"}
+	reordered := reorderArgs(args)
+
+	// Target path should be at the end
+	if len(reordered) != 5 {
+		t.Fatalf("expected 5 args, got %d", len(reordered))
+	}
+	if reordered[len(reordered)-1] != "./collections/users" {
+		t.Errorf("expected positional arg at end, got %s", reordered[len(reordered)-1])
+	}
+}
+
+func TestPrintSyncUsage(t *testing.T) {
+	printSyncUsage()
+}

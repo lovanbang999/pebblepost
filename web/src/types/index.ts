@@ -229,6 +229,13 @@ export interface EnvironmentDefinition {
   variables: EnvironmentVariable[]
 }
 
+export interface OpenAPISyncConfig {
+  specLocation: string
+  lastSyncedAt?: string
+  specHash?: string
+  autoSync?: boolean
+}
+
 export interface FolderDefinition {
   schemaVersion?: number
   name?: string
@@ -239,6 +246,63 @@ export interface FolderDefinition {
   auth?: AuthDefinition
   variables?: KeyValue[]
   scripts?: ScriptDefinition
+  openApiSync?: OpenAPISyncConfig
+}
+
+export type DiffType = 'added' | 'removed' | 'changed' | 'unchanged'
+
+export interface FieldDiff {
+  field: string
+  oldValue: unknown
+  newValue: unknown
+  isConflict: boolean
+  description: string
+}
+
+export interface ConflictInfo {
+  hasUserScripts: boolean
+  hasUserExamples: boolean
+  hasUserExtractors: boolean
+  hasUserCustomHeaders: boolean
+  details: string
+}
+
+export interface EndpointDiff {
+  id: string
+  operationId?: string
+  summary?: string
+  method: string
+  path: string
+  diffType: DiffType
+  existingFilePath?: string
+  proposedFilePath?: string
+  fieldDiffs?: FieldDiff[]
+  conflict?: ConflictInfo
+  specRequest?: RequestDefinition
+  existingRequest?: RequestDefinition
+}
+
+export interface SyncDiffReport {
+  folderPath: string
+  specLocation: string
+  specHash: string
+  totalEndpoints: number
+  addedCount: number
+  removedCount: number
+  changedCount: number
+  conflictCount: number
+  hasDrift: boolean
+  endpoints: EndpointDiff[]
+}
+
+export interface ApplyResult {
+  appliedCount: number
+  skippedCount: number
+  createdFiles: string[]
+  updatedFiles: string[]
+  deletedFiles: string[]
+  newSpecHash: string
+  syncedAt: string
 }
 
 export interface InheritedItemInfo {

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Folder, Save, Plus, Trash2, Check, FileText, Eye, Edit3, Columns } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Folder, Save, Plus, Trash2, Check, FileText, Eye, Edit3, Columns, FileCode2, Link2, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { MarkdownView } from '../common/MarkdownView'
 import CodeMirror from '@uiw/react-codemirror'
 import { autocompletion } from '@codemirror/autocomplete'
@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '../ui/select'
 import { Checkbox } from '../ui/checkbox'
+import { OpenAPISyncDialog } from './OpenAPISyncDialog'
 
 interface FolderSettingsPanelProps {
   currentTab: RequestTab
@@ -38,17 +39,27 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
   const { theme } = useWorkspaceStore()
   const { updateActiveFolder, saveCurrentTab } = useTabStore()
   const [isSaved, setIsSaved] = useState(false)
-  const [activeTab, setActiveTab] = useState<'headers' | 'auth' | 'vars' | 'scripts' | 'docs'>('headers')
+  const [activeTab, setActiveTab] = useState<'headers' | 'auth' | 'vars' | 'scripts' | 'docs' | 'openapi'>('headers')
   const [folderDocsMode, setFolderDocsMode] = useState<'split' | 'edit' | 'preview'>('split')
+  const [isSyncDialogOpen, setIsSyncDialogOpen] = useState(false)
+  const [specInput, setSpecInput] = useState('')
+  const [linking, setLinking] = useState(false)
+  const [linkStatusMessage, setLinkStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const folder: FolderDefinition = currentTab.folder || {
-    schemaVersion: 1,
+    schemaVersion: 2,
     name: currentTab.title,
     auth: { type: 'inherit' },
     headers: [],
     variables: [],
     scripts: {},
   }
+
+  useEffect(() => {
+    if (folder.openApiSync?.specLocation) {
+      setSpecInput(folder.openApiSync.specLocation)
+    }
+  }, [folder.openApiSync?.specLocation])
 
   const handleSave = async () => {
     const success = await saveCurrentTab()
@@ -127,6 +138,57 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
   }
 
   const currentAuthType = folder.auth?.type || 'inherit'
+
+  const handleLinkSpec = async () => {
+    if (!specInput.trim()) return
+    setLinking(true)
+    setLinkStatusMessage(null)
+    try {
+      const res = await fetch('/api/sync/link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderPath: currentTab.filePath,
+          specLocation: specInput.trim(),
+        }),
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || 'Failed to link OpenAPI spec')
+      }
+      const data = await res.json()
+      updateActiveFolder((prev) => ({
+        ...prev,
+        schemaVersion: 2,
+        openApiSync: {
+          specLocation: data.specLocation,
+          specHash: data.specHash,
+          lastSyncedAt: data.lastSyncedAt,
+        },
+      }))
+      setLinkStatusMessage({
+        type: 'success',
+        text: 'Successfully linked specification to this collection folder.',
+      })
+      setIsSyncDialogOpen(true)
+    } catch (err: unknown) {
+      setLinkStatusMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      setLinking(false)
+    }
+  }
+
+  const handleUnlinkSpec = () => {
+    updateActiveFolder((prev) => ({
+      ...prev,
+      openApiSync: undefined,
+    }))
+    setSpecInput('')
+    setLinkStatusMessage(null)
+  }
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
@@ -234,6 +296,13 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
             Docs
             {Boolean(folder.description?.trim()) && (
               <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1.5" />
+            )}
+          </TabsTrigger>
+
+          <TabsTrigger value="openapi" className="capitalize">
+            OpenAPI Sync
+            {Boolean(folder.openApiSync?.specLocation) && (
+              <span className="w-1.5 h-1.5 rounded-full bg-teal-500 ml-1.5" />
             )}
           </TabsTrigger>
         </TabsList>
@@ -782,7 +851,119 @@ export function FolderSettingsPanel({ currentTab }: FolderSettingsPanelProps) {
             )}
           </div>
         </TabsContent>
+
+        {/* Tab 6: OpenAPI Sync */}
+        <TabsContent value="openapi" className="flex-1 flex flex-col p-4 overflow-y-auto m-0 space-y-4">
+          <div className="p-3.5 rounded-lg bg-teal-50/50 dark:bg-teal-950/20 border border-teal-200/60 dark:border-teal-900/40 text-xs text-teal-900 dark:text-teal-300 flex items-start gap-3">
+            <FileCode2 className="w-5 h-5 text-teal-600 dark:text-teal-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-teal-950 dark:text-teal-200">OpenAPI Specification Synchronization</p>
+              <p className="mt-0.5 opacity-90 leading-relaxed">
+                Link this folder to an OpenAPI 3.x specification (local file path or remote URL). PebblePost compares operations with your request files, detects drift (added, changed, removed endpoints), preserves your scripts and custom headers, and allows selective merging.
+              </p>
+            </div>
+          </div>
+
+          {linkStatusMessage && (
+            <div
+              className={cn(
+                'p-3 rounded-lg border text-xs flex items-center gap-2',
+                linkStatusMessage.type === 'success'
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+              )}
+            >
+              {linkStatusMessage.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0" />
+              )}
+              <span>{linkStatusMessage.text}</span>
+            </div>
+          )}
+
+          {/* Configuration Card */}
+          <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs space-y-4">
+            <div>
+              <label className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-zinc-500" />
+                Specification Location
+              </label>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Path relative to collection (e.g. <code className="font-mono text-[10px]">./specs/api.yaml</code>) or full HTTP/HTTPS URL.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Input
+                type="text"
+                value={specInput}
+                onChange={(e) => setSpecInput(e.target.value)}
+                placeholder="https://api.example.com/openapi.json or ./openapi.yaml"
+                className="font-mono text-xs h-9 bg-zinc-50 dark:bg-zinc-950"
+              />
+              <Button
+                size="sm"
+                onClick={handleLinkSpec}
+                disabled={linking || !specInput.trim()}
+                className="h-9 px-4 text-xs bg-teal-600 hover:bg-teal-700 text-white font-medium shrink-0 cursor-pointer shadow-xs gap-1.5"
+              >
+                {linking ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                {folder.openApiSync?.specLocation ? 'Update Link' : 'Link Spec'}
+              </Button>
+            </div>
+
+            {folder.openApiSync?.specLocation && (
+              <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-teal-600 dark:text-teal-400 bg-teal-500/10 border-teal-500/20 text-[11px]">
+                    Linked
+                  </Badge>
+                  {folder.openApiSync.specHash && (
+                    <Badge variant="outline" className="font-mono text-[10px] text-zinc-500 border-zinc-300 dark:border-zinc-700">
+                      SHA: {folder.openApiSync.specHash.slice(0, 10)}
+                    </Badge>
+                  )}
+                  {folder.openApiSync.lastSyncedAt && (
+                    <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Last synced: {new Date(folder.openApiSync.lastSyncedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleUnlinkSpec}
+                    className="h-8 text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer"
+                  >
+                    Unlink
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => setIsSyncDialogOpen(true)}
+                    className="h-8 text-xs bg-zinc-800 hover:bg-zinc-900 dark:bg-zinc-100 dark:hover:bg-white text-white dark:text-zinc-900 cursor-pointer gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Check Drift & Sync
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </TabsContent>
       </Tabs>
+
+      <OpenAPISyncDialog
+        open={isSyncDialogOpen}
+        onOpenChange={setIsSyncDialogOpen}
+        folderPath={currentTab.filePath}
+        specLocation={folder.openApiSync?.specLocation || specInput}
+        onApplied={() => {
+          saveCurrentTab()
+        }}
+      />
     </div>
   )
 }

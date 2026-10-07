@@ -5,6 +5,7 @@ import "pebblepost/internal/types"
 const (
 	DefaultRequestSchema        = "https://pebblepost.dev/schemas/v2/request.json"
 	DefaultRequestSchemaVersion = 2
+	DefaultFolderSchemaVersion  = 2
 	DefaultSchemaVersion        = 1
 )
 
@@ -74,15 +75,15 @@ func MigrateWorkspace(ws *types.WorkspaceDefinition) (*types.WorkspaceDefinition
 	return ws, wasMigrated
 }
 
-// MigrateFolder migrates folder metadata in-memory to schemaVersion 1.
+// MigrateFolder migrates folder metadata in-memory to schemaVersion 2.
 func MigrateFolder(f *types.FolderDefinition) (*types.FolderDefinition, bool) {
 	if f == nil {
 		return nil, false
 	}
 
 	wasMigrated := false
-	if f.SchemaVersion < DefaultSchemaVersion {
-		f.SchemaVersion = DefaultSchemaVersion
+	if f.SchemaVersion < DefaultFolderSchemaVersion {
+		f.SchemaVersion = DefaultFolderSchemaVersion
 		wasMigrated = true
 	}
 
