@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"pebblepost/internal/secrets"
 	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 )
@@ -21,6 +22,9 @@ const (
 // EnvironmentService manages public and secret environment variables.
 type EnvironmentService struct {
 	watcher *Watcher
+	// secretStore is the active backend used to read/write secret variables.
+	// Defaults to a FileStore when nil (backwards-compatible).
+	secretStore secrets.SecretStore
 }
 
 // NewEnvironmentService creates a new EnvironmentService instance.
@@ -31,6 +35,12 @@ func NewEnvironmentService() *EnvironmentService {
 // SetWatcher connects an active file watcher to the service for self-write suppression.
 func (s *EnvironmentService) SetWatcher(w *Watcher) {
 	s.watcher = w
+}
+
+// SetSecretStore injects the active SecretStore. When not set the service falls
+// back to reading *.secret.env.json files directly (BackendFile).
+func (s *EnvironmentService) SetSecretStore(store secrets.SecretStore) {
+	s.secretStore = store
 }
 
 // ListEnvironments scans .pebble/environments and returns all merged environments.
@@ -88,6 +98,28 @@ func (s *EnvironmentService) ListEnvironments(rootPath string) ([]types.Environm
 		}
 	}
 
+	// If an active SecretStore is configured and not the default file store (e.g. keychain or env),
+	// read secret variables directly from the store for all discovered environments.
+	if s.secretStore != nil && s.secretStore.Backend() != secrets.BackendFile {
+		for envName := range envMap {
+			if keys, err := s.secretStore.List(envName); err == nil && len(keys) > 0 {
+				var secVars []types.KeyValue
+				for _, k := range keys {
+					val, gErr := s.secretStore.Get(envName, k)
+					if gErr == nil {
+						secVars = append(secVars, types.KeyValue{
+							Key:     k,
+							Value:   val,
+							Enabled: true,
+							Secret:  true,
+						})
+					}
+				}
+				secretMap[envName] = secVars
+			}
+		}
+	}
+
 	// Merge secrets into environments (secret variables override public with same key)
 	var result []types.EnvironmentDefinition
 	for envName, envDef := range envMap {
@@ -116,6 +148,16 @@ func (s *EnvironmentService) GetEnvironment(rootPath string, envName string) (*t
 
 	for _, env := range envs {
 		if strings.EqualFold(env.Name, envName) {
+			// If secretStore is set and is BackendEnv, resolve any missing secret values from OS environment
+			if s.secretStore != nil && s.secretStore.Backend() == secrets.BackendEnv {
+				for i, v := range env.Variables {
+					if v.Secret && v.Value == "" {
+						if val, err := s.secretStore.Get(env.Name, v.Key); err == nil && val != "" {
+							env.Variables[i].Value = val
+						}
+					}
+				}
+			}
 			return &env, nil
 		}
 	}
@@ -137,6 +179,42 @@ func (s *EnvironmentService) SaveEnvironment(rootPath string, env types.Environm
 
 	publicFilePath := filepath.Join(envDir, env.Name+EnvPublicSuffix)
 	secretFilePath := filepath.Join(envDir, env.Name+EnvSecretSuffix)
+
+	// If a non-file SecretStore is active (e.g. keychain):
+	if s.secretStore != nil && s.secretStore.Backend() != secrets.BackendFile {
+		if s.secretStore.Backend() != secrets.BackendEnv { // BackendEnv is read-only
+			for _, kv := range env.Variables {
+				if kv.Secret {
+					_ = s.secretStore.Set(env.Name, kv.Key, kv.Value)
+				}
+			}
+		}
+		if isSecret {
+			return nil
+		}
+
+		// Partition variables by Secret flag
+		var publicVars []types.KeyValue
+		for _, kv := range env.Variables {
+			if !kv.Secret {
+				publicVars = append(publicVars, kv)
+			}
+		}
+
+		if s.watcher != nil {
+			s.watcher.Suppress(publicFilePath, 1000*time.Millisecond)
+		}
+		publicEnv := types.EnvironmentDefinition{
+			SchemaVersion: CurrentSchemaVersion,
+			Name:          env.Name,
+			Variables:     publicVars,
+		}
+		if err := WriteFileStable(publicFilePath, publicEnv); err != nil {
+			return err
+		}
+		_ = os.Remove(secretFilePath)
+		return nil
+	}
 
 	if isSecret {
 		if s.watcher != nil {

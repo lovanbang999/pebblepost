@@ -165,6 +165,12 @@ func (s *WorkspaceService) GetWorkspaceInfo(rootPath string) (*types.WorkspaceDe
 	return migrated, nil
 }
 
+// SaveWorkspaceInfo persists workspace-level configuration changes to .pebble/workspace.json.
+func (s *WorkspaceService) SaveWorkspaceInfo(rootPath string, def *types.WorkspaceDefinition) error {
+	wsJSONPath := filepath.Join(rootPath, PebbleDir, WorkspaceFile)
+	return WriteFileStable(wsJSONPath, def)
+}
+
 // ScanTree recursively scans the collections directory (or root if collections doesn't exist)
 // and builds a hierarchical tree of folders and *.pebble.json requests with explicit ordering.
 func (s *WorkspaceService) ScanTree(rootPath string) ([]*types.TreeNode, error) {

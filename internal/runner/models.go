@@ -74,6 +74,10 @@ type RunOptions struct {
 	Writer io.Writer
 	// ReportFormat is the legacy format field (maps to a single ReporterConfig).
 	ReportFormat string
+
+	// SecretBackend overrides the secret storage backend ("file", "keychain", "env").
+	// If empty, it is auto-detected from workspace.json or PEBBLEPOST_SECRET_BACKEND.
+	SecretBackend string
 }
 
 // RequestRunResult represents the outcome of executing a single request file.

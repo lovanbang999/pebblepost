@@ -150,3 +150,67 @@ SECRET_TOKEN=my-secret-value
 		t.Error("expected SECRET_TOKEN value in secrets list")
 	}
 }
+
+func TestLoadEnvFile_Advanced(t *testing.T) {
+	t.Setenv("HOST_ENV_PORT", "9090")
+
+	dir := t.TempDir()
+	content := `
+# Advanced .env features
+export EXPORTED_VAR=exported-val
+QUOTED_DOUBLE="hello \"world\"\nnext line"
+QUOTED_SINGLE='single quoted'
+INLINE_COMMENT=running_mode # this is inline
+OS_ENV_IN_FILE=http://localhost:${OS_ENV:HOST_ENV_PORT}/api
+DB_PASSWORD="super-secret-password-123"
+API_AUTH_TOKEN='bearer-token-abc'
+`
+	path := filepath.Join(dir, ".env")
+	_ = os.WriteFile(path, []byte(content), 0644)
+
+	vars, secList, err := LoadEnvFile(path)
+	if err != nil {
+		t.Fatalf("LoadEnvFile error: %v", err)
+	}
+
+	if vars["EXPORTED_VAR"] != "exported-val" {
+		t.Errorf("EXPORTED_VAR: got %q, want 'exported-val'", vars["EXPORTED_VAR"])
+	}
+	if vars["QUOTED_DOUBLE"] != "hello \"world\"\nnext line" {
+		t.Errorf("QUOTED_DOUBLE: got %q, want unescaped string", vars["QUOTED_DOUBLE"])
+	}
+	if vars["QUOTED_SINGLE"] != "single quoted" {
+		t.Errorf("QUOTED_SINGLE: got %q, want 'single quoted'", vars["QUOTED_SINGLE"])
+	}
+	if vars["INLINE_COMMENT"] != "running_mode" {
+		t.Errorf("INLINE_COMMENT: got %q, want 'running_mode'", vars["INLINE_COMMENT"])
+	}
+	if vars["OS_ENV_IN_FILE"] != "http://localhost:9090/api" {
+		t.Errorf("OS_ENV_IN_FILE: got %q, want 'http://localhost:9090/api'", vars["OS_ENV_IN_FILE"])
+	}
+
+	// Verify secrets were collected
+	hasPassword := false
+	hasToken := false
+	hasPort := false
+	for _, s := range secList {
+		if s == "super-secret-password-123" {
+			hasPassword = true
+		}
+		if s == "bearer-token-abc" {
+			hasToken = true
+		}
+		if s == "9090" {
+			hasPort = true
+		}
+	}
+	if !hasPassword {
+		t.Errorf("expected DB_PASSWORD in secList: %v", secList)
+	}
+	if !hasToken {
+		t.Errorf("expected API_AUTH_TOKEN in secList: %v", secList)
+	}
+	if !hasPort {
+		t.Errorf("expected HOST_ENV_PORT value in secList: %v", secList)
+	}
+}

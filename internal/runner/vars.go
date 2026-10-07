@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"pebblepost/internal/secrets"
 	"pebblepost/internal/workspace"
 )
 
@@ -78,8 +79,14 @@ func ParseVarFlags(vars []string) (map[string]string, error) {
 	return out, nil
 }
 
-// loadEnvFile reads a simple KEY=VALUE env file (one per line, # comments ignored).
-// It returns the parsed variables and secret values (lines starting with SECRET_).
+// LoadEnvFile reads a standard .env file supporting comments, export prefixes,
+// quotes (single and double), escape sequences, and ${OS_ENV:VAR} expansions.
+// It returns the parsed variables and a list of secret values for masking.
+func LoadEnvFile(path string) (map[string]string, []string, error) {
+	return loadEnvFile(path, nil)
+}
+
+// loadEnvFile reads a standard KEY=VALUE env file with full syntax support.
 func loadEnvFile(path string, _ *workspace.Interpolator) (map[string]string, []string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -88,7 +95,7 @@ func loadEnvFile(path string, _ *workspace.Interpolator) (map[string]string, []s
 	defer f.Close()
 
 	vars := make(map[string]string)
-	var secrets []string
+	var secretList []string
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -96,19 +103,57 @@ func loadEnvFile(path string, _ *workspace.Interpolator) (map[string]string, []s
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+
+		// Support 'export KEY=VALUE' syntax
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
 		key := strings.TrimSpace(parts[0])
+		if key == "" {
+			continue
+		}
+
 		val := strings.TrimSpace(parts[1])
+
+		// Handle quoted values
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			quote := val[0]
+			val = val[1 : len(val)-1]
+			if quote == '"' {
+				val = strings.ReplaceAll(val, `\n`, "\n")
+				val = strings.ReplaceAll(val, `\t`, "\t")
+				val = strings.ReplaceAll(val, `\"`, `"`)
+				val = strings.ReplaceAll(val, `\\`, `\`)
+			}
+		} else {
+			// Strip unquoted inline comments: FOO=BAR # comment
+			if idx := strings.Index(val, " #"); idx != -1 {
+				val = strings.TrimSpace(val[:idx])
+			}
+		}
+
+		// Resolve ${OS_ENV:VAR} inside .env values
+		resolvedVal, envSecrets := secrets.ResolveOSEnvRefs(val, nil)
+		val = resolvedVal
+		secretList = append(secretList, envSecrets...)
+
 		vars[key] = val
 
-		// Treat values whose keys contain "SECRET" or "PASSWORD" as secret
+		// Automatically treat values whose keys suggest sensitive data as secrets
 		upper := strings.ToUpper(key)
-		if strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "TOKEN") {
-			secrets = append(secrets, val)
+		if strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") ||
+			strings.Contains(upper, "TOKEN") || strings.Contains(upper, "KEY") ||
+			strings.Contains(upper, "AUTH") || strings.Contains(upper, "CREDENTIAL") ||
+			strings.Contains(upper, "PRIVATE") {
+			if val != "" {
+				secretList = append(secretList, val)
+			}
 		}
 	}
-	return vars, secrets, scanner.Err()
+	return vars, secretList, scanner.Err()
 }

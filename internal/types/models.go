@@ -245,11 +245,21 @@ type EnvironmentDefinition struct {
 
 // WorkspaceDefinition represents workspace-level metadata (.pebble/workspace.json).
 type WorkspaceDefinition struct {
-	SchemaVersion     int    `json:"schemaVersion"`
-	Version           string `json:"version,omitempty"`
-	Name              string `json:"name"`
-	ActiveEnvironment string `json:"activeEnvironment,omitempty"`
-	Trusted           bool   `json:"trusted,omitempty"`
+	SchemaVersion     int                 `json:"schemaVersion"`
+	Version           string              `json:"version,omitempty"`
+	Name              string              `json:"name"`
+	ActiveEnvironment string              `json:"activeEnvironment,omitempty"`
+	Trusted           bool                `json:"trusted,omitempty"`
+	SecretBackend     SecretBackendConfig `json:"secretBackend,omitempty"`
+}
+
+// SecretBackendConfig describes the pluggable secret storage backend selection.
+// Stored in .pebble/workspace.json. Default is "file" (*.secret.env.json).
+type SecretBackendConfig struct {
+	// Default backend used for all environments ("file", "keychain", or "env").
+	Default string `json:"default,omitempty"`
+	// PerEnv overrides the default for specific environment names.
+	PerEnv map[string]string `json:"perEnv,omitempty"`
 }
 
 // OpenAPISyncConfig holds configuration for synchronizing a collection folder with an OpenAPI specification.

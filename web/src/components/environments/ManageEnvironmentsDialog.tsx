@@ -12,6 +12,8 @@ import {
   Lock,
   Globe,
   AlertCircle,
+  KeyRound,
+  ShieldCheck,
 } from "lucide-react";
 import { useWorkspaceStore } from "../../store/workspaceStore";
 import type { EnvironmentDefinition, EnvironmentVariable } from "../../types";
@@ -41,6 +43,9 @@ export function ManageEnvironmentsDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [backendConfig, setBackendConfig] = useState<{ default?: string; perEnv?: Record<string, string> } | null>(null);
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationMessage, setMigrationMessage] = useState<string | null>(null);
 
   // Initialize selected environment
   useEffect(() => {
@@ -61,7 +66,66 @@ export function ManageEnvironmentsDialog({
     setRevealedSecrets({});
     setSaveSuccess(false);
     setErrorMessage(null);
+    setMigrationMessage(null);
   }, [isOpen, initialEnvName, environments, activeEnv]);
+
+  // Load workspace secret backend configuration
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch("/api/workspace/secret-backend")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) setBackendConfig(data);
+      })
+      .catch(() => {});
+  }, [isOpen]);
+
+  const handleMigrate = async (targetBackend: "keychain" | "file") => {
+    if (!editingEnv) return;
+    const targetLabel = targetBackend === "keychain" ? "OS Keychain" : "Plaintext File (*.secret.env.json)";
+    if (
+      !window.confirm(
+        `Are you sure you want to migrate all secrets for environment "${editingEnv.name}" to ${targetLabel}?\n\nA rollback backup file will be created automatically.`
+      )
+    ) {
+      return;
+    }
+
+    setIsMigrating(true);
+    setErrorMessage(null);
+    setMigrationMessage(null);
+
+    try {
+      const res = await fetch("/api/workspace/secret-backend/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          envName: editingEnv.name,
+          to: targetBackend,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Secret migration failed");
+      }
+      setMigrationMessage(
+        data.backupPath
+          ? `Secrets migrated to ${targetLabel}! Backup saved to: ${data.backupPath}`
+          : `Secrets successfully migrated to ${targetLabel}!`
+      );
+
+      // Refresh backend configuration
+      const cfgRes = await fetch("/api/workspace/secret-backend");
+      if (cfgRes.ok) {
+        setBackendConfig(await cfgRes.json());
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to migrate secrets";
+      setErrorMessage(msg);
+    } finally {
+      setIsMigrating(false);
+    }
+  };
 
   // When switching environment in left list
   const handleSelectEnv = (envName: string) => {
@@ -597,22 +661,63 @@ export function ManageEnvironmentsDialog({
                     </div>
                   )}
 
-                  {/* Informational Footer */}
-                  <div className="mt-4 p-3 bg-zinc-50 dark:bg-zinc-950/30 rounded-lg border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400 flex items-start gap-2">
-                    <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                    <div>
-                      <strong className="text-zinc-700 dark:text-zinc-300">
-                        Public vs. Secret Storage:
-                      </strong>{" "}
-                      Non-secret variables are stored in{" "}
-                      <code className="text-emerald-600 dark:text-emerald-400">
-                        {editingEnv.name}.env.json
-                      </code>
-                      . Variables flagged as <strong>Secret</strong> are stored in{" "}
-                      <code className="text-amber-600 dark:text-amber-400">
-                        {editingEnv.name}.secret.env.json
-                      </code>{" "}
-                      (which is automatically ignored by Git).
+                  {/* Migration Success / Info Banner */}
+                  {migrationMessage && (
+                    <div className="mt-4 p-3 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-700 dark:text-emerald-300 flex items-start gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                      <div>{migrationMessage}</div>
+                    </div>
+                  )}
+
+                  {/* Informational & Secret Backend Footer */}
+                  <div className="mt-4 p-3 bg-zinc-50 dark:bg-zinc-950/30 rounded-lg border border-zinc-200 dark:border-zinc-800 text-[11px] text-zinc-500 dark:text-zinc-400 flex flex-col gap-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2">
+                        <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-zinc-700 dark:text-zinc-300">
+                            Secret Storage:
+                          </strong>{" "}
+                          Current backend for <code>{editingEnv.name}</code>:{" "}
+                          <Badge variant="outline" className="text-[10px] uppercase font-mono tracking-wider ml-1 py-0">
+                            {backendConfig?.perEnv?.[editingEnv.name] || backendConfig?.default || "file"}
+                          </Badge>
+                        </div>
+                      </div>
+
+                      {/* Migration Actions */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {(backendConfig?.perEnv?.[editingEnv.name] || backendConfig?.default) === "keychain" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isMigrating}
+                            onClick={() => handleMigrate("file")}
+                            className="h-6 text-[10px] px-2 gap-1 cursor-pointer"
+                          >
+                            <KeyRound className="w-3 h-3 text-amber-500" />
+                            Migrate to File
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isMigrating}
+                            onClick={() => handleMigrate("keychain")}
+                            className="h-6 text-[10px] px-2 gap-1 cursor-pointer"
+                          >
+                            <ShieldCheck className="w-3 h-3 text-indigo-500" />
+                            Migrate to OS Keychain
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-[10px] text-zinc-400 border-t border-zinc-200 dark:border-zinc-800/60 pt-2">
+                      Non-secret variables are stored in <code className="text-emerald-600 dark:text-emerald-400">{editingEnv.name}.env.json</code>.
+                      Secrets are stored in <code className="text-amber-600 dark:text-amber-400">{editingEnv.name}.secret.env.json</code> (with file backend) or encrypted in OS Keychain.
                     </div>
                   </div>
                 </div>
