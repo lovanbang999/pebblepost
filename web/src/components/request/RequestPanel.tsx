@@ -30,6 +30,7 @@ import { RunnerPanel } from "../runner/RunnerPanel";
 import { DocsPanel } from "../docs/DocsPanel";
 import { RequestDocsTab } from "./RequestDocsTab";
 import { RequestExamplesTab } from "./RequestExamplesTab";
+import { ExtractorsEditor } from "./ExtractorsEditor";
 import { CookieManagerDialog } from "../cookies/CookieManagerDialog";
 import { ScriptTrustDialog } from "./ScriptTrustDialog";
 import { VariableInput } from "../common/VariableInput";
@@ -1002,10 +1003,10 @@ export function RequestPanel() {
           activeRequest.protocol === "websocket" ||
           activeRequest.protocol === "sse";
         const subTabs = isGrpc
-          ? (["grpc", "scripts", "settings"] as const)
+          ? (["grpc", "scripts", "extract", "settings"] as const)
           : isStream
-          ? (["stream", "headers", "scripts", "settings"] as const)
-          : (["params", "headers", "auth", "body", "scripts", "docs", "examples", "settings"] as const);
+          ? (["stream", "headers", "scripts", "extract", "settings"] as const)
+          : (["params", "headers", "auth", "body", "scripts", "extract", "docs", "examples", "settings"] as const);
         const resolvedActiveTab =
           isGrpc && !(subTabs as readonly string[]).includes(activeTab)
             ? "grpc"
@@ -1034,6 +1035,8 @@ export function RequestPanel() {
                     ? "Docs"
                     : tab === "examples"
                     ? "Examples"
+                    : tab === "extract"
+                    ? "Extract"
                     : tab}
                   {tab === "docs" && Boolean(activeRequest.description?.trim()) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-500 ml-1.5" />
@@ -1046,6 +1049,15 @@ export function RequestPanel() {
                       {activeRequest.examples?.length}
                     </Badge>
                   )}
+                  {tab === "extract" &&
+                    (activeRequest.extractors?.length || 0) > 0 && (
+                      <Badge
+                        variant="secondary"
+                        className="ml-1.5 px-1 py-0 text-[9px]"
+                      >
+                        {activeRequest.extractors?.filter((e) => e.enabled).length}
+                      </Badge>
+                    )}
                   {tab === "headers" &&
                     (activeRequest.headers?.length || 0) > 0 && (
                       <Badge
@@ -1440,6 +1452,19 @@ export function RequestPanel() {
                 </div>
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="extract">
+            <ExtractorsEditor
+              extractors={activeRequest.extractors || []}
+              lastResult={currentTab?.lastResult}
+              onChange={(updated) =>
+                updateActiveRequest((prev) => ({
+                  ...prev,
+                  extractors: updated,
+                }))
+              }
+            />
           </TabsContent>
 
           <TabsContent value="params">

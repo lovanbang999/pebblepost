@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 )
 
-// CurrentSchemaVersion is the latest schema version across all PebblePost files.
+// CurrentSchemaVersion is the latest schema version for workspace, environment, and folder files.
 const CurrentSchemaVersion = 1
+
+// CurrentRequestSchemaVersion is the latest schema version for request files (*.pebble.json).
+const CurrentRequestSchemaVersion = 2
 
 // MarshalStable serializes any data structure to JSON using 2-space indentation
 // and always appends a single trailing newline. Key order is deterministic and

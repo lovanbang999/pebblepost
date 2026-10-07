@@ -67,6 +67,16 @@ type ScriptDefinition struct {
 	PostResponse string `json:"postResponse,omitempty"`
 }
 
+// ExtractorDefinition defines rules for extracting response values into variables without scripting.
+type ExtractorDefinition struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`            // Target variable name, e.g. "token" or "userId"
+	Type    string `json:"type,omitempty"`  // "jsonpath" (default)
+	Path    string `json:"path"`            // Expression, e.g. "$.data.token"
+	Scope   string `json:"scope,omitempty"` // "runtime" (default), "environment", "folder"
+	Enabled bool   `json:"enabled"`
+}
+
 // SettingDefinition holds per-request execution settings.
 type SettingDefinition struct {
 	FollowRedirects  bool   `json:"followRedirects"`
@@ -203,26 +213,27 @@ type ExampleResponse struct {
 
 // RequestDefinition is the schema for a *.pebble.json file.
 type RequestDefinition struct {
-	Schema        string            `json:"$schema,omitempty"`
-	SchemaVersion int               `json:"schemaVersion"`
-	Version       string            `json:"version,omitempty"`
-	ID            string            `json:"id,omitempty"`
-	Name          string            `json:"name"`
-	Description   string            `json:"description,omitempty"`
-	Order         int               `json:"order,omitempty"`
-	Tags          []string          `json:"tags,omitempty"`     // used for --tag filtering in CLI
-	Protocol      string            `json:"protocol,omitempty"` // "http" (default), "grpc", "websocket", "sse"
-	Method        string            `json:"method"`
-	URL           string            `json:"url"`
-	Headers       []KeyValue        `json:"headers,omitempty"`
-	Params        []KeyValue        `json:"params,omitempty"`
-	Auth          AuthDefinition    `json:"auth"`
-	Body          BodyDefinition    `json:"body"`
-	Grpc          *GrpcDefinition   `json:"grpc,omitempty"`
-	Stream        *StreamDefinition `json:"stream,omitempty"`
-	Scripts       ScriptDefinition  `json:"scripts"`
-	Settings      SettingDefinition `json:"settings"`
-	Examples      []ExampleResponse `json:"examples,omitempty"`
+	Schema        string                `json:"$schema,omitempty"`
+	SchemaVersion int                   `json:"schemaVersion"`
+	Version       string                `json:"version,omitempty"`
+	ID            string                `json:"id,omitempty"`
+	Name          string                `json:"name"`
+	Description   string                `json:"description,omitempty"`
+	Order         int                   `json:"order,omitempty"`
+	Tags          []string              `json:"tags,omitempty"`     // used for --tag filtering in CLI
+	Protocol      string                `json:"protocol,omitempty"` // "http" (default), "grpc", "websocket", "sse"
+	Method        string                `json:"method"`
+	URL           string                `json:"url"`
+	Headers       []KeyValue            `json:"headers,omitempty"`
+	Params        []KeyValue            `json:"params,omitempty"`
+	Auth          AuthDefinition        `json:"auth"`
+	Body          BodyDefinition        `json:"body"`
+	Grpc          *GrpcDefinition       `json:"grpc,omitempty"`
+	Stream        *StreamDefinition     `json:"stream,omitempty"`
+	Scripts       ScriptDefinition      `json:"scripts"`
+	Settings      SettingDefinition     `json:"settings"`
+	Examples      []ExampleResponse     `json:"examples,omitempty"`
+	Extractors    []ExtractorDefinition `json:"extractors,omitempty"`
 }
 
 // EnvironmentDefinition represents an environment file (*.env.json or *.secret.env.json).

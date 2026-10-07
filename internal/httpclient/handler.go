@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"pebblepost/internal/extractor"
 	"pebblepost/internal/history"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
@@ -231,7 +232,28 @@ func (h *Handler) handleExecute(w http.ResponseWriter, r *http.Request) {
 		result.ConsoleLogs = append(preConsoleLogs, result.ConsoleLogs...)
 	}
 
-	// 4. Post-response / Test Script Sandbox Execution (Leaf-to-Root)
+	// 4. Run Extractors (after response, before assertion scripts)
+	if len(reqToExecute.Extractors) > 0 {
+		_, extractedVars, extractorWarnings := extractor.ExtractAll(reqToExecute.Extractors, result.Body)
+		if result.ExtractedEnvVars == nil {
+			result.ExtractedEnvVars = make(map[string]string)
+		}
+		for k, v := range extractedVars {
+			varMap[k] = v
+			result.ExtractedEnvVars[k] = v
+		}
+		for _, w := range extractorWarnings {
+			result.Logs = append(result.Logs, "[WARN] "+w)
+			result.ConsoleLogs = append(result.ConsoleLogs, types.ConsoleLogEntry{
+				Timestamp: time.Now(),
+				Level:     "warn",
+				Source:    "extractor",
+				Message:   w,
+			})
+		}
+	}
+
+	// 5. Post-response / Test Script Sandbox Execution (Leaf-to-Root)
 	for _, s := range postScripts {
 		if !scriptsAllowed {
 			warnMsg := fmt.Sprintf("[WARN] Post-response script (%s) blocked: workspace is not trusted", s.Source)

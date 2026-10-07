@@ -5,7 +5,7 @@ import {
   findUndefinedVariablesInRequest,
   DYNAMIC_VARIABLES,
 } from "./variables";
-import type { EnvironmentDefinition, FolderDefinition } from "../types";
+import type { EnvironmentDefinition, FolderDefinition, RequestDefinition } from "../types";
 
 describe("Variables Utilities", () => {
   it("includes all dynamic built-in variables", () => {
@@ -145,5 +145,43 @@ describe("Variables Utilities", () => {
     // Check no duplicates for USER_ID
     const userIdCount = undefinedVars.filter((v) => v === "USER_ID").length;
     expect(userIdCount).toBe(1);
+  });
+
+  it("registers extractor variables and formats their source with scope and JSONPath", () => {
+    const request = {
+      name: "Login Endpoint",
+      extractors: [
+        {
+          id: "1",
+          name: "SESSION_TOKEN",
+          path: "$.data.token",
+          scope: "runtime" as const,
+          enabled: true,
+        },
+        {
+          id: "2",
+          name: "DISABLED_EXTRACTOR",
+          path: "$.data.ignore",
+          scope: "environment" as const,
+          enabled: false,
+        },
+      ],
+    };
+
+    const runtimeVars = {
+      SESSION_TOKEN: "live_jwt_777",
+    };
+
+    const map = getAvailableVariables([], undefined, null, request as unknown as RequestDefinition, runtimeVars);
+
+    expect(map.has("SESSION_TOKEN")).toBe(true);
+    const info = map.get("SESSION_TOKEN");
+    expect(info?.value).toBe("live_jwt_777");
+    expect(info?.source).toContain("Extractor (Login Endpoint)");
+    expect(info?.source).toContain("runtime");
+    expect(info?.source).toContain("$.data.token");
+
+    // Disabled extractor should not be present
+    expect(map.has("DISABLED_EXTRACTOR")).toBe(false);
   });
 });

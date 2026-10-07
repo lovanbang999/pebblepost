@@ -433,6 +433,8 @@ func (in *Interpolator) InterpolateRequestWithError(req *types.RequestDefinition
 		Grpc:          grpcDef,
 		Scripts:       req.Scripts,
 		Settings:      in.InterpolateSettings(req.Settings, vars),
+		Examples:      req.Examples,
+		Extractors:    req.Extractors,
 	}, nil
 }
 
@@ -528,6 +530,8 @@ func (in *Interpolator) InterpolateRequest(req *types.RequestDefinition, vars ma
 		Stream:        in.InterpolateStream(req.Stream, vars),
 		Scripts:       req.Scripts, // Scripts are executed at runtime, not interpolated
 		Settings:      in.InterpolateSettings(req.Settings, vars),
+		Examples:      req.Examples,
+		Extractors:    req.Extractors,
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"pebblepost/internal/types"
 )
 
-func TestMigrateRequest_V0toV1(t *testing.T) {
+func TestMigrateRequest_V0toV2(t *testing.T) {
 	req := &types.RequestDefinition{
 		Name:   "Get User",
 		Method: "GET",
@@ -20,8 +20,8 @@ func TestMigrateRequest_V0toV1(t *testing.T) {
 	if !wasMigrated {
 		t.Fatalf("expected wasMigrated to be true for v0 request")
 	}
-	if migrated.SchemaVersion != 1 {
-		t.Errorf("expected SchemaVersion 1, got %d", migrated.SchemaVersion)
+	if migrated.SchemaVersion != 2 {
+		t.Errorf("expected SchemaVersion 2, got %d", migrated.SchemaVersion)
 	}
 	if migrated.Schema != DefaultRequestSchema {
 		t.Errorf("expected Schema %s, got %s", DefaultRequestSchema, migrated.Schema)
@@ -33,7 +33,32 @@ func TestMigrateRequest_V0toV1(t *testing.T) {
 	// Migrating again should return wasMigrated = false
 	_, wasMigratedAgain := MigrateRequest(migrated)
 	if wasMigratedAgain {
-		t.Errorf("expected wasMigrated to be false when already v1")
+		t.Errorf("expected wasMigrated to be false when already v2")
+	}
+}
+
+func TestMigrateRequest_V1toV2(t *testing.T) {
+	req := &types.RequestDefinition{
+		SchemaVersion: 1,
+		Schema:        "https://pebblepost.dev/schemas/v1/request.json",
+		Name:          "Get User V1",
+		Method:        "GET",
+		URL:           "https://api.example.com/users",
+		Auth:          types.AuthDefinition{Type: "bearer"},
+	}
+
+	migrated, wasMigrated := MigrateRequest(req)
+	if !wasMigrated {
+		t.Fatalf("expected wasMigrated to be true for v1 request")
+	}
+	if migrated.SchemaVersion != 2 {
+		t.Errorf("expected SchemaVersion 2, got %d", migrated.SchemaVersion)
+	}
+	if migrated.Schema != DefaultRequestSchema {
+		t.Errorf("expected Schema %s, got %s", DefaultRequestSchema, migrated.Schema)
+	}
+	if migrated.Extractors == nil {
+		t.Errorf("expected Extractors to be initialized")
 	}
 }
 
@@ -112,8 +137,8 @@ func TestReadRequest_DoesNotOverwriteDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadRequest failed: %v", err)
 	}
-	if readReq.SchemaVersion != 1 {
-		t.Errorf("expected in-memory SchemaVersion 1, got %d", readReq.SchemaVersion)
+	if readReq.SchemaVersion != 2 {
+		t.Errorf("expected in-memory SchemaVersion 2, got %d", readReq.SchemaVersion)
 	}
 
 	// 2. Verify disk file remains untouched (no schemaVersion on disk yet)
@@ -137,7 +162,7 @@ func TestReadRequest_DoesNotOverwriteDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read disk file after save: %v", err)
 	}
-	if !strings.Contains(string(rawAfterSave), `"schemaVersion": 1`) {
-		t.Errorf("expected saved file to contain '\"schemaVersion\": 1', got:\n%s", string(rawAfterSave))
+	if !strings.Contains(string(rawAfterSave), `"schemaVersion": 2`) {
+		t.Errorf("expected saved file to contain '\"schemaVersion\": 2', got:\n%s", string(rawAfterSave))
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"pebblepost/internal/extractor"
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
@@ -573,6 +574,38 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 				}
 				currIdx++
 				continue
+			}
+
+			// ── Response Extractors (run before assertion scripts) ────────────
+			if execResult != nil && len(interpolatedReq.Extractors) > 0 {
+				extractionResults, _, extractorWarnings := extractor.ExtractAll(interpolatedReq.Extractors, execResult.Body)
+				if execResult.ExtractedEnvVars == nil {
+					execResult.ExtractedEnvVars = make(map[string]string)
+				}
+				for _, res := range extractionResults {
+					if !res.Success {
+						continue
+					}
+					k, v := res.Name, res.Value
+					execResult.ExtractedEnvVars[k] = v
+					currentVarMap[k] = v
+					currentIterVarMap[k] = v
+					if strings.EqualFold(res.Scope, "environment") {
+						varMap[k] = v
+					}
+				}
+				for _, w := range extractorWarnings {
+					execResult.Logs = append(execResult.Logs, "[WARN] "+w)
+					execResult.ConsoleLogs = append(execResult.ConsoleLogs, types.ConsoleLogEntry{
+						Timestamp: time.Now(),
+						Level:     "warn",
+						Source:    "extractor",
+						Message:   w,
+					})
+					broadcast(func(rep Reporter) {
+						rep.PrintWarning(w)
+					})
+				}
 			}
 
 			// ── Post-response scripts ─────────────────────────────────────────

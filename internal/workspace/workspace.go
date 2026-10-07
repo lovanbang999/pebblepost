@@ -308,8 +308,8 @@ func (s *WorkspaceService) SaveRequest(filePath string, req *types.RequestDefini
 		s.watcher.Suppress(filePath, 1000*time.Millisecond)
 	}
 
-	// Ensure schema version is updated to v1
-	req.SchemaVersion = CurrentSchemaVersion
+	// Ensure schema version is updated to v2
+	req.SchemaVersion = CurrentRequestSchemaVersion
 	if req.Schema == "" {
 		req.Schema = DefaultRequestSchema
 	}
