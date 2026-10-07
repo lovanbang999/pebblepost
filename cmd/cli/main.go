@@ -18,6 +18,7 @@ import (
 	"pebblepost/internal/app"
 	"pebblepost/internal/docs"
 	"pebblepost/internal/impexp"
+	"pebblepost/internal/mockserver"
 	"pebblepost/internal/runner"
 )
 
@@ -41,6 +42,8 @@ func main() {
 		handleImport(os.Args[2:])
 	case "docs":
 		handleDocs(os.Args[2:])
+	case "mock":
+		handleMock(os.Args[2:])
 	case "serve":
 		handleServe(os.Args[2:])
 	case "version", "-v", "--version":
@@ -325,6 +328,7 @@ Usage:
   pebblepost run [<path-to-collection>] [flags]
   pebblepost import <file-or-dir> [flags]
   pebblepost docs [<path-to-collection>] [flags]
+  pebblepost mock [<path-to-collection>] [flags]
   pebblepost version
   pebblepost help
 
@@ -332,8 +336,16 @@ Commands:
   run          Execute API requests and test assertions in a collection
   import       Import collections from Postman, Bruno, Insomnia, HAR, OpenAPI, or cURL
   docs         Generate API documentation from collections in Markdown, HTML, or OpenAPI
+  mock         Start a mock server serving saved Examples from a collection
   version      Print version information
   help         Print this help message
+
+Flags for 'mock':
+  -p, --port <port>         Port to listen on (default: 8080)
+      --host <host>         Host interface to bind to (default: 127.0.0.1)
+      --delay <ms>          Global simulated latency in milliseconds
+      --status <code>       Global HTTP status code override
+      --error-rate <rate>   Global simulated error-injection rate (0.0 to 1.0)
 
 Flags for 'docs':
   -f, --format <format>     Documentation format: md (default), html, openapi, json
@@ -399,6 +411,7 @@ func reorderArgs(args []string) []string {
 		"--timeout": true, "--retry": true, "--delay": true,
 		"-d": true, "--data": true, "-n": true, "--iterations": true,
 		"--out-dir": true, "-o": true, "--format": true, "-f": true, "--workspace": true,
+		"--port": true, "-p": true, "--host": true, "--status": true, "--error-rate": true,
 	}
 
 	var flags []string
@@ -418,6 +431,101 @@ func reorderArgs(args []string) []string {
 		i++
 	}
 	return append(flags, pos...)
+}
+
+func handleMock(args []string) {
+	fs := flag.NewFlagSet("mock", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	portFlag := fs.Int("port", 8080, "Port to listen on (default: 8080)")
+	fs.IntVar(portFlag, "p", 8080, "Port to listen on (shorthand)")
+	hostFlag := fs.String("host", "127.0.0.1", "Host interface to bind to (default: 127.0.0.1)")
+	delayFlag := fs.Int64("delay", 0, "Global simulated latency in milliseconds")
+	statusFlag := fs.Int("status", 0, "Global HTTP status code override")
+	errorRateFlag := fs.Float64("error-rate", 0.0, "Global simulated error-injection rate (0.0 to 1.0)")
+
+	reordered := reorderArgs(args)
+	if err := fs.Parse(reordered); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	targetPath := "."
+	if fs.NArg() > 0 {
+		targetPath = fs.Arg(0)
+	}
+
+	host := *hostFlag
+	isLoopback := host == "127.0.0.1" || host == "localhost" || host == "::1" || host == ""
+	if !isLoopback {
+		fmt.Fprintf(os.Stderr, "⚠️  WARNING: Mock server is bound to non-loopback host %s.\n", host)
+		fmt.Fprintln(os.Stderr, "    This exposes your mock endpoints to external network access.")
+	}
+
+	cfg := mockserver.ServerConfig{
+		Host:             host,
+		Port:             *portFlag,
+		WorkspacePath:    targetPath,
+		TargetPath:       targetPath,
+		GlobalDelayMs:    *delayFlag,
+		GlobalStatusCode: *statusFlag,
+		GlobalErrorRate:  *errorRateFlag,
+	}
+
+	srv := mockserver.NewServer(cfg, nil)
+	if err := srv.LoadRoutes(targetPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading mock routes: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	status := srv.Status()
+	if status.RoutesCount == 0 {
+		fmt.Printf("⚠️  No requests with saved examples found in %s.\n", targetPath)
+		fmt.Println("   Save examples on your requests in PebblePost to serve mock responses.")
+		os.Exit(0)
+	}
+
+	if err := srv.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to start mock server: %v\n", err)
+		os.Exit(runner.ExitNetworkError)
+	}
+	defer srv.Stop()
+
+	fmt.Printf("\n🚀 PebblePost Mock Server running at %s\n", srv.URL())
+	fmt.Printf("📂 Target: %s (%d routes loaded)\n\n", targetPath, status.RoutesCount)
+	fmt.Printf("   %-8s %-32s %s\n", "METHOD", "PATH", "EXAMPLES")
+	fmt.Println("   " + strings.Repeat("─", 65))
+	for _, r := range status.Routes {
+		exStr := strings.Join(r.ExampleNames, ", ")
+		if len(exStr) > 30 {
+			exStr = exStr[:27] + "..."
+		}
+		fmt.Printf("   %-8s %-32s %s\n", r.Method, r.PathPattern, exStr)
+	}
+	fmt.Printf("\nPress Ctrl+C to stop. Streaming incoming requests:\n\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logChan := srv.SubscribeLogs(ctx)
+	go func() {
+		for logEntry := range logChan {
+			matchedStr := "MATCHED"
+			if !logEntry.Matched {
+				matchedStr = "UNMATCHED"
+			}
+			ts := logEntry.Timestamp.Format("15:04:05")
+			fmt.Printf("[%s] %-7s %-25s -> %d %-9s [%dms] (%s)\n",
+				ts, logEntry.Method, logEntry.Path, logEntry.StatusCode,
+				matchedStr, logEntry.DurationMs, logEntry.MatchedExample)
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	<-sigCh
+
+	fmt.Println("\nShutting down mock server...")
 }
 
 func handleServe(args []string) {

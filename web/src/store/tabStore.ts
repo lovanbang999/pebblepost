@@ -1,10 +1,10 @@
 import { create } from 'zustand'
-import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry, RunnerTabConfig, DocsTabConfig } from '../types'
+import type { RequestDefinition, ExecutionResult, FolderDefinition, HistoryEntry, RunnerTabConfig, DocsTabConfig, MockTabConfig } from '../types'
 
-export type TabType = 'request' | 'folder' | 'history' | 'runner' | 'docs'
+export type TabType = 'request' | 'folder' | 'history' | 'runner' | 'docs' | 'mock'
 
 export interface RequestTab {
-  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id or "runner:" + path or "docs:" + path
+  id: string // Unique identifier, equal to filePath (for requests) or "folder:" + folderPath (for folders) or "history:" + id or "runner:" + path or "docs:" + path or "mock:" + path
   filePath: string
   title: string
   type?: TabType
@@ -15,6 +15,7 @@ export interface RequestTab {
   historyEntry?: HistoryEntry
   runnerConfig?: RunnerTabConfig
   docsConfig?: DocsTabConfig
+  mockConfig?: MockTabConfig
   request?: RequestDefinition
   folder?: FolderDefinition
   savedSnapshot: string // JSON representation when loaded/saved
@@ -35,6 +36,7 @@ interface TabState {
   openHistoryTab: (entry: HistoryEntry) => void
   openRunnerTab: (folderPath?: string, folderName?: string) => void
   openDocsTab: (folderPath?: string, folderName?: string) => void
+  openMockTab: (folderPath?: string, folderName?: string) => void
   restoreRequestFromHistory: (entry: HistoryEntry) => void
   pinTab: (tabId: string) => void
   closeTab: (tabId: string, force?: boolean) => boolean
@@ -366,6 +368,45 @@ export const useTabStore = create<TabState>((set, get) => ({
       savedSnapshot: '',
       lastResult: null,
       activeSubTab: 'docs',
+      scrollPosition: 0,
+    }
+
+    set((state) => ({
+      tabs: [...state.tabs, newTab],
+      activeTabId: newTab.id,
+    }))
+  },
+
+  openMockTab: (folderPath?: string, folderName?: string) => {
+    const tabId = folderPath ? `mock:${folderPath}` : 'mock:workspace'
+    const { tabs } = get()
+    const existing = tabs.find((t) => t.id === tabId)
+    if (existing) {
+      set({ activeTabId: tabId })
+      return
+    }
+
+    const title = folderName
+      ? `Mock: ${folderName}`
+      : folderPath
+      ? `Mock: ${folderPath.split('/').pop()}`
+      : 'Mock Server'
+
+    const newTab: RequestTab = {
+      id: tabId,
+      filePath: folderPath || '',
+      title,
+      type: 'mock',
+      isPreview: false,
+      isDirty: false,
+      isReadOnly: true,
+      mockConfig: {
+        folderPath,
+        folderName,
+      },
+      savedSnapshot: '',
+      lastResult: null,
+      activeSubTab: 'params',
       scrollPosition: 0,
     }
 

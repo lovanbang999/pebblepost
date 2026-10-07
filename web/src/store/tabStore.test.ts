@@ -691,4 +691,33 @@ describe("useTabStore", () => {
     assert.equal(activeTab.request.examples[0].name, "200 OK - Standard User");
     assert.equal(activeTab.isDirty, true);
   });
+
+  test("openMockTab opens mock tabs for collection or folder and activates existing tabs without duplicating", () => {
+    const store = useTabStore.getState();
+
+    // 1. Open mock tab for workspace root
+    store.openMockTab();
+    let state = useTabStore.getState();
+    assert.equal(state.tabs.length, 1);
+    assert.equal(state.tabs[0].id, "mock:workspace");
+    assert.equal(state.tabs[0].type, "mock");
+    assert.equal(state.tabs[0].title, "Mock Server");
+    assert.equal(state.activeTabId, "mock:workspace");
+
+    // 2. Open mock tab for specific folder
+    store.openMockTab("collections/users", "Users API");
+    state = useTabStore.getState();
+    assert.equal(state.tabs.length, 2);
+    assert.equal(state.tabs[1].id, "mock:collections/users");
+    assert.equal(state.tabs[1].type, "mock");
+    assert.equal(state.tabs[1].title, "Mock: Users API");
+    assert.equal(state.tabs[1].mockConfig?.folderPath, "collections/users");
+    assert.equal(state.activeTabId, "mock:collections/users");
+
+    // 3. Opening existing mock tab activates it without duplicating
+    store.openMockTab();
+    state = useTabStore.getState();
+    assert.equal(state.tabs.length, 2);
+    assert.equal(state.activeTabId, "mock:workspace");
+  });
 });

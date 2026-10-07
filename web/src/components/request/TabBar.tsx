@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Plus, RotateCcw, Folder, Clock, Play, BookOpen } from 'lucide-react'
+import { X, Plus, RotateCcw, Folder, Clock, Play, BookOpen, Server } from 'lucide-react'
 import { useTabStore, type RequestTab } from '../../store/tabStore'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { getMethodTextColor, cn } from '../../lib/utils'
@@ -110,8 +110,10 @@ export function TabBar() {
                   : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/50 dark:hover:bg-zinc-800/40 hover:text-zinc-900 dark:hover:text-zinc-200 border-t-2 border-t-transparent'
               )}
             >
-              {/* Method badge or Folder icon or History indicator or Runner icon or Docs icon */}
-              {tab.type === 'docs' ? (
+              {/* Method badge or Folder icon or History indicator or Runner icon or Docs icon or Mock icon */}
+              {tab.type === 'mock' ? (
+                <Server className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
+              ) : tab.type === 'docs' ? (
                 <BookOpen className="w-3.5 h-3.5 text-blue-500 shrink-0" />
               ) : tab.type === 'runner' ? (
                 <Play className="w-3.5 h-3.5 text-emerald-500 fill-emerald-500/20 shrink-0" />
