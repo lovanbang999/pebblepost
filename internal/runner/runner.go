@@ -16,6 +16,7 @@ import (
 	"pebblepost/internal/extractor"
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/scripting"
+	"pebblepost/internal/secrets"
 	"pebblepost/internal/security"
 	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
@@ -166,6 +167,48 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 		r.client.SetWorkspace(wsRoot)
 	}
 
+	// ── Auto-detect .env file in workspace root if not explicitly specified ──
+	envFilePath := opts.EnvFile
+	if envFilePath == "" && wsRoot != "" {
+		candidate := filepath.Join(wsRoot, ".env")
+		if _, err := os.Stat(candidate); err == nil {
+			envFilePath = candidate
+		}
+	}
+
+	// ── Configure SecretStore backend ────────────────────────────────────────
+	backendType := secrets.SecretBackendType(opts.SecretBackend)
+	if backendType == "" {
+		if envBackend := os.Getenv("PEBBLEPOST_SECRET_BACKEND"); envBackend != "" {
+			backendType = secrets.SecretBackendType(envBackend)
+		}
+	}
+
+	wsName := ""
+	var secretsCfg secrets.SecretBackendConfig
+	if wsRoot != "" && r.workspaceSvc != nil {
+		if wsDef, err := r.workspaceSvc.GetWorkspaceInfo(wsRoot); err == nil && wsDef != nil {
+			wsName = wsDef.Name
+			secretsCfg = secrets.FromTypesConfig(wsDef.SecretBackend.Default, wsDef.SecretBackend.PerEnv)
+		}
+	}
+	if backendType != "" {
+		secretsCfg.Default = backendType
+	}
+
+	if wsRoot != "" {
+		envDir := secrets.EnvDirFromRoot(wsRoot)
+		store, err := secrets.OpenStore(secretsCfg, opts.EnvironmentName, envDir, wsName)
+		if err == nil && r.environmentSvc != nil {
+			r.environmentSvc.SetSecretStore(store)
+		}
+	} else if backendType == secrets.BackendEnv {
+		store := secrets.NewEnvStore()
+		if r.environmentSvc != nil {
+			r.environmentSvc.SetSecretStore(store)
+		}
+	}
+
 	// ── Build variable map ───────────────────────────────────────────────────
 	baseVarMap := make(map[string]string)
 	var secretValues []string
@@ -173,7 +216,9 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 	if opts.EnvironmentName != "" && r.environmentSvc != nil {
 		envDef, envErr := r.environmentSvc.GetEnvironment(wsRoot, opts.EnvironmentName)
 		if envErr == nil && envDef != nil {
-			baseVarMap = r.interpolator.BuildVariableMap(envDef, nil)
+			var resolvedSecs []string
+			baseVarMap, resolvedSecs = r.interpolator.BuildVariableMapWithSecrets(envDef, nil)
+			secretValues = append(secretValues, resolvedSecs...)
 			for _, v := range envDef.Variables {
 				if v.Secret && v.Value != "" {
 					secretValues = append(secretValues, v.Value)
@@ -187,7 +232,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 	}
 
 	// Apply full variable precedence (env < env-file < PEBBLE_VAR_* < --var)
-	varMap := BuildVarMap(baseVarMap, opts.ExtraVars, opts.EnvFile, &secretValues, r.interpolator)
+	varMap := BuildVarMap(baseVarMap, opts.ExtraVars, envFilePath, &secretValues, r.interpolator)
 
 	// ── Preload request items for indexing ───────────────────────────────────
 	type runnerItem struct {
@@ -749,7 +794,7 @@ func (r *Runner) Run(ctx context.Context, opts RunOptions) (*RunSummary, error) 
 
 	summary.TotalIterations = len(summary.Iterations)
 	summary.TotalDuration = time.Since(startTime)
-	summary.Success = (summary.FailedRequests == 0 && summary.FailedTests == 0 && !summary.Bailed && !hasConfigError && !hasNetworkError)
+	summary.Success = summary.FailedRequests == 0 && summary.FailedTests == 0 && !summary.Bailed && !hasConfigError && !hasNetworkError
 
 	// ── Aggregate Latency & Pass Rate ─────────────────────────────────────────
 	durations := make([]time.Duration, 0, len(summary.Results))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -22,6 +23,7 @@ import (
 	"pebblepost/internal/mockserver"
 	"pebblepost/internal/openapisync"
 	"pebblepost/internal/runner"
+	"pebblepost/internal/secrets"
 	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
 )
@@ -52,6 +54,8 @@ func main() {
 		handleMock(os.Args[2:])
 	case "serve":
 		handleServe(os.Args[2:])
+	case "secrets":
+		handleSecrets(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Printf("PebblePost CLI Runner v%s (commit: %s, date: %s, built by: %s)\n", version, commit, date, builtBy)
 	case "help", "-h", "--help":
@@ -76,21 +80,22 @@ func handleRun(args []string) {
 	fs := newFlagSet()
 
 	var (
-		envFlag        = fs.String("e", "", "Environment name (e.g. dev, staging, prod)")
-		bailFlag       = fs.Bool("bail", false, "Stop execution immediately on first failure")
-		dryRunFlag     = fs.Bool("dry-run", false, "Print request order without sending any HTTP requests")
-		timeoutFlag    = fs.Int("timeout", 0, "Global request timeout in milliseconds (0 = per-request setting)")
-		retryFlag      = fs.Int("retry", 0, "Number of retries on network errors (not assertion failures)")
-		delayFlag      = fs.Int("delay", 0, "Delay between requests in milliseconds")
-		dataFlag       = fs.String("data", "", "Path to data file (CSV or JSON) for data-driven iterations")
-		iterationsFlag = fs.Int("iterations", 0, "Number of iterations to run (0 = auto-detect from data file or 1)")
-		envFileFlag    = fs.String("env-file", "", "Path to additional environment variable file (KEY=VALUE format)")
-		folderFlag     = fs.String("folder", "", "Glob pattern to filter requests by folder path")
-		requestFlag    = fs.String("request", "", "Glob pattern to filter requests by name or path")
-		tagFlag        = fs.String("tag", "", "Filter requests by tag (exact match)")
-		outFlag        = fs.String("out", "", "Output file path for the last --reporter (shorthand for reporter:path)")
-		ciFlag         = fs.Bool("ci", false, "CI/CD mode (alias for --bail, preserved for backward compatibility)")
-		trustFlag      = fs.Bool("trust", false, "Trust and execute pre-request and test scripts in collections")
+		envFlag           = fs.String("e", "", "Environment name (e.g. dev, staging, prod)")
+		bailFlag          = fs.Bool("bail", false, "Stop execution immediately on first failure")
+		dryRunFlag        = fs.Bool("dry-run", false, "Print request order without sending any HTTP requests")
+		timeoutFlag       = fs.Int("timeout", 0, "Global request timeout in milliseconds (0 = per-request setting)")
+		retryFlag         = fs.Int("retry", 0, "Number of retries on network errors (not assertion failures)")
+		delayFlag         = fs.Int("delay", 0, "Delay between requests in milliseconds")
+		dataFlag          = fs.String("data", "", "Path to data file (CSV or JSON) for data-driven iterations")
+		iterationsFlag    = fs.Int("iterations", 0, "Number of iterations to run (0 = auto-detect from data file or 1)")
+		envFileFlag       = fs.String("env-file", "", "Path to additional environment variable file (KEY=VALUE format)")
+		folderFlag        = fs.String("folder", "", "Glob pattern to filter requests by folder path")
+		requestFlag       = fs.String("request", "", "Glob pattern to filter requests by name or path")
+		tagFlag           = fs.String("tag", "", "Filter requests by tag (exact match)")
+		outFlag           = fs.String("out", "", "Output file path for the last --reporter (shorthand for reporter:path)")
+		ciFlag            = fs.Bool("ci", false, "CI/CD mode (alias for --bail, preserved for backward compatibility)")
+		trustFlag         = fs.Bool("trust", false, "Trust and execute pre-request and test scripts in collections")
+		secretBackendFlag = fs.String("secret-backend", "", "Secret storage backend to use: file, keychain, env (default: from workspace.json or file)")
 	)
 
 	fs.StringVar(dataFlag, "d", "", "Path to data file (shorthand)")
@@ -177,6 +182,7 @@ func handleRun(args []string) {
 		ExtraVars:       extraVars,
 		Reporters:       reporters,
 		TrustScripts:    &trusted,
+		SecretBackend:   *secretBackendFlag,
 		Filter: runner.FilterOptions{
 			Folder:  *folderFlag,
 			Request: *requestFlag,
@@ -333,6 +339,7 @@ A local-first, Git-friendly API test runner for CI/CD pipelines.
 Usage:
   pebblepost run [<path-to-collection>] [flags]
   pebblepost sync [--check|--apply] [<path-to-folder>] [flags]
+  pebblepost secrets <list|get|set|delete|migrate|rollback> [flags]
   pebblepost import <file-or-dir> [flags]
   pebblepost docs [<path-to-collection>] [flags]
   pebblepost mock [<path-to-collection>] [flags]
@@ -342,11 +349,20 @@ Usage:
 Commands:
   run          Execute API requests and test assertions in a collection
   sync         Synchronize a collection folder with an OpenAPI specification
+  secrets      Manage and migrate secrets across storage backends (file, keychain, env)
   import       Import collections from Postman, Bruno, Insomnia, HAR, OpenAPI, or cURL
   docs         Generate API documentation from collections in Markdown, HTML, or OpenAPI
   mock         Start a mock server serving saved Examples from a collection
   version      Print version information
   help         Print this help message
+
+Flags for 'secrets':
+  list         pebblepost secrets list [--env <name>] [--backend <type>]
+  get          pebblepost secrets get <key> [--env <name>] [--backend <type>]
+  set          pebblepost secrets set <key> <value> [--env <name>] [--backend <type>]
+  delete       pebblepost secrets delete <key> [--env <name>] [--backend <type>]
+  migrate      pebblepost secrets migrate --env <name> --from <type> --to <type> [--yes]
+  rollback     pebblepost secrets rollback --env <name> --backup <path>
 
 Flags for 'sync':
       --check               Check for drift against OpenAPI spec (exits 1 on drift for CI gates)
@@ -376,6 +392,7 @@ Flags for 'import':
 
 Flags for 'run':
   -e <name>                 Environment configuration name (e.g. dev, staging, prod)
+  --secret-backend <type>   Secret storage backend: file, keychain, env (default: from workspace.json or file)
   -d, --data <file>         Data file (CSV or JSON) for data-driven iterations
   -n, --iterations <n>      Number of iterations to run (auto-detected if data file provided)
   --reporter <format>       Reporter: cli (default), json, junit, html. Repeatable.
@@ -421,13 +438,14 @@ func newFlagSet() *flag.FlagSet {
 func reorderArgs(args []string) []string {
 	// Known flags that consume the next argument as their value
 	valueFlags := map[string]bool{
-		"-e": true, "--reporter": true, "--out": true, "--var": true,
+		"-e": true, "--env": true, "--reporter": true, "--out": true, "--var": true,
 		"--env-file": true, "--folder": true, "--request": true, "--tag": true,
 		"--timeout": true, "--retry": true, "--delay": true,
 		"-d": true, "--data": true, "-n": true, "--iterations": true,
-		"--out-dir": true, "-o": true, "--format": true, "-f": true, "--workspace": true,
+		"--out-dir": true, "-o": true, "--format": true, "-f": true, "--workspace": true, "-w": true,
 		"--port": true, "-p": true, "--host": true, "--status": true, "--error-rate": true,
-		"--spec": true,
+		"--spec": true, "--secret-backend": true,
+		"-b": true, "--backend": true, "--from": true, "--to": true, "--backup": true,
 	}
 
 	var flags []string
@@ -870,4 +888,228 @@ func isCollectionTrusted(targetPath string) bool {
 		}
 	}
 	return false
+}
+
+func handleSecrets(args []string) {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printSecretsUsage()
+		return
+	}
+
+	subcmd := args[0]
+	subargs := args[1:]
+
+	fs := flag.NewFlagSet("secrets "+subcmd, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	envFlag := fs.String("env", "dev", "Environment name")
+	fs.StringVar(envFlag, "e", "dev", "Alias for --env")
+	backendFlag := fs.String("backend", "", "Secret backend (file, keychain, env)")
+	fs.StringVar(backendFlag, "b", "", "Alias for --backend")
+	workspaceFlag := fs.String("workspace", ".", "Workspace root path")
+	fs.StringVar(workspaceFlag, "w", ".", "Alias for --workspace")
+	fromFlag := fs.String("from", "file", "Source backend for migration (file, keychain, env)")
+	toFlag := fs.String("to", "keychain", "Destination backend for migration (file, keychain, env)")
+	yesFlag := fs.Bool("yes", false, "Confirm migration without interactive prompt")
+	fs.BoolVar(yesFlag, "y", false, "Alias for --yes")
+	backupFlag := fs.String("backup", "", "Backup file path for rollback")
+
+	reordered := reorderArgs(subargs)
+	if err := fs.Parse(reordered); err != nil {
+		os.Exit(runner.ExitConfigError)
+	}
+
+	wsRoot := *workspaceFlag
+	wsSvc := workspace.NewWorkspaceService()
+	wsDef, _ := wsSvc.GetWorkspaceInfo(wsRoot)
+	wsName := "pebblepost"
+	if wsDef != nil && wsDef.Name != "" {
+		wsName = wsDef.Name
+	}
+
+	getStore := func(bType string) (secrets.SecretStore, error) {
+		var cfg secrets.SecretBackendConfig
+		if wsDef != nil {
+			cfg = secrets.FromTypesConfig(wsDef.SecretBackend.Default, wsDef.SecretBackend.PerEnv)
+		}
+		if bType != "" {
+			cfg.Default = secrets.SecretBackendType(bType)
+		}
+		envDir := secrets.EnvDirFromRoot(wsRoot)
+		return secrets.OpenStore(cfg, *envFlag, envDir, wsName)
+	}
+
+	switch subcmd {
+	case "list":
+		store, err := getStore(*backendFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening secret store: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		keys, err := store.List(*envFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing secrets for %q: %v\n", *envFlag, err)
+			os.Exit(runner.ExitConfigError)
+		}
+		fmt.Printf("Secrets for environment %q (backend: %s):\n", *envFlag, store.Backend())
+		if len(keys) == 0 {
+			fmt.Println("  (no secrets found)")
+			return
+		}
+		for _, k := range keys {
+			fmt.Printf("  • %s\n", k)
+		}
+
+	case "get":
+		if fs.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: pebblepost secrets get <key> [--env <name>] [--backend <type>]")
+			os.Exit(runner.ExitConfigError)
+		}
+		key := fs.Arg(0)
+		store, err := getStore(*backendFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening secret store: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		val, err := store.Get(*envFlag, key)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting secret %q: %v\n", key, err)
+			os.Exit(runner.ExitConfigError)
+		}
+		fmt.Println(val)
+
+	case "set":
+		if fs.NArg() < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: pebblepost secrets set <key> <value> [--env <name>] [--backend <type>]")
+			os.Exit(runner.ExitConfigError)
+		}
+		key := fs.Arg(0)
+		val := fs.Arg(1)
+		store, err := getStore(*backendFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening secret store: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		if err := store.Set(*envFlag, key, val); err != nil {
+			fmt.Fprintf(os.Stderr, "Error saving secret %q: %v\n", key, err)
+			os.Exit(runner.ExitConfigError)
+		}
+		fmt.Printf("✔ Saved secret %q to environment %q (backend: %s)\n", key, *envFlag, store.Backend())
+
+	case "delete", "rm":
+		if fs.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: pebblepost secrets delete <key> [--env <name>] [--backend <type>]")
+			os.Exit(runner.ExitConfigError)
+		}
+		key := fs.Arg(0)
+		store, err := getStore(*backendFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening secret store: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		if err := store.Delete(*envFlag, key); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting secret %q: %v\n", key, err)
+			os.Exit(runner.ExitConfigError)
+		}
+		fmt.Printf("✔ Deleted secret %q from environment %q\n", key, *envFlag)
+
+	case "migrate":
+		srcStore, err := getStore(*fromFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening source store: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		dstStore, err := getStore(*toFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening destination store: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+
+		keys, err := srcStore.List(*envFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing source secrets: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		if len(keys) == 0 {
+			fmt.Printf("No secrets found in %s backend for environment %q to migrate.\n", srcStore.Backend(), *envFlag)
+			return
+		}
+
+		fmt.Printf("Migration Plan:\n")
+		fmt.Printf("  Environment:  %s\n", *envFlag)
+		fmt.Printf("  Source:       %s\n", srcStore.Backend())
+		fmt.Printf("  Destination:  %s\n", dstStore.Backend())
+		fmt.Printf("  Secrets (%d):  %s\n\n", len(keys), strings.Join(keys, ", "))
+
+		opts := secrets.MigrateOptions{
+			Confirm: func(_ secrets.MigrationPlan) bool {
+				if *yesFlag {
+					return true
+				}
+				fmt.Print("Proceed with migration? [y/N]: ")
+				reader := bufio.NewReader(os.Stdin)
+				resp, _ := reader.ReadString('\n')
+				resp = strings.TrimSpace(strings.ToLower(resp))
+				return resp == "y" || resp == "yes"
+			},
+			Warn: func(msg string) {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+			},
+		}
+
+		backupPath, err := secrets.Migrate(*envFlag, srcStore, dstStore, opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Migration failed: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		if backupPath == "" && !*yesFlag {
+			fmt.Println("Migration aborted.")
+			return
+		}
+
+		fmt.Println("✔ Migration complete!")
+		if backupPath != "" {
+			fmt.Printf("✔ Backup saved at: %s\n", backupPath)
+			fmt.Printf("  Rollback command: pebblepost secrets rollback --env %s --backup %s\n", *envFlag, backupPath)
+		}
+
+	case "rollback":
+		if *backupFlag == "" {
+			fmt.Fprintln(os.Stderr, "Error: --backup <path> is required for rollback.")
+			os.Exit(runner.ExitConfigError)
+		}
+		dstStore, _ := getStore("keychain")
+		if err := secrets.Rollback(*envFlag, *backupFlag, dstStore); err != nil {
+			fmt.Fprintf(os.Stderr, "Rollback failed: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		fmt.Printf("✔ Rollback successful. Restored secrets from backup: %s\n", *backupFlag)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown secrets command: %s\n\n", subcmd)
+		printSecretsUsage()
+		os.Exit(runner.ExitConfigError)
+	}
+}
+
+func printSecretsUsage() {
+	fmt.Println(`Usage:
+  pebblepost secrets <command> [flags]
+
+Commands:
+  list              List secret keys for an environment
+  get <key>         Print decrypted secret value
+  set <key> <val>   Store a secret in the configured backend
+  delete <key>      Remove a secret
+  migrate           Move secrets from one backend to another (e.g. file -> keychain)
+  rollback          Restore a secret file from a backup
+
+Flags:
+  -e, --env <name>      Environment name (default: dev)
+  -b, --backend <type>  Backend override: file, keychain, env (default: from workspace.json or file)
+  -w, --workspace <dir> Workspace directory (default: .)
+      --from <type>     Source backend for migration (default: file)
+      --to <type>       Destination backend for migration (default: keychain)
+  -y, --yes             Skip confirmation prompt for migration
+      --backup <path>   Backup file path for rollback`)
 }

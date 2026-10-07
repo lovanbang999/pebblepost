@@ -14,7 +14,9 @@ import (
 	"pebblepost/internal/openapisync"
 	"pebblepost/internal/runner"
 	"pebblepost/internal/scripting"
+	"pebblepost/internal/secrets"
 	"pebblepost/internal/security"
+	"pebblepost/internal/types"
 	"pebblepost/internal/workspace"
 )
 
@@ -35,6 +37,7 @@ type App struct {
 	UpdateSvc      *autoupdate.Service
 	GitSvc         *gitclient.Service
 	MockHandler    *mockserver.Handler
+	SecretStore    secrets.SecretStore
 }
 
 // ServeHTTP implements http.Handler, running requests through the full
@@ -82,6 +85,20 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 		UpdateSvc:      updateSvc,
 		GitSvc:         gitSvc,
 		MockHandler:    mockHandler,
+	}
+
+	// Wire the secret store: read backend config from workspace.json (best-effort;
+	// falls back to file backend if workspace.json is missing or unreadable).
+	if wsDef, err := wsSvc.GetWorkspaceInfo(dataDir); err == nil {
+		secretsCfg := secrets.FromTypesConfig(wsDef.SecretBackend.Default, wsDef.SecretBackend.PerEnv)
+		envDir := secrets.EnvDirFromRoot(dataDir)
+		workspaceName := wsDef.Name
+		// Use the file store as the default; this is backwards-compatible.
+		store, err := secrets.OpenStore(secretsCfg, "", envDir, workspaceName)
+		if err == nil {
+			a.SecretStore = store
+			envSvc.SetSecretStore(store)
+		}
 	}
 
 	a.registerRoutes()
@@ -161,4 +178,13 @@ func (a *App) registerRoutes() {
 	// OpenAPI Sync endpoints
 	syncHandler := openapisync.NewHandler(a.WorkspaceSvc)
 	syncHandler.RegisterRoutes(a.Mux)
+
+	// Secret backend configuration endpoints
+	secretsHandler := secrets.NewHandler(
+		func() (*types.WorkspaceDefinition, error) { return a.WorkspaceSvc.GetWorkspaceInfo(a.DataDir) },
+		func(def *types.WorkspaceDefinition) error { return a.WorkspaceSvc.SaveWorkspaceInfo(a.DataDir, def) },
+		secrets.EnvDirFromRoot(a.DataDir),
+		a.DataDir,
+	)
+	secretsHandler.RegisterRoutes(a.Mux)
 }

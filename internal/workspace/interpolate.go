@@ -3,11 +3,13 @@ package workspace
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
 	"regexp"
 	"strings"
 	"time"
 
+	"pebblepost/internal/secrets"
 	"pebblepost/internal/types"
 )
 
@@ -27,24 +29,42 @@ func NewInterpolator() *Interpolator {
 
 // BuildVariableMap constructs a flat key-value lookup map from an environment definition
 // and optional runtime overrides. Only enabled variables are included.
+// ${OS_ENV:VAR} references in variable values are resolved from the process environment.
 func (in *Interpolator) BuildVariableMap(env *types.EnvironmentDefinition, overrides map[string]string) map[string]string {
-	vars := make(map[string]string)
+	vars, _ := in.BuildVariableMapWithSecrets(env, overrides)
+	return vars
+}
+
+// BuildVariableMapWithSecrets constructs the variable map and additionally returns a
+// slice of secret values that were resolved from OS environment references. The caller
+// should register these values with the masker so they are not logged.
+func (in *Interpolator) BuildVariableMapWithSecrets(
+	env *types.EnvironmentDefinition,
+	overrides map[string]string,
+) (vars map[string]string, resolvedSecrets []string) {
+	vars = make(map[string]string)
+
+	warn := func(msg string) { log.Printf("[pebblepost] warning: %s", msg) }
 
 	if env != nil {
 		for _, kv := range env.Variables {
 			if kv.Enabled && kv.Key != "" {
-				vars[kv.Key] = kv.Value
+				resolved, secs := secrets.ResolveOSEnvRefs(kv.Value, warn)
+				vars[kv.Key] = resolved
+				resolvedSecrets = append(resolvedSecrets, secs...)
 			}
 		}
 	}
 
 	for k, v := range overrides {
 		if k != "" {
-			vars[k] = v
+			resolved, secs := secrets.ResolveOSEnvRefs(v, warn)
+			vars[k] = resolved
+			resolvedSecrets = append(resolvedSecrets, secs...)
 		}
 	}
 
-	return vars
+	return vars, resolvedSecrets
 }
 
 const (
