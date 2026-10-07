@@ -21,6 +21,7 @@ type StreamSession struct {
 	Protocol  string // "websocket" or "sse"
 	WSClient  *WSClient
 	SSEClient *SSEClient
+	GQLClient *GraphQLWSClient
 
 	mu          sync.RWMutex
 	subscribers map[chan StreamEvent]struct{}
@@ -73,6 +74,9 @@ func (s *StreamSession) Status() types.StreamSessionStatus {
 	if s.WSClient != nil {
 		return s.WSClient.Status()
 	}
+	if s.GQLClient != nil {
+		return s.GQLClient.Status()
+	}
 	if s.SSEClient != nil {
 		return s.SSEClient.Status()
 	}
@@ -88,6 +92,9 @@ func (s *StreamSession) RingBuffer() *RingBuffer {
 	if s.WSClient != nil {
 		return s.WSClient.RingBuffer()
 	}
+	if s.GQLClient != nil {
+		return s.GQLClient.RingBuffer()
+	}
 	if s.SSEClient != nil {
 		return s.SSEClient.RingBuffer()
 	}
@@ -99,6 +106,9 @@ func (s *StreamSession) Close(code int, reason string) error {
 	if s.WSClient != nil {
 		return s.WSClient.Close(code, reason)
 	}
+	if s.GQLClient != nil {
+		return s.GQLClient.Close()
+	}
 	if s.SSEClient != nil {
 		return s.SSEClient.Close()
 	}
@@ -109,6 +119,9 @@ func (s *StreamSession) Close(code int, reason string) error {
 func (s *StreamSession) Send(payload, msgType string) error {
 	if s.WSClient != nil {
 		return s.WSClient.Send(payload, msgType)
+	}
+	if s.GQLClient != nil {
+		return s.GQLClient.Send(payload)
 	}
 	return errors.New("cannot send on SSE session: SSE is unidirectional receive-only")
 }
@@ -194,6 +207,43 @@ func (m *StreamManager) StartSSE(ctx context.Context, cfg SSEClientConfig) (*Str
 
 	client := NewSSEClient(cfg)
 	session.SSEClient = client
+	m.sessions[cfg.StreamID] = session
+	m.mu.Unlock()
+
+	if err := client.Connect(ctx); err != nil {
+		return session, err
+	}
+	return session, nil
+}
+
+// StartGraphQLWS starts and registers a new GraphQL WebSocket subscription session.
+func (m *StreamManager) StartGraphQLWS(ctx context.Context, cfg GraphQLWSConfig) (*StreamSession, error) {
+	m.mu.Lock()
+	if existing, ok := m.sessions[cfg.StreamID]; ok {
+		_ = existing.Close(CloseGoingAway, "Replaced by new session")
+		delete(m.sessions, cfg.StreamID)
+	}
+
+	session := newStreamSession(cfg.StreamID, "graphql-ws")
+
+	userOnLog := cfg.OnLog
+	userOnStatus := cfg.OnStatus
+
+	cfg.OnLog = func(entry types.StreamLogEntry) {
+		session.Broadcast(StreamEvent{Type: "log", Log: &entry})
+		if userOnLog != nil {
+			userOnLog(entry)
+		}
+	}
+	cfg.OnStatus = func(status types.StreamSessionStatus) {
+		session.Broadcast(StreamEvent{Type: "status", Status: &status})
+		if userOnStatus != nil {
+			userOnStatus(status)
+		}
+	}
+
+	client := NewGraphQLWSClient(cfg)
+	session.GQLClient = client
 	m.sessions[cfg.StreamID] = session
 	m.mu.Unlock()
 

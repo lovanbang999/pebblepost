@@ -24,6 +24,8 @@
     "@uiw/react-codemirror": "^4.23.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cm6-graphql": "^0.2.2",
+    "graphql": "^16.14.2",
     "jsonpath-plus": "^11.1.1",
     "lucide-react": "^1.16.0",
     "react": "^19.0.0",

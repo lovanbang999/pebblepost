@@ -54,10 +54,11 @@ type BodyDefinition struct {
 	GraphQL    *GraphQL   `json:"graphql,omitempty"`
 }
 
-// GraphQL represents a GraphQL query and variables.
+// GraphQL represents a GraphQL query, variables, and optional operation name.
 type GraphQL struct {
-	Query     string `json:"query"`
-	Variables string `json:"variables,omitempty"`
+	Query         string `json:"query"`
+	Variables     string `json:"variables,omitempty"`
+	OperationName string `json:"operationName,omitempty"`
 }
 
 // ScriptDefinition represents pre-request and post-response JavaScript scripts.

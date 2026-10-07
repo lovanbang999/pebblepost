@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { GrpcRequestPanel } from "../grpc/GrpcRequestPanel";
 import { StreamRequestPanel } from "../stream/StreamRequestPanel";
+import { GraphQLEditor } from "./GraphQLEditor";
 import type { GrpcStreamMessage, ExecutionResult, StreamLogEntry, StreamSessionStatus } from "../../types";
 import {
   Send,
@@ -1327,6 +1328,15 @@ export function RequestPanel() {
                       ✓ Zero base64 embedding in JSON keeps Git repositories clean and diffs readable.
                     </p>
                   </div>
+                </div>
+              ) : activeRequest.body?.type === "graphql" ? (
+                <div className="flex-1 min-h-64 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden flex flex-col">
+                  <GraphQLEditor
+                    request={activeRequest}
+                    onChange={updateActiveRequest}
+                    theme={theme}
+                    variableExtensions={bodyVariableExtensions}
+                  />
                 </div>
               ) : (
                 <div className="flex-1 min-h-55 rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">

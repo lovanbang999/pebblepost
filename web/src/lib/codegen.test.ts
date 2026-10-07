@@ -138,4 +138,32 @@ describe('generateGo', () => {
     const code = generateGo(makeRequest())
     expect(code).toContain('api.example.com')
   })
+
+  it('generates GraphQL body with query and variables', () => {
+    const gqlReq = makeRequest({
+      method: 'POST',
+      body: {
+        type: 'graphql',
+        graphql: {
+          query: 'query GetUser($id: ID!) { user(id: $id) { id name } }',
+          variables: '{"id": "42"}',
+          operationName: 'GetUser',
+        },
+      },
+    })
+
+    const curl = generateCURL(gqlReq)
+    expect(curl).toContain("-H 'Content-Type: application/json'")
+    expect(curl).toContain('GetUser')
+    expect(curl).toContain('"id":"42"')
+
+    const fetchCode = generateNodeFetch(gqlReq)
+    expect(fetchCode).toContain('application/json')
+    expect(fetchCode).toContain('GetUser')
+
+    const goCode = generateGo(gqlReq)
+    expect(goCode).toContain('Content-Type')
+    expect(goCode).toContain('GetUser')
+  })
 })
+
