@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"pebblepost/internal/secrets"
@@ -117,7 +118,7 @@ func TestFileStore_CRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secret file not created: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Errorf("file mode %v, want 0600", info.Mode().Perm())
 	}
 
