@@ -189,14 +189,19 @@ func setupFakeServer(t *testing.T) (string, func()) {
 	grpcServer.RegisterService(&serviceDesc, struct{}{})
 	reflection.Register(grpcServer)
 
+	serverDone := make(chan struct{})
 	go func() {
 		_ = grpcServer.Serve(lis)
+		close(serverDone)
 	}()
 
 	addr := lis.Addr().String()
 	cleanup := func() {
 		grpcServer.Stop()
-		_ = lis.Close()
+		select {
+		case <-serverDone:
+		case <-time.After(3 * time.Second):
+		}
 	}
 
 	return addr, cleanup
