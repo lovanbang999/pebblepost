@@ -94,7 +94,7 @@ func TestMigrateWorkspace_V0toV1(t *testing.T) {
 	}
 }
 
-func TestMigrateFolder_V0toV1(t *testing.T) {
+func TestMigrateFolder_V0toV2(t *testing.T) {
 	folder := &types.FolderDefinition{
 		Order:     2,
 		ItemOrder: []string{"login.pebble.json", "logout.pebble.json"},
@@ -104,8 +104,39 @@ func TestMigrateFolder_V0toV1(t *testing.T) {
 	if !wasMigrated {
 		t.Fatalf("expected wasMigrated to be true for v0 folder")
 	}
-	if migrated.SchemaVersion != 1 {
-		t.Errorf("expected SchemaVersion 1, got %d", migrated.SchemaVersion)
+	if migrated.SchemaVersion != 2 {
+		t.Errorf("expected SchemaVersion 2, got %d", migrated.SchemaVersion)
+	}
+}
+
+func TestMigrateFolder_V1toV2(t *testing.T) {
+	folder := &types.FolderDefinition{
+		SchemaVersion: 1,
+		Name:          "Auth Folder",
+		Headers: []types.KeyValue{
+			{Key: "X-App-Env", Value: "staging", Enabled: true},
+		},
+		Auth: types.AuthDefinition{Type: "bearer", Token: "abc"},
+	}
+
+	migrated, wasMigrated := MigrateFolder(folder)
+	if !wasMigrated {
+		t.Fatalf("expected wasMigrated to be true for v1 folder")
+	}
+	if migrated.SchemaVersion != 2 {
+		t.Errorf("expected SchemaVersion 2, got %d", migrated.SchemaVersion)
+	}
+	if migrated.Name != "Auth Folder" {
+		t.Errorf("expected Name 'Auth Folder', got %s", migrated.Name)
+	}
+	if len(migrated.Headers) != 1 || migrated.Headers[0].Key != "X-App-Env" {
+		t.Errorf("expected Headers preserved")
+	}
+
+	// Migrating already v2 returns false
+	_, wasMigratedAgain := MigrateFolder(migrated)
+	if wasMigratedAgain {
+		t.Errorf("expected wasMigrated to be false when already v2")
 	}
 }
 

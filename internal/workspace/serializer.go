@@ -7,8 +7,11 @@ import (
 	"path/filepath"
 )
 
-// CurrentSchemaVersion is the latest schema version for workspace, environment, and folder files.
+// CurrentSchemaVersion is the latest schema version for workspace and environment files.
 const CurrentSchemaVersion = 1
+
+// CurrentFolderSchemaVersion is the latest schema version for folder files (_folder.pebble.json).
+const CurrentFolderSchemaVersion = 2
 
 // CurrentRequestSchemaVersion is the latest schema version for request files (*.pebble.json).
 const CurrentRequestSchemaVersion = 2

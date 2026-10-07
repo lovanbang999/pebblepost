@@ -361,7 +361,7 @@ func (s *WorkspaceService) ReadFolder(folderPath string) (*types.FolderDefinitio
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &types.FolderDefinition{
-				SchemaVersion: CurrentSchemaVersion,
+				SchemaVersion: CurrentFolderSchemaVersion,
 				Name:          displayName,
 				Auth:          types.AuthDefinition{Type: "inherit"},
 				Headers:       []types.KeyValue{},
@@ -405,7 +405,7 @@ func (s *WorkspaceService) SaveFolder(folderPath string, def *types.FolderDefini
 		s.watcher.Suppress(filePath, 1000*time.Millisecond)
 	}
 
-	def.SchemaVersion = CurrentSchemaVersion
+	def.SchemaVersion = CurrentFolderSchemaVersion
 	return WriteFileStable(filePath, def)
 }
 

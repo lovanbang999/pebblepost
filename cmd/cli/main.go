@@ -13,13 +13,17 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"pebblepost"
 	"pebblepost/internal/app"
 	"pebblepost/internal/docs"
 	"pebblepost/internal/impexp"
 	"pebblepost/internal/mockserver"
+	"pebblepost/internal/openapisync"
 	"pebblepost/internal/runner"
+	"pebblepost/internal/types"
+	"pebblepost/internal/workspace"
 )
 
 var (
@@ -38,6 +42,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		handleRun(os.Args[2:])
+	case "sync":
+		handleSync(os.Args[2:])
 	case "import":
 		handleImport(os.Args[2:])
 	case "docs":
@@ -326,6 +332,7 @@ A local-first, Git-friendly API test runner for CI/CD pipelines.
 
 Usage:
   pebblepost run [<path-to-collection>] [flags]
+  pebblepost sync [--check|--apply] [<path-to-folder>] [flags]
   pebblepost import <file-or-dir> [flags]
   pebblepost docs [<path-to-collection>] [flags]
   pebblepost mock [<path-to-collection>] [flags]
@@ -334,11 +341,19 @@ Usage:
 
 Commands:
   run          Execute API requests and test assertions in a collection
+  sync         Synchronize a collection folder with an OpenAPI specification
   import       Import collections from Postman, Bruno, Insomnia, HAR, OpenAPI, or cURL
   docs         Generate API documentation from collections in Markdown, HTML, or OpenAPI
   mock         Start a mock server serving saved Examples from a collection
   version      Print version information
   help         Print this help message
+
+Flags for 'sync':
+      --check               Check for drift against OpenAPI spec (exits 1 on drift for CI gates)
+      --apply               Apply non-conflicting spec changes to collection folder
+      --spec <path|url>     OpenAPI spec location (defaults to link stored in _folder.pebble.json)
+      --force               Force apply conflicting changes (e.g. delete endpoints with user scripts)
+      --json                Output drift report as JSON
 
 Flags for 'mock':
   -p, --port <port>         Port to listen on (default: 8080)
@@ -412,6 +427,7 @@ func reorderArgs(args []string) []string {
 		"-d": true, "--data": true, "-n": true, "--iterations": true,
 		"--out-dir": true, "-o": true, "--format": true, "-f": true, "--workspace": true,
 		"--port": true, "-p": true, "--host": true, "--status": true, "--error-rate": true,
+		"--spec": true,
 	}
 
 	var flags []string
@@ -526,6 +542,255 @@ func handleMock(args []string) {
 	<-sigCh
 
 	fmt.Println("\nShutting down mock server...")
+}
+
+func handleSync(args []string) {
+	if len(args) == 0 {
+		printSyncUsage()
+		os.Exit(runner.ExitConfigError)
+	}
+
+	if args[0] == "link" {
+		handleSyncLink(args[1:])
+		return
+	}
+
+	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
+	checkFlag := fs.Bool("check", false, "Check for drift against OpenAPI spec (exits 1 if drift detected)")
+	applyFlag := fs.Bool("apply", false, "Apply non-conflicting spec changes to collection")
+	specFlag := fs.String("spec", "", "OpenAPI spec file path or remote URL")
+	forceFlag := fs.Bool("force", false, "Force apply conflicting changes (e.g. deleting endpoints with user scripts)")
+	jsonFlag := fs.Bool("json", false, "Output drift report as JSON")
+
+	reordered := reorderArgs(args)
+	if err := fs.Parse(reordered); err != nil {
+		fmt.Fprintf(os.Stderr, "Flag error: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	targetPath := "."
+	if fs.NArg() > 0 {
+		targetPath = fs.Arg(0)
+	}
+
+	isCheck := *checkFlag
+	isApply := *applyFlag
+	if !isCheck && !isApply {
+		isCheck = true
+	}
+
+	wsSvc := workspace.NewWorkspaceService()
+	specLocation := *specFlag
+
+	if specLocation == "" {
+		folderDef, err := wsSvc.ReadFolder(targetPath)
+		if err == nil && folderDef != nil && folderDef.OpenAPISync != nil {
+			specLocation = folderDef.OpenAPISync.SpecLocation
+		}
+	}
+
+	if specLocation == "" {
+		fmt.Fprintf(os.Stderr, "Error: No OpenAPI specification linked to folder %q.\n", targetPath)
+		fmt.Fprintf(os.Stderr, "Provide --spec <path|url> or link folder first: pebblepost sync link %s <spec>\n", targetPath)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	specData, specHash, err := openapisync.LoadSpec(specLocation, targetPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading OpenAPI spec %q: %v\n", specLocation, err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	spec, err := openapisync.ParseSpec(specData)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing OpenAPI spec: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	report, err := openapisync.CompareSpecAndFolder(targetPath, spec, specHash, specLocation)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error calculating OpenAPI diff: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	if *jsonFlag {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(report)
+		if isCheck && report.HasDrift {
+			os.Exit(1)
+		}
+		return
+	}
+
+	if isCheck {
+		printSyncCheckReport(report)
+		if report.HasDrift {
+			os.Exit(1) // CI exit code 1 for drift
+		}
+		return
+	}
+
+	if isApply {
+		res, err := openapisync.ApplyDiff(wsSvc, targetPath, report, nil, *forceFlag)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error applying OpenAPI diff: %v\n", err)
+			os.Exit(runner.ExitConfigError)
+		}
+		printSyncApplyResult(report, res)
+	}
+}
+
+func handleSyncLink(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: pebblepost sync link <folder> <spec-path-or-url>")
+		os.Exit(runner.ExitConfigError)
+	}
+	folderPath := args[0]
+	specLocation := args[1]
+
+	specData, specHash, err := openapisync.LoadSpec(specLocation, folderPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading OpenAPI spec: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+	_, err = openapisync.ParseSpec(specData)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid OpenAPI 3.x spec: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	wsSvc := workspace.NewWorkspaceService()
+	folderDef, err := wsSvc.ReadFolder(folderPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading folder %s: %v\n", folderPath, err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	if folderDef.OpenAPISync == nil {
+		folderDef.OpenAPISync = &types.OpenAPISyncConfig{}
+	}
+	folderDef.OpenAPISync.SpecLocation = specLocation
+	folderDef.OpenAPISync.SpecHash = specHash
+	folderDef.OpenAPISync.LastSyncedAt = time.Now().UTC().Format(time.RFC3339)
+
+	if err := wsSvc.SaveFolder(folderPath, folderDef); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving folder metadata: %v\n", err)
+		os.Exit(runner.ExitConfigError)
+	}
+
+	shortHash := specHash
+	if len(shortHash) > 12 {
+		shortHash = shortHash[:12]
+	}
+	fmt.Printf("✔ Linked folder %q to OpenAPI spec %q (hash: %s)\n", folderPath, specLocation, shortHash)
+}
+
+func printSyncUsage() {
+	fmt.Println(`Usage:
+  pebblepost sync --check <folder> [--spec <path|url>]
+  pebblepost sync --apply <folder> [--force]
+  pebblepost sync link <folder> <spec-path-or-url>
+
+Options:
+  --check      Check for drift between folder and OpenAPI spec (exits 1 on drift)
+  --apply      Apply non-conflicting changes to folder
+  --spec       Path or URL to OpenAPI spec (overrides linked spec in folder)
+  --force      Apply conflicting removals (e.g. deleting requests with scripts)
+  --json       Output diff report as JSON`)
+}
+
+func printSyncCheckReport(report *openapisync.SyncDiffReport) {
+	fmt.Println("════════════════════════════════════════════════════════════════")
+	fmt.Println("  OpenAPI Synchronization Drift Report")
+	fmt.Printf("  Folder: %s\n", report.FolderPath)
+	fmt.Printf("  Spec:   %s\n", report.SpecLocation)
+	fmt.Println("════════════════════════════════════════════════════════════════")
+
+	if !report.HasDrift {
+		fmt.Println("\n✔ Collection is in sync with OpenAPI specification. No drift detected.")
+		return
+	}
+
+	if report.AddedCount > 0 {
+		fmt.Printf("\n  Added Endpoints (+%d):\n", report.AddedCount)
+		for _, ep := range report.Endpoints {
+			if ep.DiffType == openapisync.DiffAdded {
+				fmt.Printf("    + %-7s %s (%s)\n", ep.Method, ep.Path, ep.Summary)
+			}
+		}
+	}
+
+	if report.ChangedCount > 0 {
+		fmt.Printf("\n  Changed Endpoints (~%d):\n", report.ChangedCount)
+		for _, ep := range report.Endpoints {
+			if ep.DiffType == openapisync.DiffChanged {
+				fmt.Printf("    ~ %-7s %s (%s)\n", ep.Method, ep.Path, ep.Summary)
+				for _, fd := range ep.FieldDiffs {
+					fmt.Printf("        • %s: %s\n", fd.Field, fd.Description)
+				}
+			}
+		}
+	}
+
+	if report.RemovedCount > 0 {
+		fmt.Printf("\n  Removed Endpoints (-%d):\n", report.RemovedCount)
+		for _, ep := range report.Endpoints {
+			if ep.DiffType == openapisync.DiffRemoved {
+				fmt.Printf("    - %-7s %s (%s)\n", ep.Method, ep.Path, ep.Summary)
+				if ep.Conflict != nil {
+					fmt.Printf("        ⚠️  CONFLICT: %s\n", ep.Conflict.Details)
+				}
+			}
+		}
+	}
+
+	fmt.Println("\n────────────────────────────────────────────────────────────────")
+	fmt.Printf("  Drift detected: +%d added, ~%d changed, -%d removed (%d conflict(s))\n",
+		report.AddedCount, report.ChangedCount, report.RemovedCount, report.ConflictCount)
+}
+
+func printSyncApplyResult(report *openapisync.SyncDiffReport, res *openapisync.ApplyResult) {
+	fmt.Println("════════════════════════════════════════════════════════════════")
+	fmt.Println("  OpenAPI Synchronization Apply Result")
+	fmt.Printf("  Folder: %s\n", report.FolderPath)
+	fmt.Println("════════════════════════════════════════════════════════════════")
+	fmt.Printf("  Applied: %d change(s)\n", res.AppliedCount)
+	fmt.Printf("  Skipped: %d change(s)\n", res.SkippedCount)
+
+	if len(res.CreatedFiles) > 0 {
+		fmt.Println("\n  Created Files:")
+		for _, f := range res.CreatedFiles {
+			fmt.Printf("    + %s\n", f)
+		}
+	}
+
+	if len(res.UpdatedFiles) > 0 {
+		fmt.Println("\n  Updated Files:")
+		for _, f := range res.UpdatedFiles {
+			fmt.Printf("    ~ %s\n", f)
+		}
+	}
+
+	if len(res.DeletedFiles) > 0 {
+		fmt.Println("\n  Deleted Files:")
+		for _, f := range res.DeletedFiles {
+			fmt.Printf("    - %s\n", f)
+		}
+	}
+
+	if res.SkippedCount > 0 {
+		fmt.Println("\n  Skipped Items (Conflicts):")
+		for _, ep := range report.Endpoints {
+			if ep.DiffType == openapisync.DiffRemoved && ep.Conflict != nil {
+				fmt.Printf("    ! %s %s (contains user assets; run with --force to remove)\n", ep.Method, ep.Path)
+			}
+		}
+	}
+
+	fmt.Println("\n✔ Successfully synchronized collection folder with OpenAPI spec.")
 }
 
 func handleServe(args []string) {

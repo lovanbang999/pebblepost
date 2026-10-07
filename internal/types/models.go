@@ -252,17 +252,26 @@ type WorkspaceDefinition struct {
 	Trusted           bool   `json:"trusted,omitempty"`
 }
 
+// OpenAPISyncConfig holds configuration for synchronizing a collection folder with an OpenAPI specification.
+type OpenAPISyncConfig struct {
+	SpecLocation string `json:"specLocation"`           // Local relative/absolute file path or remote URL
+	LastSyncedAt string `json:"lastSyncedAt,omitempty"` // ISO8601 timestamp of last sync
+	SpecHash     string `json:"specHash,omitempty"`     // SHA-256 hash of spec content when last synced
+	AutoSync     bool   `json:"autoSync,omitempty"`     // Optional flag to check drift periodically
+}
+
 // FolderDefinition represents folder-level metadata, configuration, and ordering (_folder.pebble.json).
 type FolderDefinition struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Name          string           `json:"name,omitempty"`
-	Description   string           `json:"description,omitempty"`
-	Order         int              `json:"order,omitempty"`
-	ItemOrder     []string         `json:"itemOrder,omitempty"` // Explicit sequence of child filenames or subfolder names
-	Headers       []KeyValue       `json:"headers,omitempty"`
-	Auth          AuthDefinition   `json:"auth,omitempty"`
-	Variables     []KeyValue       `json:"variables,omitempty"`
-	Scripts       ScriptDefinition `json:"scripts,omitempty"`
+	SchemaVersion int                `json:"schemaVersion"`
+	Name          string             `json:"name,omitempty"`
+	Description   string             `json:"description,omitempty"`
+	Order         int                `json:"order,omitempty"`
+	ItemOrder     []string           `json:"itemOrder,omitempty"` // Explicit sequence of child filenames or subfolder names
+	Headers       []KeyValue         `json:"headers,omitempty"`
+	Auth          AuthDefinition     `json:"auth,omitempty"`
+	Variables     []KeyValue         `json:"variables,omitempty"`
+	Scripts       ScriptDefinition   `json:"scripts,omitempty"`
+	OpenAPISync   *OpenAPISyncConfig `json:"openApiSync,omitempty"`
 }
 
 // InheritedItemInfo describes the origin folder of an inherited configuration item.

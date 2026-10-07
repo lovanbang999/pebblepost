@@ -11,6 +11,7 @@ import (
 	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
 	"pebblepost/internal/mockserver"
+	"pebblepost/internal/openapisync"
 	"pebblepost/internal/runner"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
@@ -156,4 +157,8 @@ func (a *App) registerRoutes() {
 	if a.MockHandler != nil {
 		a.MockHandler.RegisterRoutes(a.Mux)
 	}
+
+	// OpenAPI Sync endpoints
+	syncHandler := openapisync.NewHandler(a.WorkspaceSvc)
+	syncHandler.RegisterRoutes(a.Mux)
 }
