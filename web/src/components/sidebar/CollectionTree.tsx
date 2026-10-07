@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
   Upload,
   Download,
+  Server,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { useTabStore } from '../../store/tabStore'
@@ -136,7 +137,7 @@ export function CollectionTree() {
     createNewRequest,
   } = useWorkspaceStore()
 
-  const { openTab, openFolderTab, openRunnerTab, openDocsTab, onFileRenamed, onFileDeleted } = useTabStore()
+  const { openTab, openFolderTab, openRunnerTab, openDocsTab, openMockTab, onFileRenamed, onFileDeleted } = useTabStore()
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({
     collections: true,
@@ -993,6 +994,17 @@ export function CollectionTree() {
                   <BookOpen className="w-3.5 h-3.5" />
                   <span>API Documentation</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openMockTab()
+                    setIsMoreMenuOpen(false)
+                  }}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/30 transition-colors text-left cursor-pointer"
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  <span>Mock Server...</span>
+                </button>
               </div>
             )}
           </div>
@@ -1092,6 +1104,17 @@ export function CollectionTree() {
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
                 <span>Run Folder</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  openMockTab(contextMenu.node.path, contextMenu.node.displayName || contextMenu.node.name)
+                  setContextMenu(null)
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-teal-50 dark:hover:bg-teal-950/30 text-teal-600 dark:text-teal-400 text-left cursor-pointer font-medium"
+              >
+                <Server className="w-3.5 h-3.5" />
+                <span>Start Mock Server</span>
               </button>
               <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-1" />
               <button

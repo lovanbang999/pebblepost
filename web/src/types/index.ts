@@ -488,3 +488,55 @@ export interface UpdateSettings {
   channel: string
 }
 
+export interface MockRouteOverride {
+  statusCode?: number
+  delayMs?: number
+  errorRate?: number
+}
+
+export interface MockRouteSummary {
+  id: string
+  requestName: string
+  filePath: string
+  method: string
+  pathPattern: string
+  exampleCount: number
+  exampleNames: string[]
+  override?: MockRouteOverride
+}
+
+export interface MockServerStatus {
+  running: boolean
+  host: string
+  port: number
+  url: string
+  target: string
+  routesCount: number
+  routes: MockRouteSummary[]
+  overrides?: Record<string, MockRouteOverride>
+  nonLoopback?: boolean
+  warning?: string
+  error?: string
+}
+
+export interface MockRequestLog {
+  id: string
+  timestamp: string
+  method: string
+  path: string
+  query?: string
+  headers?: Record<string, string>
+  statusCode: number
+  durationMs: number
+  matched: boolean
+  matchedRoute?: string
+  matchedExample?: string
+  errorMessage?: string
+}
+
+export interface MockTabConfig {
+  folderPath?: string
+  folderName?: string
+}
+
+

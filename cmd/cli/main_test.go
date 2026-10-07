@@ -51,3 +51,16 @@ func TestIsCollectionTrusted(t *testing.T) {
 		t.Fatalf("expected subDir to be trusted via parent .pebbletrust")
 	}
 }
+
+func TestReorderArgs_MockFlags(t *testing.T) {
+	args := []string{"./collections", "--port", "9090", "--host", "0.0.0.0", "--delay", "50", "--status", "201", "--error-rate", "0.2"}
+	reordered := reorderArgs(args)
+
+	// Target path should be at the end
+	if len(reordered) != 11 {
+		t.Fatalf("expected 11 args, got %d", len(reordered))
+	}
+	if reordered[len(reordered)-1] != "./collections" {
+		t.Errorf("expected positional arg at end, got %s", reordered[len(reordered)-1])
+	}
+}

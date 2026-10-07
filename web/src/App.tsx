@@ -102,7 +102,7 @@ export default function App() {
             <RequestPanel />
 
             {/* Right Response Viewer */}
-            {activeTab?.type !== 'folder' && activeTab?.type !== 'runner' && activeTab?.type !== 'docs' && (
+            {activeTab?.type !== 'folder' && activeTab?.type !== 'runner' && activeTab?.type !== 'docs' && activeTab?.type !== 'mock' && (
               <ResponsePanel />
             )}
           </div>

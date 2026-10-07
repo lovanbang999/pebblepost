@@ -10,6 +10,7 @@ import (
 	"pebblepost/internal/gitclient"
 	"pebblepost/internal/history"
 	"pebblepost/internal/httpclient"
+	"pebblepost/internal/mockserver"
 	"pebblepost/internal/runner"
 	"pebblepost/internal/scripting"
 	"pebblepost/internal/security"
@@ -32,6 +33,7 @@ type App struct {
 	HistorySvc     *history.Store
 	UpdateSvc      *autoupdate.Service
 	GitSvc         *gitclient.Service
+	MockHandler    *mockserver.Handler
 }
 
 // ServeHTTP implements http.Handler, running requests through the full
@@ -64,6 +66,7 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 	}
 
 	updateSvc := autoupdate.NewService("0.2.0", dataDir)
+	mockHandler := mockserver.NewHandler(wsSvc)
 
 	a := &App{
 		Mux:            mux,
@@ -77,6 +80,7 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 		HistorySvc:     historySvc,
 		UpdateSvc:      updateSvc,
 		GitSvc:         gitSvc,
+		MockHandler:    mockHandler,
 	}
 
 	a.registerRoutes()
@@ -96,6 +100,9 @@ func BootstrapWithToken(dataDir, token string) (*App, error) {
 
 // Close gracefully releases application resources.
 func (a *App) Close() error {
+	if a.MockHandler != nil {
+		_ = a.MockHandler.Close()
+	}
 	if a.HistorySvc != nil {
 		return a.HistorySvc.Close()
 	}
@@ -143,5 +150,10 @@ func (a *App) registerRoutes() {
 	if a.UpdateSvc != nil {
 		updateHandler := autoupdate.NewHandler(a.UpdateSvc)
 		updateHandler.RegisterRoutes(a.Mux)
+	}
+
+	// Mock Server endpoints
+	if a.MockHandler != nil {
+		a.MockHandler.RegisterRoutes(a.Mux)
 	}
 }

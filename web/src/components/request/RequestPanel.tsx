@@ -28,6 +28,7 @@ import { ImportDialog } from "../common/ImportDialog";
 import { FolderSettingsPanel } from "../folder/FolderSettingsPanel";
 import { RunnerPanel } from "../runner/RunnerPanel";
 import { DocsPanel } from "../docs/DocsPanel";
+import { MockServerPanel } from "../mock/MockServerPanel";
 import { RequestDocsTab } from "./RequestDocsTab";
 import { RequestExamplesTab } from "./RequestExamplesTab";
 import { ExtractorsEditor } from "./ExtractorsEditor";
@@ -450,6 +451,15 @@ export function RequestPanel() {
       <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
         <TabBar />
         <DocsPanel currentTab={currentTab} />
+      </div>
+    );
+  }
+
+  if (currentTab.type === "mock") {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 overflow-hidden">
+        <TabBar />
+        <MockServerPanel currentTab={currentTab} />
       </div>
     );
   }
