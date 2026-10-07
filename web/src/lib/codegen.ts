@@ -36,6 +36,24 @@ function allHeaders(req: RequestDefinition): KeyValue[] {
   return headers
 }
 
+// Build GraphQL JSON body payload string
+function buildGraphQLPayload(req: RequestDefinition): string {
+  const payload: Record<string, unknown> = {
+    query: req.body.graphql?.query || '',
+  }
+  if (req.body.graphql?.variables?.trim()) {
+    try {
+      payload.variables = JSON.parse(req.body.graphql.variables)
+    } catch {
+      payload.variables = req.body.graphql.variables
+    }
+  }
+  if (req.body.graphql?.operationName?.trim()) {
+    payload.operationName = req.body.graphql.operationName.trim()
+  }
+  return JSON.stringify(payload)
+}
+
 // ─── cURL ────────────────────────────────────────────────────────────────────
 
 export function generateCURL(req: RequestDefinition): string {
@@ -48,6 +66,9 @@ export function generateCURL(req: RequestDefinition): string {
   if (req.body.type === 'json' || req.body.type === 'raw') {
     lines.push(`  -H 'Content-Type: application/json'`)
     lines.push(`  --data-raw '${shellEscape(req.body.raw || '')}'`)
+  } else if (req.body.type === 'graphql') {
+    lines.push(`  -H 'Content-Type: application/json'`)
+    lines.push(`  --data-raw '${shellEscape(buildGraphQLPayload(req))}'`)
   } else if (req.body.type === 'urlEncoded') {
     const parts = enabled(req.body.urlEncoded).map((kv) => `${kv.key}=${kv.value}`)
     lines.push(`  --data-urlencode '${shellEscape(parts.join('&'))}'`)
@@ -73,15 +94,23 @@ export function generateGo(req: RequestDefinition): string {
   const headers = allHeaders(req)
   const url = fullUrl(req)
 
+  const effectiveHeaders = [...headers]
+  if (req.body.type === 'graphql' && !effectiveHeaders.some((h) => h.key.toLowerCase() === 'content-type')) {
+    effectiveHeaders.unshift({ key: 'Content-Type', value: 'application/json', enabled: true })
+  }
+
   let bodySetup = ''
   let bodyArg = 'nil'
 
   if (req.body.type === 'json' || req.body.type === 'raw') {
     bodySetup = `\tbody := strings.NewReader(\`${req.body.raw || ''}\`)\n`
     bodyArg = 'body'
+  } else if (req.body.type === 'graphql') {
+    bodySetup = `\tbody := strings.NewReader(\`${buildGraphQLPayload(req).replace(/`/g, '\\`')}\`)\n`
+    bodyArg = 'body'
   }
 
-  const headerLines = headers
+  const headerLines = effectiveHeaders
     .map((h) => `\treq.Header.Set("${h.key}", "${h.value}")`)
     .join('\n')
 
@@ -131,6 +160,9 @@ export function generateNodeFetch(req: RequestDefinition): string {
   if (req.body.type === 'json' || req.body.type === 'raw') {
     bodyPart = `\n  body: \`${(req.body.raw || '').replace(/`/g, '\\`')}\`,`
     headersObj['Content-Type'] = 'application/json'
+  } else if (req.body.type === 'graphql') {
+    bodyPart = `\n  body: JSON.stringify(${buildGraphQLPayload(req)}),`
+    headersObj['Content-Type'] = 'application/json'
   }
 
   const headersStr = JSON.stringify(headersObj, null, 2).replace(/^/gm, '  ')
@@ -145,13 +177,16 @@ const data = await response.json();
 console.log(response.status, data);`
 }
 
-// ─── Python requests ──────────────────────────────────────────────────────────
-
 export function generatePython(req: RequestDefinition): string {
   const headers = allHeaders(req)
   const url = fullUrl(req)
 
-  const headersStr = headers
+  const effectiveHeaders = [...headers]
+  if (req.body.type === 'graphql' && !effectiveHeaders.some((h) => h.key.toLowerCase() === 'content-type')) {
+    effectiveHeaders.unshift({ key: 'Content-Type', value: 'application/json', enabled: true })
+  }
+
+  const headersStr = effectiveHeaders
     .map((h) => `    "${h.key}": "${h.value}"`)
     .join(',\n')
 
@@ -160,6 +195,8 @@ export function generatePython(req: RequestDefinition): string {
     bodySection = `\ndata = """
 ${req.body.raw || ''}
 """\n\nresponse = requests.${req.method.toLowerCase()}(url, headers=headers, data=data)`
+  } else if (req.body.type === 'graphql') {
+    bodySection = `\njson_data = ${buildGraphQLPayload(req)}\n\nresponse = requests.${req.method.toLowerCase()}(url, headers=headers, json=json_data)`
   } else if (req.body.type === 'urlEncoded') {
     const parts = Object.fromEntries(enabled(req.body.urlEncoded).map((kv) => [kv.key, kv.value]))
     bodySection = `\npayload = ${JSON.stringify(parts, null, 2)}\n\nresponse = requests.${req.method.toLowerCase()}(url, headers=headers, data=payload)`
@@ -197,6 +234,9 @@ export function generateCSharp(req: RequestDefinition): string {
 
   if (req.body.type === 'json' || req.body.type === 'raw') {
     bodySetup = `        var content = new StringContent(@"${(req.body.raw || '').replace(/"/g, '""')}", System.Text.Encoding.UTF8, "application/json");\n`
+    sendCall = `await client.${toPascal(req.method)}Async(url, content);`
+  } else if (req.body.type === 'graphql') {
+    bodySetup = `        var content = new StringContent(@"${buildGraphQLPayload(req).replace(/"/g, '""')}", System.Text.Encoding.UTF8, "application/json");\n`
     sendCall = `await client.${toPascal(req.method)}Async(url, content);`
   } else if (req.body.type === 'urlEncoded') {
     const pairs = enabled(req.body.urlEncoded)

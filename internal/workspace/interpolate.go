@@ -245,8 +245,9 @@ func (in *Interpolator) InterpolateBody(body types.BodyDefinition, vars map[stri
 
 	if body.GraphQL != nil {
 		result.GraphQL = &types.GraphQL{
-			Query:     in.InterpolateString(body.GraphQL.Query, vars),
-			Variables: in.InterpolateString(body.GraphQL.Variables, vars),
+			Query:         in.InterpolateString(body.GraphQL.Query, vars),
+			Variables:     in.InterpolateString(body.GraphQL.Variables, vars),
+			OperationName: in.InterpolateString(body.GraphQL.OperationName, vars),
 		}
 	}
 

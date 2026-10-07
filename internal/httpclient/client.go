@@ -533,6 +533,10 @@ func (c *DefaultClient) buildBodyBytes(body types.BodyDefinition) ([]byte, strin
 			}
 		}
 
+		if opName := strings.TrimSpace(body.GraphQL.OperationName); opName != "" {
+			payload["operationName"] = opName
+		}
+
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return nil, "", err

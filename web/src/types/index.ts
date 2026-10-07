@@ -41,6 +41,10 @@ export interface AuthDefinition {
 export interface GraphQLDefinition {
   query: string
   variables?: string
+  operationName?: string
+  schemaCache?: unknown
+  schemaUrl?: string
+  lastIntrospectedAt?: string
 }
 
 export interface BodyDefinition {

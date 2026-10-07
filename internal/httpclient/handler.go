@@ -66,6 +66,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/stream/send", h.handleStreamSend)
 	mux.HandleFunc("/api/stream/disconnect", h.handleStreamDisconnect)
 	mux.HandleFunc("/api/stream/status", h.handleStreamStatus)
+	mux.HandleFunc("/api/graphql/introspect", h.handleGraphQLIntrospect)
 }
 
 // ExecutePayload defines the JSON body for the /api/request/execute endpoint.
@@ -817,6 +818,9 @@ func (h *Handler) handleStreamConnect(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	isSSE := reqToExecute.Protocol == "sse" || reqToExecute.Method == "SSE"
+	isGraphQLWS := reqToExecute.Protocol == "graphql-ws" ||
+		(reqToExecute.Body.Type == "graphql" && reqToExecute.Body.GraphQL != nil && strings.HasPrefix(strings.TrimSpace(reqToExecute.Body.GraphQL.Query), "subscription")) ||
+		containsString(streamCfg.Subprotocols, streamclient.SubprotocolGraphQLTransportWS)
 
 	var session *streamclient.StreamSession
 	var err error
@@ -830,6 +834,28 @@ func (h *Handler) handleStreamConnect(w http.ResponseWriter, r *http.Request) {
 			MaxReconnectAttempts: streamCfg.MaxReconnectAttempts,
 			ReconnectInterval:    time.Duration(streamCfg.ReconnectIntervalMs) * time.Millisecond,
 			ProxyURL:             reqToExecute.Settings.ProxyURL,
+			RingBuffer:           ring,
+		})
+	} else if isGraphQLWS {
+		var vars map[string]any
+		var query, opName string
+		if reqToExecute.Body.GraphQL != nil {
+			query = reqToExecute.Body.GraphQL.Query
+			opName = reqToExecute.Body.GraphQL.OperationName
+			if strings.TrimSpace(reqToExecute.Body.GraphQL.Variables) != "" {
+				_ = json.Unmarshal([]byte(reqToExecute.Body.GraphQL.Variables), &vars)
+			}
+		}
+		session, err = streamclient.DefaultManager.StartGraphQLWS(ctx, streamclient.GraphQLWSConfig{
+			StreamID:             payload.StreamID,
+			URL:                  reqToExecute.URL,
+			Headers:              header,
+			Query:                query,
+			Variables:            vars,
+			OperationName:        opName,
+			AutoReconnect:        streamCfg.AutoReconnect,
+			MaxReconnectAttempts: streamCfg.MaxReconnectAttempts,
+			ReconnectInterval:    time.Duration(streamCfg.ReconnectIntervalMs) * time.Millisecond,
 			RingBuffer:           ring,
 		})
 	} else {
@@ -970,4 +996,179 @@ func (h *Handler) handleStreamStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonResponse(w, session.Status())
+}
+
+func containsString(slice []string, val string) bool {
+	for _, item := range slice {
+		if strings.TrimSpace(item) == val {
+			return true
+		}
+	}
+	return false
+}
+
+// Standard GraphQL Introspection Query.
+const GraphQLIntrospectionQuery = `query IntrospectionQuery {
+  __schema {
+    queryType { name }
+    mutationType { name }
+    subscriptionType { name }
+    types {
+      kind
+      name
+      description
+      fields(includeDeprecated: true) {
+        name
+        description
+        args {
+          name
+          description
+          type { ...TypeRef }
+          defaultValue
+        }
+        type { ...TypeRef }
+        isDeprecated
+        deprecationReason
+      }
+      inputFields {
+        name
+        description
+        type { ...TypeRef }
+        defaultValue
+      }
+      interfaces { ...TypeRef }
+      enumValues(includeDeprecated: true) {
+        name
+        description
+        isDeprecated
+        deprecationReason
+      }
+      possibleTypes { ...TypeRef }
+    }
+    directives {
+      name
+      description
+      locations
+      args {
+        name
+        description
+        type { ...TypeRef }
+        defaultValue
+      }
+    }
+  }
+}
+fragment TypeRef on __Type {
+  kind
+  name
+  ofType {
+    kind
+    name
+    ofType {
+      kind
+      name
+      ofType {
+        kind
+        name
+        ofType {
+          kind
+          name
+        }
+      }
+    }
+  }
+}`
+
+func (h *Handler) handleGraphQLIntrospect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload ExecutePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.jsonError(w, "Invalid JSON payload: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if payload.Request == nil {
+		h.jsonError(w, "Request definition is required", http.StatusBadRequest)
+		return
+	}
+
+	if payload.WorkspacePath != "" {
+		h.client.SetWorkspace(payload.WorkspacePath)
+	}
+
+	var folderChain []workspace.FolderChainItem
+	if payload.Path != "" && h.inheritanceResolver != nil {
+		folderChain, _ = h.inheritanceResolver.DiscoverFolderChain(payload.WorkspacePath, payload.Path)
+	}
+
+	reqToExecute := payload.Request
+	varMap := make(map[string]string)
+	var env *types.EnvironmentDefinition
+
+	if h.interpolator != nil {
+		if h.environmentSvc != nil && payload.WorkspacePath != "" && payload.EnvironmentName != "" {
+			env, _ = h.environmentSvc.GetEnvironment(payload.WorkspacePath, payload.EnvironmentName)
+		}
+
+		baseVarMap := h.interpolator.BuildVariableMap(env, nil)
+		if h.inheritanceResolver != nil && len(folderChain) > 0 {
+			varMap, _ = h.inheritanceResolver.MergeVariables(baseVarMap, folderChain, payload.Overrides)
+		} else {
+			varMap = h.interpolator.BuildVariableMap(env, payload.Overrides)
+		}
+	}
+
+	if h.inheritanceResolver != nil && len(folderChain) > 0 {
+		mergedHeaders, _ := h.inheritanceResolver.MergeHeaders(folderChain, reqToExecute.Headers)
+		reqToExecute.Headers = mergedHeaders
+		resolvedAuth, _ := h.inheritanceResolver.ResolveAuth(folderChain, reqToExecute.Auth)
+		reqToExecute.Auth = resolvedAuth
+	}
+
+	if h.interpolator != nil {
+		interpolated, err := h.interpolator.InterpolateRequestWithError(reqToExecute, varMap)
+		if err != nil {
+			h.jsonError(w, "Error during variable interpolation: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		reqToExecute = interpolated
+	}
+
+	// Prepare request for introspection
+	introspectReq := &types.RequestDefinition{
+		Method:   "POST",
+		URL:      reqToExecute.URL,
+		Headers:  reqToExecute.Headers,
+		Params:   reqToExecute.Params,
+		Auth:     reqToExecute.Auth,
+		Settings: reqToExecute.Settings,
+		Body: types.BodyDefinition{
+			Type: "graphql",
+			GraphQL: &types.GraphQL{
+				Query: GraphQLIntrospectionQuery,
+			},
+		},
+	}
+
+	result, err := h.client.Execute(r.Context(), introspectReq)
+	if err != nil {
+		h.jsonError(w, "Introspection request failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if result == nil {
+		h.jsonError(w, "No response returned from GraphQL endpoint", http.StatusInternalServerError)
+		return
+	}
+	if result.StatusCode >= 400 {
+		h.jsonError(w, fmt.Sprintf("Introspection returned HTTP %d: %s", result.StatusCode, result.Body), result.StatusCode)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(result.Body))
 }
