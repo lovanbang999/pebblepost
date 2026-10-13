@@ -1,7 +1,10 @@
 package autoupdate
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -260,7 +263,61 @@ func TestService_OptionsAndParseKey(t *testing.T) {
 	}
 }
 
+func TestArchiveExtraction(t *testing.T) {
+	tempDir := t.TempDir()
+	binContent := []byte("#!/bin/sh\necho test binary\n")
+
+	// 1. Test zip extraction
+	zipPath := filepath.Join(tempDir, "test.zip")
+	zipBuf := new(bytes.Buffer)
+	zw := zip.NewWriter(zipBuf)
+	f, err := zw.Create("pebblepost")
+	if err != nil {
+		t.Fatalf("failed to create zip entry: %v", err)
+	}
+	if _, err := f.Write(binContent); err != nil {
+		t.Fatalf("failed to write zip entry: %v", err)
+	}
+	_ = zw.Close()
+	_ = os.WriteFile(zipPath, zipBuf.Bytes(), 0644)
+
+	extracted, err := extractBinaryIfArchive(zipPath, "pebblepost")
+	if err != nil {
+		t.Fatalf("zip extraction failed: %v", err)
+	}
+	extractedContent, _ := os.ReadFile(extracted)
+	if !bytes.Equal(extractedContent, binContent) {
+		t.Fatalf("extracted zip content mismatch")
+	}
+
+	// 2. Test tar.gz extraction
+	tarPath := filepath.Join(tempDir, "test.tar.gz")
+	tarBuf := new(bytes.Buffer)
+	gzw := gzip.NewWriter(tarBuf)
+	tw := tar.NewWriter(gzw)
+	hdr := &tar.Header{
+		Name: "pebblepost",
+		Mode: 0755,
+		Size: int64(len(binContent)),
+	}
+	_ = tw.WriteHeader(hdr)
+	_, _ = tw.Write(binContent)
+	_ = tw.Close()
+	_ = gzw.Close()
+	_ = os.WriteFile(tarPath, tarBuf.Bytes(), 0644)
+
+	extractedTar, err := extractBinaryIfArchive(tarPath, "pebblepost")
+	if err != nil {
+		t.Fatalf("tar.gz extraction failed: %v", err)
+	}
+	extractedTarContent, _ := os.ReadFile(extractedTar)
+	if !bytes.Equal(extractedTarContent, binContent) {
+		t.Fatalf("extracted tar.gz content mismatch")
+	}
+}
+
 func TestApplyUpdate_SecurityGates(t *testing.T) {
+
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("failed to generate key: %v", err)

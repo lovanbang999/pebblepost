@@ -99,3 +99,9 @@ func (a *App) WindowToggleMaximise() {
 func (a *App) WindowClose() {
 	runtime.Quit(a.ctx)
 }
+
+// RestartApp quits the running process so the updated binary (already written
+// to disk by /api/update/apply) launches fresh on the next open.
+func (a *App) RestartApp() {
+	runtime.Quit(a.ctx)
+}

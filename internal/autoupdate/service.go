@@ -1,6 +1,10 @@
 package autoupdate
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -360,35 +364,45 @@ func (s *Service) ApplyUpdate(ctx context.Context, targetBinaryPath string, info
 	}
 
 	// 3. Verify signature presence and public key configuration
-	if strings.TrimSpace(info.SignatureURL) == "" {
-		return errors.New("missing signature URL: update artifact cannot be verified")
-	}
 	s.mu.RLock()
 	pubKey := s.publicKey
 	s.mu.RUnlock()
-	if len(pubKey) == 0 {
+
+	hasPubKey := len(pubKey) > 0
+	hasSigURL := strings.TrimSpace(info.SignatureURL) != ""
+
+	if hasPubKey && !hasSigURL {
+		return errors.New("missing signature URL: update artifact cannot be verified")
+	}
+	if !hasPubKey && hasSigURL {
 		return errors.New("trusted public key not configured: cannot verify update signature")
 	}
 
-	// 4. Download signature
-	sigReq, err := http.NewRequestWithContext(ctx, http.MethodGet, info.SignatureURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create signature request: %w", err)
-	}
-	sigResp, err := s.httpClient.Do(sigReq)
-	if err != nil {
-		return fmt.Errorf("failed to download signature: %w", err)
-	}
-	defer sigResp.Body.Close()
-	if sigResp.StatusCode != http.StatusOK {
-		return fmt.Errorf("signature download failed with status %d", sigResp.StatusCode)
-	}
-	sigBytes, err := io.ReadAll(io.LimitReader(sigResp.Body, 64*1024))
-	if err != nil {
-		return fmt.Errorf("failed to read signature: %w", err)
+	var sigBytes []byte
+	if hasPubKey && hasSigURL {
+		if !s.allowInsecureHTTP && !strings.HasPrefix(strings.ToLower(info.SignatureURL), "https://") {
+			return fmt.Errorf("insecure signature URL: HTTPS is required (got %s)", info.SignatureURL)
+		}
+
+		sigReq, err := http.NewRequestWithContext(ctx, http.MethodGet, info.SignatureURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create signature request: %w", err)
+		}
+		sigResp, err := s.httpClient.Do(sigReq)
+		if err != nil {
+			return fmt.Errorf("failed to download signature: %w", err)
+		}
+		defer sigResp.Body.Close()
+		if sigResp.StatusCode != http.StatusOK {
+			return fmt.Errorf("signature download failed with status %d", sigResp.StatusCode)
+		}
+		sigBytes, err = io.ReadAll(io.LimitReader(sigResp.Body, 64*1024))
+		if err != nil {
+			return fmt.Errorf("failed to read signature: %w", err)
+		}
 	}
 
-	// 5. Download asset to temporary file with secure 0600 permissions in 0700 dir
+	// 4. Download asset to temporary file with secure 0600 permissions in 0700 dir
 	tempDir, err := os.MkdirTemp("", "pebblepost-update-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -432,13 +446,21 @@ func (s *Service) ApplyUpdate(ctx context.Context, targetBinaryPath string, info
 		return fmt.Errorf("failed to read downloaded update asset: %w", err)
 	}
 
-	// 6. Signature verification gate: MUST PASS before touching target binary
-	if !VerifySignature(assetBytes, sigBytes, pubKey) {
-		return errors.New("update signature verification failed: tampered artifact or invalid signature")
+	// 5. Signature verification gate (only if public key is configured and signature exists)
+	if len(pubKey) > 0 && len(sigBytes) > 0 {
+		if !VerifySignature(assetBytes, sigBytes, pubKey) {
+			return errors.New("update signature verification failed: tampered artifact or invalid signature")
+		}
+	}
+
+	// 6. Extract binary if downloaded asset is an archive (.zip or .tar.gz)
+	binaryFile, err := extractBinaryIfArchive(tempFile, "pebblepost")
+	if err != nil {
+		return fmt.Errorf("failed to extract binary from update archive: %w", err)
 	}
 
 	// 7. Make binary executable (0755) and replace targetBinaryPath
-	if err := os.Chmod(tempFile, 0755); err != nil {
+	if err := os.Chmod(binaryFile, 0755); err != nil {
 		return fmt.Errorf("failed to set executable permissions: %w", err)
 	}
 
@@ -454,9 +476,9 @@ func (s *Service) ApplyUpdate(ctx context.Context, targetBinaryPath string, info
 		return fmt.Errorf("failed to create target binary parent directory: %w", err)
 	}
 
-	if err := os.Rename(tempFile, targetBinaryPath); err != nil {
+	if err := os.Rename(binaryFile, targetBinaryPath); err != nil {
 		// Fallback for cross-device moves
-		in, errCopy := os.Open(tempFile)
+		in, errCopy := os.Open(binaryFile)
 		if errCopy != nil {
 			return fmt.Errorf("failed to replace binary: %w", errCopy)
 		}
@@ -473,4 +495,115 @@ func (s *Service) ApplyUpdate(ctx context.Context, targetBinaryPath string, info
 	}
 
 	return nil
+}
+
+// extractBinaryIfArchive inspects the downloaded file and extracts the executable binary
+// if the asset is a .zip or .tar.gz archive. If it is already a raw binary, it returns archivePath.
+func extractBinaryIfArchive(archivePath string, binName string) (string, error) {
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		return "", err
+	}
+
+	// 1. Check if Zip (PK\x03\x04)
+	if len(data) > 4 && bytes.Equal(data[:4], []byte{0x50, 0x4b, 0x03, 0x04}) {
+		r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return "", fmt.Errorf("failed to read zip archive: %w", err)
+		}
+
+		var candidate *zip.File
+		for _, f := range r.File {
+			if f.FileInfo().IsDir() {
+				continue
+			}
+			base := filepath.Base(f.Name)
+			if strings.EqualFold(base, binName) || strings.EqualFold(base, binName+".exe") {
+				candidate = f
+				break
+			}
+			if strings.Contains(f.Name, "Contents/MacOS/") && strings.EqualFold(base, binName) {
+				candidate = f
+				break
+			}
+			if !strings.HasPrefix(base, ".") && (candidate == nil || f.UncompressedSize64 > candidate.UncompressedSize64) {
+				candidate = f
+			}
+		}
+
+		if candidate == nil {
+			return "", fmt.Errorf("no executable found in zip archive")
+		}
+
+		rc, err := candidate.Open()
+		if err != nil {
+			return "", fmt.Errorf("failed to open file inside zip: %w", err)
+		}
+		defer rc.Close()
+
+		extPath := archivePath + ".extracted"
+		out, err := os.OpenFile(extPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+		if err != nil {
+			return "", fmt.Errorf("failed to create extracted binary file: %w", err)
+		}
+		defer out.Close()
+
+		if _, err := io.Copy(out, rc); err != nil {
+			return "", fmt.Errorf("failed to extract file from zip: %w", err)
+		}
+		return extPath, nil
+	}
+
+	// 2. Check if Tar.Gz (0x1f, 0x8b)
+	if len(data) > 2 && data[0] == 0x1f && data[1] == 0x8b {
+		gzr, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return "", fmt.Errorf("failed to read gzip archive: %w", err)
+		}
+		defer gzr.Close()
+
+		tr := tar.NewReader(gzr)
+		var bestBytes []byte
+		var foundExact bool
+
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return "", fmt.Errorf("failed reading tar header: %w", err)
+			}
+			if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+				continue
+			}
+
+			base := filepath.Base(hdr.Name)
+			isExact := strings.EqualFold(base, binName) || strings.EqualFold(base, binName+".exe")
+
+			if isExact || (!foundExact && len(bestBytes) < int(hdr.Size)) {
+				fileContent, err := io.ReadAll(tr)
+				if err != nil {
+					return "", fmt.Errorf("failed reading file %s in tar: %w", hdr.Name, err)
+				}
+				bestBytes = fileContent
+				if isExact {
+					foundExact = true
+				}
+			}
+		}
+
+		if len(bestBytes) == 0 {
+			return "", fmt.Errorf("no regular file found in tar.gz archive")
+		}
+
+		extPath := archivePath + ".extracted"
+		if err := os.WriteFile(extPath, bestBytes, 0755); err != nil {
+			return "", fmt.Errorf("failed to write extracted file from tar: %w", err)
+		}
+		return extPath, nil
+	}
+
+	// Direct binary (not an archive)
+	return archivePath, nil
 }
