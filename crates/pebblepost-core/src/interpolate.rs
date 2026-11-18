@@ -26,14 +26,20 @@ pub fn build_variable_map_with_folder(
     if let Some(environment) = environment {
         for variable in &environment.variables {
             if variable.enabled && !variable.key.is_empty() {
-                variables.insert(variable.key.clone(), resolve_os_environment(&variable.value));
+                variables.insert(
+                    variable.key.clone(),
+                    resolve_os_environment(&variable.value),
+                );
             }
         }
     }
     if let Some(folder_variables) = folder_variables {
         for (key, value) in folder_variables {
             if !key.is_empty() {
-                let value = value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string());
+                let value = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string());
                 variables.insert(key.clone(), resolve_os_environment(&value));
             }
         }
@@ -46,7 +52,10 @@ pub fn build_variable_map_with_folder(
     variables
 }
 
-pub fn interpolate_string(input: &str, variables: &HashMap<String, String>) -> Result<String, String> {
+pub fn interpolate_string(
+    input: &str,
+    variables: &HashMap<String, String>,
+) -> Result<String, String> {
     if input.is_empty() {
         return Ok(String::new());
     }
@@ -55,7 +64,10 @@ pub fn interpolate_string(input: &str, variables: &HashMap<String, String>) -> R
         .map(|value| value.replace(ESCAPED_BRACES, "{{"))
 }
 
-pub fn interpolate_value(value: &mut Value, variables: &HashMap<String, String>) -> Result<(), String> {
+pub fn interpolate_value(
+    value: &mut Value,
+    variables: &HashMap<String, String>,
+) -> Result<(), String> {
     match value {
         Value::String(text) => *text = interpolate_string(text, variables)?,
         Value::Array(items) => {
@@ -83,7 +95,10 @@ fn resolve_with_chain(
         return Ok(text.to_owned());
     }
     if depth >= MAX_DEPTH {
-        return Err(format!("variable recursion depth exceeded maximum limit ({MAX_DEPTH}): {}", chain.join(" -> ")));
+        return Err(format!(
+            "variable recursion depth exceeded maximum limit ({MAX_DEPTH}): {}",
+            chain.join(" -> ")
+        ));
     }
 
     let mut current = text.to_owned();
@@ -111,7 +126,10 @@ fn resolve_with_chain(
                 if chain.iter().any(|previous| previous == key) {
                     let mut cycle = chain.clone();
                     cycle.push(key.to_owned());
-                    return Err(format!("circular variable reference detected: {}", cycle.join(" -> ")));
+                    return Err(format!(
+                        "circular variable reference detected: {}",
+                        cycle.join(" -> ")
+                    ));
                 }
                 chain.push(key.to_owned());
                 let resolved = resolve_with_chain(value, variables, chain, depth + 1);
@@ -122,7 +140,7 @@ fn resolve_with_chain(
             } else {
                 current[start..end + 2].to_owned()
             };
-            if replacement != &current[start..end + 2] {
+            if replacement != current[start..end + 2] {
                 changed = true;
             }
             output.push_str(&replacement);
@@ -138,7 +156,10 @@ fn resolve_with_chain(
 }
 
 fn valid_key(key: &str) -> bool {
-    !key.is_empty() && key.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.' | '-'))
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.' | '-'))
 }
 
 fn resolve_dynamic_variable(key: &str) -> Option<String> {
@@ -149,7 +170,9 @@ fn resolve_dynamic_variable(key: &str) -> Option<String> {
         "$timestampms" => Some(now.as_millis().to_string()),
         "$isotimestamp" => Some(Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)),
         "$randomint" => random_number(1000).ok().map(|number| number.to_string()),
-        "$randomemail" => random_number(10000).ok().map(|number| format!("user_{number}@example.com")),
+        "$randomemail" => random_number(10000)
+            .ok()
+            .map(|number| format!("user_{number}@example.com")),
         _ => None,
     }
 }
@@ -165,8 +188,18 @@ fn random_uuid() -> Result<String, getrandom::Error> {
     getrandom::fill(&mut bytes)?;
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-    Ok(format!("{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32]))
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
 }
 
 fn resolve_os_environment(value: &str) -> String {
@@ -198,13 +231,15 @@ pub fn resolved_os_environment_secrets(value: &str) -> Vec<String> {
     while let Some(relative_start) = value[cursor..].find("${OS_ENV:") {
         let start = cursor + relative_start;
         let variable_start = start + "${OS_ENV:".len();
-        let Some(relative_end) = value[variable_start..].find('}') else { break; };
+        let Some(relative_end) = value[variable_start..].find('}') else {
+            break;
+        };
         let end = variable_start + relative_end;
         let name = value[variable_start..end].trim();
-        if let Ok(secret) = env::var(name) {
-            if !secret.is_empty() {
-                secrets.push(secret);
-            }
+        if let Ok(secret) = env::var(name)
+            && !secret.is_empty()
+        {
+            secrets.push(secret);
         }
         cursor = end + 1;
     }
@@ -223,21 +258,47 @@ mod tests {
             ("BASE".to_owned(), "https://{{HOST}}/v1".to_owned()),
             ("TOKEN".to_owned(), "abc".to_owned()),
         ]);
-        assert_eq!(interpolate_string("{{BASE}}/users?token={{TOKEN}}", &variables).unwrap(), "https://api.example.test/v1/users?token=abc");
-        assert_eq!(interpolate_string("{{MISSING}}", &variables).unwrap(), "{{MISSING}}");
-        assert_eq!(interpolate_string(r"\{{TOKEN}}", &variables).unwrap(), "{{TOKEN}}");
-        assert_eq!(interpolate_string("{{ .bad! }} {{a b}}", &variables).unwrap(), "{{ .bad! }} {{a b}}");
+        assert_eq!(
+            interpolate_string("{{BASE}}/users?token={{TOKEN}}", &variables).unwrap(),
+            "https://api.example.test/v1/users?token=abc"
+        );
+        assert_eq!(
+            interpolate_string("{{MISSING}}", &variables).unwrap(),
+            "{{MISSING}}"
+        );
+        assert_eq!(
+            interpolate_string(r"\{{TOKEN}}", &variables).unwrap(),
+            "{{TOKEN}}"
+        );
+        assert_eq!(
+            interpolate_string("{{ .bad! }} {{a b}}", &variables).unwrap(),
+            "{{ .bad! }} {{a b}}"
+        );
     }
 
     #[test]
     fn interpolation_reports_cycles_and_depth_exhaustion_without_panicking() {
         let cycle = HashMap::from([("A".into(), "{{B}}".into()), ("B".into(), "{{A}}".into())]);
-        assert!(interpolate_string("{{A}}", &cycle).unwrap_err().contains("circular variable reference"));
-        let long_chain = (0..12).map(|index| {
-            let value = if index == 11 { "end".to_owned() } else { format!("{{{{V{}}}}}", index + 1) };
-            (format!("V{index}"), value)
-        }).collect::<HashMap<_, _>>();
-        assert!(interpolate_string("{{V0}}", &long_chain).unwrap_err().contains("recursion depth"));
+        assert!(
+            interpolate_string("{{A}}", &cycle)
+                .unwrap_err()
+                .contains("circular variable reference")
+        );
+        let long_chain = (0..12)
+            .map(|index| {
+                let value = if index == 11 {
+                    "end".to_owned()
+                } else {
+                    format!("{{{{V{}}}}}", index + 1)
+                };
+                (format!("V{index}"), value)
+            })
+            .collect::<HashMap<_, _>>();
+        assert!(
+            interpolate_string("{{V0}}", &long_chain)
+                .unwrap_err()
+                .contains("recursion depth")
+        );
         for input in ["{{", "}}", "{{}}", "{{ }}", "{{VAR", "VAR}}", "{ { VAR } }"] {
             let _ = interpolate_string(input, &long_chain);
         }
@@ -247,16 +308,33 @@ mod tests {
     fn variable_precedence_filters_disabled_values_and_interpolates_nested_json() {
         let environment = EnvironmentDefinition {
             variables: vec![
-                KeyValue { key: "HOST".into(), value: "env.test".into(), enabled: true, ..KeyValue::default() },
-                KeyValue { key: "DISABLED".into(), value: "skip".into(), enabled: false, ..KeyValue::default() },
+                KeyValue {
+                    key: "HOST".into(),
+                    value: "env.test".into(),
+                    enabled: true,
+                    ..KeyValue::default()
+                },
+                KeyValue {
+                    key: "DISABLED".into(),
+                    value: "skip".into(),
+                    enabled: false,
+                    ..KeyValue::default()
+                },
             ],
             ..EnvironmentDefinition::default()
         };
-        let folder = serde_json::from_value::<Value>(serde_json::json!({ "HOST": "folder.test", "FOLDER": 12 })).unwrap();
+        let folder = serde_json::from_value::<Value>(
+            serde_json::json!({ "HOST": "folder.test", "FOLDER": 12 }),
+        )
+        .unwrap();
         let folder = folder.as_object().unwrap();
         let overrides = HashMap::from([("HOST".to_owned(), "runtime.test".to_owned())]);
-        let variables = build_variable_map_with_folder(Some(&environment), Some(folder), &overrides);
-        assert_eq!(variables.get("HOST").map(String::as_str), Some("runtime.test"));
+        let variables =
+            build_variable_map_with_folder(Some(&environment), Some(folder), &overrides);
+        assert_eq!(
+            variables.get("HOST").map(String::as_str),
+            Some("runtime.test")
+        );
         assert_eq!(variables.get("FOLDER").map(String::as_str), Some("12"));
         assert!(!variables.contains_key("DISABLED"));
         let mut value = serde_json::json!({ "url": "https://{{HOST}}/{{FOLDER}}", "values": ["{{UNKNOWN}}", 3] });
@@ -271,11 +349,17 @@ mod tests {
         let uuid = interpolate_string("{{$uuid}}", &variables).unwrap();
         assert_eq!(uuid.len(), 36);
         assert_eq!(uuid.chars().filter(|ch| *ch == '-').count(), 4);
-        let timestamp = interpolate_string("{{$timestamp}}", &variables).unwrap().parse::<u64>().unwrap();
+        let timestamp = interpolate_string("{{$timestamp}}", &variables)
+            .unwrap()
+            .parse::<u64>()
+            .unwrap();
         assert!(timestamp > 0);
         let email = interpolate_string("{{$randomemail}}", &variables).unwrap();
         assert!(email.starts_with("user_") && email.ends_with("@example.com"));
-        let number = interpolate_string("{{$randomint}}", &variables).unwrap().parse::<u32>().unwrap();
+        let number = interpolate_string("{{$randomint}}", &variables)
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
         assert!(number < 1000);
     }
 }

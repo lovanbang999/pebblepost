@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener as StdTcpListener};
 use std::path::PathBuf;
-use std::fs;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State, WebviewWindow};
@@ -24,7 +24,9 @@ fn api_config(state: State<'_, ApiConfig>) -> ApiConfig {
 async fn select_directory(app: AppHandle) -> Option<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |selected| {
-        let path = selected.and_then(|file| file.into_path().ok()).map(|path| path.to_string_lossy().into_owned());
+        let path = selected
+            .and_then(|file| file.into_path().ok())
+            .map(|path| path.to_string_lossy().into_owned());
         let _ = sender.send(path);
     });
     receiver.await.ok().flatten()
@@ -59,7 +61,8 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let frontend_dir = PathBuf::from("web/dist");
-            let listener = StdTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))?;
+            let listener =
+                StdTcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))?;
             listener.set_nonblocking(true)?;
             let address = listener.local_addr()?;
             let data_dir = app.path().app_data_dir()?;
@@ -75,7 +78,10 @@ fn main() {
                     Err(error) => eprintln!("failed to start PebblePost local API: {error}"),
                 }
             });
-            app.manage(ApiConfig { base_url: format!("http://{address}"), token: String::new() });
+            app.manage(ApiConfig {
+                base_url: format!("http://{address}"),
+                token: String::new(),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

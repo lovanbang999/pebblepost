@@ -1,8 +1,7 @@
 # Binaries & build artifacts
 build/
 bin/
-/target/
-apps/pebblepost-desktop/src-tauri/target/
+**/target/
 apps/pebblepost-desktop/src-tauri/gen/
 vendor/
 
