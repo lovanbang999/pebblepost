@@ -5,7 +5,7 @@ use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use pebblepost_core::{init_workspace, scan_workspace};
 use pebblepost_server::{docs, import_export};
 
@@ -30,45 +30,7 @@ enum Command {
         command: WorkspaceCommand,
     },
     /// Execute requests in a workspace collection.
-    Run {
-        target: Option<PathBuf>,
-        #[arg(short = 'e', long)]
-        environment: Option<String>,
-        #[arg(short = 'd', long)]
-        data: Option<PathBuf>,
-        #[arg(short = 'n', long)]
-        iterations: Option<usize>,
-        #[arg(long, default_value_t = 0)]
-        delay: u64,
-        #[arg(long)]
-        timeout: Option<u64>,
-        #[arg(long, default_value_t = 0)]
-        retry: usize,
-        #[arg(long)]
-        bail: bool,
-        #[arg(long)]
-        ci: bool,
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long)]
-        trust: bool,
-        #[arg(long)]
-        secret_backend: Option<String>,
-        #[arg(long = "var", action = clap::ArgAction::Append)]
-        variables: Vec<String>,
-        #[arg(long)]
-        env_file: Option<PathBuf>,
-        #[arg(long = "folder")]
-        folder_filter: Option<String>,
-        #[arg(long = "request")]
-        request_filter: Option<String>,
-        #[arg(long = "tag")]
-        tag_filter: Option<String>,
-        #[arg(long = "reporter", action = clap::ArgAction::Append)]
-        reporters: Vec<String>,
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
+    Run(Box<RunArgs>),
     /// Check or apply OpenAPI specification changes for a collection folder.
     Sync {
         target: Option<String>,
@@ -155,6 +117,47 @@ enum Command {
         #[arg(long, default_value = "web/dist")]
         frontend_dir: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+struct RunArgs {
+    target: Option<PathBuf>,
+    #[arg(short = 'e', long)]
+    environment: Option<String>,
+    #[arg(short = 'd', long)]
+    data: Option<PathBuf>,
+    #[arg(short = 'n', long)]
+    iterations: Option<usize>,
+    #[arg(long, default_value_t = 0)]
+    delay: u64,
+    #[arg(long)]
+    timeout: Option<u64>,
+    #[arg(long, default_value_t = 0)]
+    retry: usize,
+    #[arg(long)]
+    bail: bool,
+    #[arg(long)]
+    ci: bool,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    trust: bool,
+    #[arg(long)]
+    secret_backend: Option<String>,
+    #[arg(long = "var", action = clap::ArgAction::Append)]
+    variables: Vec<String>,
+    #[arg(long)]
+    env_file: Option<PathBuf>,
+    #[arg(long = "folder")]
+    folder_filter: Option<String>,
+    #[arg(long = "request")]
+    request_filter: Option<String>,
+    #[arg(long = "tag")]
+    tag_filter: Option<String>,
+    #[arg(long = "reporter", action = clap::ArgAction::Append)]
+    reporters: Vec<String>,
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -251,27 +254,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let result = scan_workspace(&path)?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
-        Command::Run {
-            target,
-            environment,
-            data,
-            iterations,
-            delay,
-            timeout,
-            retry,
-            bail,
-            ci,
-            dry_run,
-            trust,
-            secret_backend,
-            variables,
-            env_file,
-            folder_filter,
-            request_filter,
-            tag_filter,
-            reporters,
-            out,
-        } => {
+        Command::Run(args) => {
+            let RunArgs {
+                target,
+                environment,
+                data,
+                iterations,
+                delay,
+                timeout,
+                retry,
+                bail,
+                ci,
+                dry_run,
+                trust,
+                secret_backend,
+                variables,
+                env_file,
+                folder_filter,
+                request_filter,
+                tag_filter,
+                reporters,
+                out,
+            } = *args;
             match run_collection(
                 target,
                 environment,
