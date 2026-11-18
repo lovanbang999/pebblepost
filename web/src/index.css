@@ -99,11 +99,7 @@
   background: #3f3f46;
 }
 
-/* Wails Frameless Window Drag Helper */
-.wails-drag {
-  --wails-draggable: drag;
-}
-
-.wails-no-drag {
-  --wails-draggable: no-drag;
+/* Tauri frameless titlebar drag region. */
+.tauri-titlebar {
+  -webkit-app-region: drag;
 }

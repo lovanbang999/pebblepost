@@ -10,7 +10,7 @@ The PebblePost project takes the security of our application and user data serio
 2. **Secret Isolation**: PebblePost automatically categorizes environment files:
    - `*.env.json`: Public variables designed to be committed to Git.
    - `*.secret.env.json`: Secrets and private keys that are automatically placed inside `.pebble/.gitignore`.
-3. **Embedded JS Sandbox Isolation**: JavaScript scripts (`preRequest` and `postResponse`) run within an embedded pure-Go ECMAScript interpreter ([Goja](https://github.com/dop251/goja)) with no access to Node.js APIs, arbitrary system calls, or shell execution.
+3. **Request Script Status**: The Rust server currently preserves JavaScript request script fields but does not execute them. Do not rely on those scripts for security controls or request behavior until the Rust sandbox is available.
 
 ---
 

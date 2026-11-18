@@ -13,10 +13,10 @@ Fixes # (issue)
 
 ## How Has This Been Tested?
 <!-- Please describe the tests that you ran to verify your changes. -->
-- [ ] Go backend tests pass with race detection: `go test -race ./...`
+- [ ] Rust workspace check passes: `cargo check --workspace --all-targets`
 - [ ] Frontend unit tests pass: `cd web && npm test`
 - [ ] Frontend production build passes: `cd web && npm run build`
-- [ ] Desktop studio / server verified: `go build ./cmd/server && go build ./cmd/cli`
+- [ ] Rust formatting and lint pass: `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets -- -D warnings`
 
 ## Checklist
 - [ ] My code follows the style guidelines of this project

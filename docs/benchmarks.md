@@ -1,24 +1,5 @@
-# Empirical Performance & Footprint Benchmarks
+# Performance Measurements
 
-*All measurements conducted on Linux x86_64, Go 1.25.1, with production release flags (`-trimpath -ldflags="-s -w"`)*
+Published historical measurements were taken from the previous backend and are not representative of the Rust workspace. No Rust benchmark baseline has been recorded.
 
-## Summary Comparison Table
-
-| Metric | PebblePost CLI | PebblePost Server | Postman (Desktop v11) | Bruno (Desktop v1.38) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Cold Startup Time** | **< 10 ms** | **22.45 ms** | ~2,400 ms | ~1,100 ms |
-| **Idle Memory (RSS)** | *Ephemeral process* (~16.7 MB peak) | **19.56 MB** | ~420 MB | ~170 MB |
-| **Executable Size** | **29.1 MB** *(includes web UI)* | **29.1 MB** *(includes web UI)* | ~180 MB installer | ~95 MB installer |
-| **Runtime Architecture** | Standalone static ELF | Standalone static ELF | Electron / Chromium | Electron / Chromium |
-| **CGO / Dependencies** | None (`CGO_ENABLED=0`) | None (`CGO_ENABLED=0`) | Node.js + Chromium | Node.js + Chromium |
-
-
-### Methodology & Reproducibility
-To reproduce these exact numbers on your local machine, run:
-```bash
-./scripts/measure.sh
-```
-
-- **Startup Time**: Measured using high-resolution monotonic clocks (`time.perf_counter`) polling `/api/health` until HTTP 200 OK.
-- **Idle Memory**: Process Resident Set Size (`ps -o rss=`) measured after 2 seconds of quiescent idle state.
-- **Binary Size**: Measured on disk after compiling with stripped symbol and debug tables (`-ldflags="-s -w"`).
+The current [`scripts/measure.sh`](../scripts/measure.sh) builds the Rust CLI and server and records startup time, idle memory, and executable size on Linux. Run it only after the Cargo workspace and frontend assets build successfully. Compare results only when hardware, operating system, build profile, and measurement steps match.

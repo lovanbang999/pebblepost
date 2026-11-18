@@ -4,6 +4,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Badge } from '../ui/badge'
 import type { ExecutionResult, ExampleResponse, KeyValue } from '../../types'
+import { useWorkspaceStore } from '../../store/workspaceStore'
 
 interface SaveExampleDialogProps {
   isOpen: boolean
@@ -60,6 +61,7 @@ export function SaveExampleDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          workspacePath: useWorkspaceStore.getState().workspacePath,
           filePath,
           name: name.trim(),
           statusCode: result.statusCode,

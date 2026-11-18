@@ -342,10 +342,15 @@ export function RequestPanel() {
     try {
       const isAuthCode = activeRequest.auth.grantType === "authorization_code";
       const endpoint = isAuthCode ? "/api/oauth2/authorize" : "/api/oauth2/token";
+      const { workspacePath, activeEnv } = useWorkspaceStore.getState();
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ auth: activeRequest.auth }),
+        body: JSON.stringify({
+          auth: activeRequest.auth,
+          workspacePath: workspacePath || undefined,
+          environmentName: activeEnv || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {

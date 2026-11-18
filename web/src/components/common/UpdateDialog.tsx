@@ -22,17 +22,6 @@ import { Badge } from "../ui/badge";
 import { Checkbox } from "../ui/checkbox";
 import type { UpdateInfo, UpdateSettings } from "../../types";
 
-// ── Wails runtime bridge ────────────────────────────────────────────────────
-interface WailsGoApp {
-  RestartApp?: () => Promise<void> | void;
-  [key: string]: ((...args: unknown[]) => unknown) | undefined;
-}
-function getWailsGoApp(): WailsGoApp | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (window as unknown as { go?: { main?: { App?: WailsGoApp } } }).go?.main
-    ?.App;
-}
-
 type ApplyPhase = "idle" | "downloading" | "ready_to_restart" | "error";
 
 interface UpdateDialogProps {
@@ -121,9 +110,11 @@ export function UpdateDialog({
 
   // ── Restart handler ──────────────────────────────────────────────────────
   const handleRestart = () => {
-    const goApp = getWailsGoApp();
-    if (goApp?.RestartApp) {
-      goApp.RestartApp();
+    const invoke = (window as unknown as {
+      __TAURI__?: { core?: { invoke(command: string): Promise<void> } }
+    }).__TAURI__?.core?.invoke;
+    if (invoke) {
+      void invoke("restart_app").catch((error) => console.error("Failed to restart the desktop app:", error));
     } else {
       // Fallback: prompt manual restart for browser / server context
       alert("Update applied! Please close and reopen the application.");

@@ -35,7 +35,7 @@ body:
       label: Runtime Mode
       description: How are you running PebblePost?
       options:
-        - Native Desktop Studio (Wails)
+        - Native Desktop Studio (Tauri 2)
         - Standalone Web Server (`pebblepost-server`)
         - Docker Container (`lovanbang999/pebblepost`)
         - Command Line Runner (`pebblepost run`)

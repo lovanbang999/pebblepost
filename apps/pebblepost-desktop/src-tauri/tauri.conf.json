@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "PebblePost Studio",
+  "version": "0.2.0",
+  "identifier": "dev.pebblepost.app",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../../web run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm --prefix ../../web run build",
+    "frontendDist": "../../web/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "PebblePost Studio",
+        "width": 1366,
+        "height": 850,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "decorations": false,
+        "backgroundColor": "#09090b"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* http://tauri.localhost tauri://localhost ws://localhost:5173"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Local-first API client and workspace studio"
+  }
+}

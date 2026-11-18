@@ -13,8 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 100",
     "tsc": "tsc --noEmit",
-    "test:e2e": "playwright test",
-    "postinstall": "echo 'module pebblepost/web/node_modules' > node_modules/go.mod"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

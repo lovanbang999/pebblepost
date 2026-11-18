@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateCURL, generateNodeFetch, generateGo } from './codegen'
+import { generateCURL, generateNodeFetch, generateRust } from './codegen'
 import type { RequestDefinition } from '../types'
 
 function makeRequest(overrides: Partial<RequestDefinition> = {}): RequestDefinition {
@@ -127,15 +127,16 @@ describe('generateNodeFetch', () => {
   })
 })
 
-describe('generateGo', () => {
-  it('generates axios.request call', () => {
-    const code = generateGo(makeRequest())
-    expect(code).toContain('http.NewRequest')
+describe('generateRust', () => {
+  it('generates a reqwest async request', () => {
+    const code = generateRust(makeRequest())
+    expect(code).toContain('client.request')
+    expect(code).toContain('reqwest::Method::from_bytes')
     expect(code).toContain('GET')
   })
 
   it('includes url', () => {
-    const code = generateGo(makeRequest())
+    const code = generateRust(makeRequest())
     expect(code).toContain('api.example.com')
   })
 
@@ -161,9 +162,9 @@ describe('generateGo', () => {
     expect(fetchCode).toContain('application/json')
     expect(fetchCode).toContain('GetUser')
 
-    const goCode = generateGo(gqlReq)
-    expect(goCode).toContain('Content-Type')
-    expect(goCode).toContain('GetUser')
+    const rustCode = generateRust(gqlReq)
+    expect(rustCode).toContain('Content-Type')
+    expect(rustCode).toContain('GetUser')
   })
 })
 

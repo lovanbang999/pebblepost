@@ -71,17 +71,17 @@ export function ManageEnvironmentsDialog({
 
   // Load workspace secret backend configuration
   useEffect(() => {
-    if (!isOpen) return;
-    fetch("/api/workspace/secret-backend")
+    if (!isOpen || !workspacePath) return;
+    fetch(`/api/workspace/secret-backend?workspacePath=${encodeURIComponent(workspacePath)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data) setBackendConfig(data);
       })
       .catch(() => {});
-  }, [isOpen]);
+  }, [isOpen, workspacePath]);
 
   const handleMigrate = async (targetBackend: "keychain" | "file") => {
-    if (!editingEnv) return;
+    if (!editingEnv || !workspacePath) return;
     const targetLabel = targetBackend === "keychain" ? "OS Keychain" : "Plaintext File (*.secret.env.json)";
     if (
       !window.confirm(
@@ -100,6 +100,7 @@ export function ManageEnvironmentsDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          workspacePath,
           envName: editingEnv.name,
           to: targetBackend,
         }),
@@ -111,11 +112,11 @@ export function ManageEnvironmentsDialog({
       setMigrationMessage(
         data.backupPath
           ? `Secrets migrated to ${targetLabel}! Backup saved to: ${data.backupPath}`
-          : `Secrets successfully migrated to ${targetLabel}!`
+          : data.message || `Secrets successfully migrated to ${targetLabel}!`
       );
 
       // Refresh backend configuration
-      const cfgRes = await fetch("/api/workspace/secret-backend");
+      const cfgRes = await fetch(`/api/workspace/secret-backend?workspacePath=${encodeURIComponent(workspacePath)}`);
       if (cfgRes.ok) {
         setBackendConfig(await cfgRes.json());
       }

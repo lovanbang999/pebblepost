@@ -13,6 +13,7 @@ import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { formatBytes, formatDuration } from '../../lib/utils'
 import type { ExampleResponse } from '../../types'
+import { useWorkspaceStore } from '../../store/workspaceStore'
 
 interface RequestExamplesTabProps {
   filePath: string
@@ -50,7 +51,11 @@ export function RequestExamplesTab({
       const res = await fetch('/api/request/example/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, exampleId }),
+        body: JSON.stringify({
+          workspacePath: useWorkspaceStore.getState().workspacePath,
+          filePath,
+          exampleId,
+        }),
       })
 
       if (!res.ok) {
