@@ -1532,7 +1532,7 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), PebbleEr
 fn write_json_atomic_with_mode(
     path: &Path,
     value: &impl Serialize,
-    mode: Option<u32>,
+    _mode: Option<u32>,
 ) -> Result<(), PebbleError> {
     suppress_workspace_path(path, Duration::from_secs(1));
     let parent = path
@@ -1546,7 +1546,7 @@ fn write_json_atomic_with_mode(
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    if let Some(mode) = mode {
+    if let Some(mode) = _mode {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(mode);
     }

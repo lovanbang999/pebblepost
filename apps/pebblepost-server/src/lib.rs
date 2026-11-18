@@ -1315,11 +1315,7 @@ fn filter_runner_requests(payload: &mut RunnerPayload) -> Result<(), String> {
     for path in candidates {
         let request = read_request(root, Path::new(&path))
             .map_err(|error| format!("could not filter runner request {path:?}: {error}"))?;
-        let relative = Path::new(&path)
-            .strip_prefix(root)
-            .unwrap_or(Path::new(&path))
-            .to_string_lossy()
-            .replace('\\', "/");
+        let relative = runner_relative_path(root, Path::new(&path));
         if runner_request_matches(
             &request,
             &relative,
@@ -1331,6 +1327,21 @@ fn filter_runner_requests(payload: &mut RunnerPayload) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn runner_relative_path(workspace_root: &Path, path: &Path) -> String {
+    let relative = if let Ok(relative) = path.strip_prefix(workspace_root) {
+        relative.to_path_buf()
+    } else if path.is_absolute()
+        && let Ok(root) = fs::canonicalize(workspace_root)
+        && let Ok(canonical_path) = safe_workspace_path(&root, path)
+        && let Ok(relative) = canonical_path.strip_prefix(root)
+    {
+        relative.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    relative.to_string_lossy().replace('\\', "/")
 }
 
 fn runner_request_matches(
@@ -1709,11 +1720,7 @@ async fn runner_next(runner: &mut RunnerStream) -> Option<Event> {
             .and_then(Value::as_str)
             .unwrap_or("GET");
         let url = request.get("url").and_then(Value::as_str).unwrap_or("");
-        let rel_path = Path::new(&path)
-            .strip_prefix(root)
-            .unwrap_or(Path::new(&path))
-            .to_string_lossy()
-            .replace('\\', "/");
+        let rel_path = runner_relative_path(root, Path::new(&path));
         let record = json!({
             "iteration": runner.iteration,
             "filePath": path,
@@ -1835,12 +1842,10 @@ async fn runner_next(runner: &mut RunnerStream) -> Option<Event> {
             runner.payload.request_paths.iter().position(|candidate| {
                 let candidate_path = Path::new(candidate);
                 candidate == target
-                    || candidate_path
-                        .strip_prefix(&runner.payload.workspace_path)
-                        .ok()
-                        .is_some_and(|relative| {
-                            relative.to_string_lossy().replace('\\', "/") == target
-                        })
+                    || runner_relative_path(
+                        Path::new(&runner.payload.workspace_path),
+                        candidate_path,
+                    ) == target
                     || candidate_path.file_name().and_then(|name| name.to_str()) == Some(target)
                     || read_request(Path::new(&runner.payload.workspace_path), candidate_path)
                         .ok()
@@ -1919,11 +1924,7 @@ fn runner_record_result(
     let passed = runner_result_passed(&result);
     let error = runner_result_error(&result);
     let root = Path::new(&runner.payload.workspace_path);
-    let rel_path = Path::new(&path)
-        .strip_prefix(root)
-        .unwrap_or(Path::new(&path))
-        .to_string_lossy()
-        .replace('\\', "/");
+    let rel_path = runner_relative_path(root, Path::new(&path));
     let record = json!({
         "iteration": runner.iteration,
         "filePath": path,
@@ -5528,6 +5529,30 @@ mod runner_parity_tests {
         assert_eq!(summary["results"][2]["iteration"], 2);
         assert_eq!(summary["results"][0]["skipped"], true);
         drop(stop_sender);
+        drop(runner);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runner_relative_paths_handle_symlinked_workspace_roots() {
+        let root = std::env::temp_dir().join(format!(
+            "pebblepost-runner-paths-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let actual_root = root.join("actual");
+        let alias_root = root.join("alias");
+        std::fs::create_dir_all(&actual_root).unwrap();
+        std::os::unix::fs::symlink(&actual_root, &alias_root).unwrap();
+        let request = actual_root.join("01-first.pebble.json");
+        std::fs::write(&request, "{}").unwrap();
+
+        assert_eq!(
+            runner_relative_path(&alias_root, &request),
+            "01-first.pebble.json"
+        );
+
         std::fs::remove_dir_all(root).unwrap();
     }
 }

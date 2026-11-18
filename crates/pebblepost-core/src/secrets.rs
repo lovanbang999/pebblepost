@@ -438,21 +438,21 @@ fn keychain_index_path() -> Result<PathBuf, String> {
     Ok(config_dir.join("pebblepost").join("keychain-index.json"))
 }
 
-fn set_private_permissions(path: &Path) -> Result<(), String> {
+fn set_private_permissions(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o600))
             .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
-fn set_private_directory_permissions(path: &Path) -> Result<(), String> {
+fn set_private_directory_permissions(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o700))
             .map_err(|error| error.to_string())?;
     }
     Ok(())
