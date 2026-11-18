@@ -1,0 +1,19 @@
+[package]
+name = "pebblepost-desktop"
+version.workspace = true
+description = "PebblePost desktop application"
+authors = ["PebblePost Team"]
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+axum.workspace = true
+pebblepost-server = { path = "../../pebblepost-server" }
+serde.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tokio.workspace = true

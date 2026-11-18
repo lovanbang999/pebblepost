@@ -102,7 +102,7 @@ const TABS: {
     key: "openapi",
     label: "OpenAPI 3.0",
     icon: <Layers className="w-3.5 h-3.5 text-emerald-400" />,
-    placeholder: "Paste your OpenAPI 3.0 JSON specification here...",
+    placeholder: "Paste your OpenAPI 3.0 JSON or YAML specification here...",
     acceptFiles: ".json,.yaml,.yml",
   },
   {

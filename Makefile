@@ -1,9 +1,7 @@
 .DEFAULT_GOAL := help
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
-
 .PHONY: help
-help: ## Show this help message
+help: ## Show available tasks
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
@@ -11,96 +9,72 @@ help: ## Show this help message
 init-hooks: ## Configure git to use project pre-commit hooks
 	git config core.hooksPath .githooks
 	chmod +x .githooks/pre-commit
-	@echo "✅ Pre-commit hook installed successfully"
 
-# ─── Go ───────────────────────────────────────────────────────────────────────
-
-.PHONY: ensure-env
-ensure-env:
-	@mkdir -p web/dist && touch web/dist/.gitkeep
-	@[ -d web/node_modules ] && [ ! -f web/node_modules/go.mod ] && echo "module pebblepost/web/node_modules" > web/node_modules/go.mod || true
-
-.PHONY: test
-test: ensure-env ## Run all Go tests with race detector
-	go test -race -count=1 ./...
-
-.PHONY: coverage
-coverage: ensure-env ## Run Go tests and show coverage report
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
-	go tool cover -func=coverage.out
-	go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage HTML report: coverage.html"
-
-.PHONY: coverage-open
-coverage-open: coverage ## Open HTML coverage report in browser
-	@command -v xdg-open >/dev/null && xdg-open coverage.html || open coverage.html
+.PHONY: check
+check: lint-rust lint-fe fe-tsc ## Run static checks for Rust and the frontend
 
 .PHONY: lint
-lint: lint-go lint-fe ## Run all linters (Go + frontend)
+lint: lint-rust lint-fe ## Run Rust and frontend linters
 
-.PHONY: lint-go
-lint-go: ensure-env ## Run go vet
-	go vet ./...
+.PHONY: lint-rust
+lint-rust: ## Format and lint the Rust workspace
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets -- -D warnings
 
 .PHONY: lint-fe
-lint-fe: ## Run ESLint on frontend
+lint-fe: ## Run ESLint on the frontend
 	cd web && npm run lint
 
-.PHONY: fuzz
-fuzz: ## Run fuzz tests for 30 seconds each
-	@mkdir -p web/dist && touch web/dist/.gitkeep
-	go test -fuzz=FuzzInterpolateString -fuzztime=30s ./internal/workspace/...
-	go test -fuzz=FuzzInterpolateBroken -fuzztime=30s ./internal/workspace/...
-	go test -fuzz=FuzzInterpolateAtoB   -fuzztime=30s ./internal/workspace/...
+.PHONY: test
+test: test-rust fe-test ## Run Rust and frontend unit tests
+
+.PHONY: test-rust
+test-rust: ## Run Rust workspace tests
+	cargo test --workspace
 
 .PHONY: build
-build: build-cli build-server ## Build all Go binaries
+build: build-cli build-server ## Build the CLI and standalone web server
 
 .PHONY: build-cli
-build-cli: ## Build CLI binary
-	go build -o bin/pebblepost ./cmd/cli
+build-cli: ## Build the PebblePost CLI
+	cargo build --release --package pebblepost-cli
 
 .PHONY: build-server
-build-server: ## Build server binary
-	@mkdir -p web/dist && touch web/dist/.gitkeep
-	go build -o bin/pebblepost-server ./cmd/server
+build-server: ## Build the Axum web server
+	cargo build --release --package pebblepost-server
 
-.PHONY: deb
-deb: ## Build Linux desktop binary and package installable .deb
-	./scripts/build-linux.sh
+.PHONY: build-desktop
+build-desktop: ## Package the Tauri desktop application
+	cargo tauri build --manifest-path apps/pebblepost-desktop/src-tauri/Cargo.toml
 
-# ─── Frontend ─────────────────────────────────────────────────────────────────
+.PHONY: run-server
+run-server: ## Run the local web server
+	cargo run --package pebblepost-server
+
+.PHONY: dev-desktop
+dev-desktop: ## Run the Tauri desktop application in development mode
+	cargo tauri dev --manifest-path apps/pebblepost-desktop/src-tauri/Cargo.toml
 
 .PHONY: fe-install
 fe-install: ## Install frontend dependencies
 	cd web && npm ci
 
 .PHONY: fe-test
-fe-test: ## Run frontend unit tests (Vitest)
+fe-test: ## Run frontend unit tests
 	cd web && npm run test:run
 
-.PHONY: fe-test-node
-fe-test-node: ## Run frontend node:test suite (tabStore)
-	cd web && npm test
-
 .PHONY: fe-build
-fe-build: ## Build frontend production bundle
+fe-build: ## Build the React/Vite frontend
 	cd web && npm run build
 
 .PHONY: fe-tsc
-fe-tsc: ## TypeScript type-check
+fe-tsc: ## Type-check the frontend
 	cd web && npm run tsc
 
 .PHONY: fe-e2e
-fe-e2e: fe-build build-cli ## Run Playwright E2E smoke tests
+fe-e2e: fe-build build-cli ## Run Playwright end-to-end checks
 	cd web && npm run test:e2e
 
-# ─── Combined ─────────────────────────────────────────────────────────────────
-
-.PHONY: check
-check: lint test fe-tsc fe-test ## Run all checks (lint + tests)
-	@echo "✅ All checks passed"
-
 .PHONY: clean
-clean: ## Remove build artifacts
-	rm -rf bin/ coverage.out coverage.html web/dist/
+clean: ## Remove generated artifacts
+	rm -rf target bin coverage.out coverage.html web/dist/

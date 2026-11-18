@@ -88,64 +88,74 @@ export function generateCURL(req: RequestDefinition): string {
   return lines.join(' \\\n')
 }
 
-// ─── Go net/http ─────────────────────────────────────────────────────────────
+// ─── Rust reqwest ────────────────────────────────────────────────────────────
 
-export function generateGo(req: RequestDefinition): string {
+function rustRawString(value: string): string {
+  let hashes = '#'
+  while (value.includes(`"${hashes}`)) hashes += '#'
+  return `r${hashes}"${value}"${hashes}`
+}
+
+export function generateRust(req: RequestDefinition): string {
   const headers = allHeaders(req)
-  const url = fullUrl(req)
-
-  const effectiveHeaders = [...headers]
-  if (req.body.type === 'graphql' && !effectiveHeaders.some((h) => h.key.toLowerCase() === 'content-type')) {
-    effectiveHeaders.unshift({ key: 'Content-Type', value: 'application/json', enabled: true })
+  if (req.body.type === 'graphql' && !headers.some((h) => h.key.toLowerCase() === 'content-type')) {
+    headers.unshift({ key: 'Content-Type', value: 'application/json', enabled: true })
   }
 
-  let bodySetup = ''
-  let bodyArg = 'nil'
-
-  if (req.body.type === 'json' || req.body.type === 'raw') {
-    bodySetup = `\tbody := strings.NewReader(\`${req.body.raw || ''}\`)\n`
-    bodyArg = 'body'
-  } else if (req.body.type === 'graphql') {
-    bodySetup = `\tbody := strings.NewReader(\`${buildGraphQLPayload(req).replace(/`/g, '\\`')}\`)\n`
-    bodyArg = 'body'
-  }
-
-  const headerLines = effectiveHeaders
-    .map((h) => `\treq.Header.Set("${h.key}", "${h.value}")`)
+  const clientOptions = [
+    req.settings.timeoutMs ? `.timeout(std::time::Duration::from_millis(${req.settings.timeoutMs}))` : '',
+    req.settings.verifySSL ? '' : '.danger_accept_invalid_certs(true)',
+    req.settings.followRedirects ? '' : '.redirect(reqwest::redirect::Policy::none())',
+  ].filter(Boolean).join('\n        ')
+  const headerCalls = headers
+    .map((header) => `    request = request.header(${rustRawString(header.key)}, ${rustRawString(header.value)});`)
     .join('\n')
 
-  const clientTimeout = req.settings.timeoutMs
-    ? `\tclient := &http.Client{Timeout: ${req.settings.timeoutMs / 1000} * time.Second}`
-    : '\tclient := &http.Client{}'
+  let bodySetup = ''
+  let bodyCall = ''
+  if (req.body.type === 'json' || req.body.type === 'raw') {
+    bodyCall = `request = request.body(${rustRawString(req.body.raw || '')});`
+  } else if (req.body.type === 'graphql') {
+    bodyCall = `request = request.body(${rustRawString(buildGraphQLPayload(req))});`
+  } else if (req.body.type === 'urlEncoded') {
+    const pairs = enabled(req.body.urlEncoded)
+      .map((pair) => `        (${rustRawString(pair.key)}, ${rustRawString(pair.value)})`)
+      .join(',\n')
+    bodyCall = `request = request.form(&[\n${pairs}\n    ]);`
+  } else if (req.body.type === 'formData') {
+    const fields = enabled(req.body.formData)
+    const lines = fields.map((field) => {
+      if (field.type === 'file') {
+        const fileName = field.value.split(/[\\/]/).pop() || 'upload.bin'
+        return `form = form.part(${rustRawString(field.key)}, reqwest::multipart::Part::bytes(std::fs::read(${rustRawString(field.value)})?).file_name(${rustRawString(fileName)}));`
+      }
+      return `form = form.text(${rustRawString(field.key)}, ${rustRawString(field.value)});`
+    })
+    bodySetup = `    let mut form = reqwest::multipart::Form::new();\n${lines.map((line) => `    ${line}`).join('\n')}\n`
+    bodyCall = 'request = request.multipart(form);'
+  } else if (req.body.type === 'file') {
+    bodyCall = `request = request.body(std::fs::read(${rustRawString(req.body.filePath || '')})?);`
+  }
 
-  return `package main
+  return `use reqwest::Client;
 
-import (
-\t"fmt"
-\t"io"
-\t"net/http"
-\t"strings"
-\t"time"
-)
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::builder()
+        ${clientOptions || ''}
+        .build()?;
+    let mut request = client.request(
+        reqwest::Method::from_bytes(${rustRawString(req.method)}.as_bytes())?,
+        ${rustRawString(fullUrl(req))},
+    );
+${headerCalls}
+${bodySetup}${bodyCall ? `    ${bodyCall}\n` : ''}    let response = request.send().await?;
+    println!("Status: {}", response.status());
+    println!("{}", response.text().await?);
+    Ok(())
+}
 
-func main() {
-${bodySetup}\treq, err := http.NewRequest("${req.method}", "${url}", ${bodyArg})
-\tif err != nil {
-\t\tpanic(err)
-\t}
-
-${headerLines}
-
-${clientTimeout}
-\tresp, err := client.Do(req)
-\tif err != nil {
-\t\tpanic(err)
-\t}
-\tdefer resp.Body.Close()
-
-\tbody2, _ := io.ReadAll(resp.Body)
-\tfmt.Printf("Status: %s\\n%s\\n", resp.Status, body2)
-}`
+// Add reqwest (features: json, multipart, rustls-tls) and tokio (features: macros, rt-multi-thread) to Cargo.toml.`
 }
 
 // ─── Node.js fetch ────────────────────────────────────────────────────────────
@@ -269,7 +279,7 @@ function toPascal(method: string): string {
 
 export const CODE_GENERATORS: Record<string, { label: string; language: string; fn: (req: RequestDefinition) => string }> = {
   curl:   { label: 'cURL',         language: 'shell',      fn: generateCURL },
-  go:     { label: 'Go',           language: 'go',         fn: generateGo },
+  rust:   { label: 'Rust reqwest', language: 'rust',      fn: generateRust },
   node:   { label: 'Node.js',      language: 'javascript', fn: generateNodeFetch },
   python: { label: 'Python',       language: 'python',     fn: generatePython },
   csharp: { label: 'C# HttpClient', language: 'csharp',   fn: generateCSharp },

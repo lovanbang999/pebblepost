@@ -1,9 +1,11 @@
 # Binaries & build artifacts
 build/
 bin/
+/target/
+apps/pebblepost-desktop/src-tauri/target/
+apps/pebblepost-desktop/src-tauri/gen/
+vendor/
 
-cmd/desktop/build/
-cmd/desktop/build
 pebblepost
 pebblepost.exe
 *.deb
@@ -15,7 +17,6 @@ web/dist/
 web/node_modules/
 web/.eslintcache
 web/package.json.md5
-web/wailsjs/
 *.tsbuildinfo
 
 # Local secret data & environments
@@ -34,11 +35,6 @@ data/
 .idea/
 *.swp
 *.swo
-
-# Go cache & coverage
-*.out
-*.test
-*.cov
 
 # Test output & temporary runner data
 tmp-smoke-data/

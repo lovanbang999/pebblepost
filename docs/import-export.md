@@ -6,15 +6,18 @@
 
 ## 1. Smart Importers
 
-PebblePost features a built-in import engine in `internal/workspace/importer.go` with a 2-step preview flow: **Parse Preview** -> **Save to Workspace**.
+PebblePost's Rust import engine is in `apps/pebblepost-server/src/import_export.rs` and supports a preview-then-save flow.
 
 ### Supported Formats
 
 | Format | Source | Description |
 | :--- | :--- | :--- |
 | **cURL Command** | Browser DevTools / Terminal | Parses methods, headers, URLs, query parameters, and raw/form bodies. |
-| **Postman v2.1** | Postman Export (`.json`) | Flattens nested folders, maps auth types, headers, query params, and scripts. |
-| **OpenAPI 3.0 / Swagger** | OpenAPI JSON / YAML Spec | Converts API paths and operations (`GET`, `POST`, etc.) into request skeletons. |
+| **Postman** | Postman collection JSON | Imports folders, requests, auth, headers, and query parameters. |
+| **OpenAPI / Swagger** | JSON or YAML specification | Converts paths and operations into request skeletons. |
+| **HAR** | HAR JSON export | Imports captured HTTP requests. |
+| **Insomnia** | Insomnia JSON export | Imports request resources. |
+| **Bruno** | Bruno text collection | Supports basic request definitions. |
 
 ---
 
@@ -24,7 +27,7 @@ PebblePost features a built-in import engine in `internal/workspace/importer.go`
 2. Select your import source tab:
    - **cURL**: Paste any single or multi-line cURL command string.
    - **Postman**: Click **Upload .json file** or paste raw collection JSON.
-   - **OpenAPI**: Click **Upload .json file** or paste OpenAPI 3.0 JSON specification.
+   - **OpenAPI**: Click **Upload .json, .yaml, or .yml file** or paste an OpenAPI 3.0 specification.
 3. Click **Parse** to preview the detected requests.
 4. Click **Save Requests to Workspace**. The files will be created as `*.pebble.json` inside your active workspace.
 
@@ -45,23 +48,22 @@ curl -X POST 'https://api.example.com/v1/users' \
   -d '{"name": "Alice"}'
 ```
 
-#### 2. Go (`net/http`)
-Production-ready Go code utilizing standard library `net/http`:
-```go
-package main
+#### 2. Rust (`reqwest`)
+Async Rust code using `reqwest`:
+```rust
+use reqwest::Client;
 
-import (
-    "bytes"
-    "fmt"
-    "io"
-    "net/http"
-)
-
-func main() {
-    url := "https://api.example.com/v1/users"
-    payload := []byte(`{"name": "Alice"}`)
-    req, err := http.NewRequest("POST", url, bytes.NewBuffer(payload))
-    // ...
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new();
+    let response = client
+        .post("https://api.example.com/v1/users")
+        .header("Content-Type", "application/json")
+        .body(r#"{"name":"Alice"}"#)
+        .send()
+        .await?;
+    println!("{}", response.text().await?);
+    Ok(())
 }
 ```
 
@@ -106,5 +108,5 @@ var response = await client.SendAsync(request);
 
 1. Select any request in the collection explorer.
 2. Click the **`</> Code`** button in the request bar.
-3. Select your desired language tab (cURL, Go, Node.js, Python, C#).
+3. Select your desired language tab (cURL, Rust, Node.js, Python, C#).
 4. Click **Copy** to copy the snippet to your clipboard.

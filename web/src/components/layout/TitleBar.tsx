@@ -24,30 +24,30 @@ interface TitleBarProps {
   onOpenManageEnvironments?: () => void
 }
 
-interface WailsApp {
-  SelectDirectory?: () => Promise<string>;
-  [key: string]: ((...args: unknown[]) => unknown) | undefined;
+interface TauriWindowApi {
+  minimize: () => Promise<void>;
+  toggleMaximize: () => Promise<void>;
+  close: () => Promise<void>;
 }
 
-interface WailsWindow {
-  go?: {
-    main?: {
-      App?: WailsApp;
-    };
+interface TauriBridge {
+  core?: {
+    invoke<T>(command: string): Promise<T>;
+  };
+  window?: {
+    getCurrentWindow: () => TauriWindowApi;
   };
 }
 
-function getWailsApp(): WailsApp | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (window as unknown as WailsWindow).go?.main?.App;
+function getTauriBridge(): TauriBridge | undefined {
+  return typeof window === "undefined"
+    ? undefined
+    : (window as unknown as { __TAURI__?: TauriBridge }).__TAURI__;
 }
 
-
-function wailsCall(method: string) {
-  const app = getWailsApp();
-  if (app && typeof app[method] === "function") {
-    app[method]?.();
-  }
+function desktopCall(command: string) {
+  const invoke = getTauriBridge()?.core?.invoke;
+  if (invoke) void invoke(command).catch((error) => console.error(`Desktop command failed (${command}):`, error));
 }
 
 export function TitleBar({
@@ -91,10 +91,10 @@ export function TitleBar({
   }, []);
 
   const handleOpenFolder = async () => {
-    const app = getWailsApp();
-    if (app?.SelectDirectory) {
+    const invoke = getTauriBridge()?.core?.invoke;
+    if (invoke) {
       try {
-        const path = await app.SelectDirectory();
+        const path = await invoke<string | null>("select_directory");
         if (path) setWorkspacePath(path);
       } catch (err) {
         console.error("Failed to open directory dialog:", err);
@@ -106,9 +106,9 @@ export function TitleBar({
   };
 
   return (
-    <header className="wails-drag relative z-20 h-11 bg-white/95 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between pl-3 pr-0 shrink-0 select-none transition-colors duration-150">
+    <header data-tauri-drag-region className="tauri-titlebar relative z-20 h-11 bg-white/95 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between pl-3 pr-0 shrink-0 select-none transition-colors duration-150">
       {/* Left: Brand + Workspace info */}
-      <div className="flex items-center gap-2.5 wails-no-drag">
+      <div className="flex items-center gap-2.5">
         <div className="flex items-center gap-2">
           <img
             src="/favicon.svg"
@@ -155,7 +155,7 @@ export function TitleBar({
       </div>
 
       {/* Middle: Command search */}
-      <div className="wails-no-drag flex items-center">
+      <div className="flex items-center">
         <button
           onClick={onOpenQuickSearch}
           className="flex items-center gap-2 px-3 py-1 text-xs text-zinc-500 dark:text-zinc-400 bg-zinc-100 hover:bg-zinc-200/80 dark:bg-zinc-900/80 dark:hover:bg-zinc-800/90 border border-zinc-200 dark:border-zinc-800 rounded-full w-64 justify-between transition-colors shadow-inner cursor-pointer"
@@ -171,7 +171,7 @@ export function TitleBar({
       </div>
 
       {/* Right: Environment + Theme Toggle + Window Controls */}
-      <div className="flex items-center h-full gap-2 wails-no-drag">
+      <div className="flex items-center h-full gap-2">
         {/* Environment Selector */}
         <Select value={activeEnv} onValueChange={(val) => typeof val === 'string' && setActiveEnv(val)}>
           <SelectTrigger className="h-7 gap-1.5 px-2 bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-xs font-medium w-auto focus:ring-1 focus:ring-blue-500/50">
@@ -236,7 +236,7 @@ export function TitleBar({
         <div className="flex items-stretch h-full ml-1">
           <button
             id="win-minimise"
-            onClick={() => wailsCall("WindowMinimise")}
+            onClick={() => desktopCall("window_minimise")}
             title="Minimise"
             className="w-11 h-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200/80 dark:hover:bg-zinc-800/80 transition-colors cursor-pointer"
           >
@@ -248,7 +248,7 @@ export function TitleBar({
           <button
             id="win-maximise"
             onClick={() => {
-              wailsCall("WindowToggleMaximise");
+              desktopCall("window_toggle_maximise");
               setIsMaximised((prev) => !prev);
             }}
             title={isMaximised ? "Restore" : "Maximise"}
@@ -268,7 +268,7 @@ export function TitleBar({
 
           <button
             id="win-close"
-            onClick={() => wailsCall("WindowClose")}
+            onClick={() => desktopCall("window_close")}
             title="Close"
             className="w-12 h-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:text-white hover:bg-rose-600 transition-colors cursor-pointer"
           >

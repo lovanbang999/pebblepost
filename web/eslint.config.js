@@ -66,6 +66,6 @@ export default [
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'wailsjs/', '*.config.ts', '*.config.js'],
+    ignores: ['dist/', 'node_modules/', '*.config.ts', '*.config.js'],
   },
 ]

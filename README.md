@@ -1,10 +1,9 @@
 # PebblePost
 
-A local-first, Git-friendly API client, runner, and documentation studio for REST, GraphQL, gRPC, and WebSocket/SSE. Built with Go 1.25, React 19, Tailwind CSS v4, and Wails v2.
+A local-first, Git-friendly API client for HTTP, GraphQL introspection, WebSocket, and SSE workflows. The backend migration to Rust and Tauri 2 is in progress; the interface uses React 19 and Tailwind CSS v4.
 
 [![Release](https://img.shields.io/github/v/release/lovanbang999/pebblepost?style=flat-square)](https://github.com/lovanbang999/pebblepost/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](./LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/lovanbang999/pebblepost)](https://goreportcard.com/report/github.com/lovanbang999/pebblepost)
 [![Docker Pulls](https://img.shields.io/badge/docker-lovanbang999%2Fpebblepost-blue?logo=docker&style=flat-square)](https://hub.docker.com/r/lovanbang999/pebblepost)
 
 ---
@@ -12,13 +11,13 @@ A local-first, Git-friendly API client, runner, and documentation studio for RES
 ## Table of Contents
 
 - [Introduction](#why-pebblepost)
-- [Objective Tool Comparison](#objective-comparison-with-other-tools)
+- [Migration Status](#migration-status)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Workspace & File Format](#workspace--file-format)
 - [CLI Reference](#cli-reference)
 - [Scripting & Test Assertions](#scripting--test-assertions)
-- [Multi-Protocol Support](#multi-protocol-support)
+- [Protocol Support](#protocol-support)
 - [Security & Code Signing](#security--code-signing)
 - [Contributing & License](#contributing--license)
 
@@ -30,104 +29,68 @@ Many API development tools require cloud accounts, store collections in propriet
 
 PebblePost provides an alternative:
 - **Local-first and Git-native**: Every request is saved as an individual `*.pebble.json` file in your repository folders. Teams can branch, review, and merge API changes using standard Git workflows.
-- **Strict secret isolation**: Public environment variables are stored in `*.env.json` (tracked in Git), while private keys and tokens are stored in `*.secret.env.json` (automatically blocked by `.gitignore`).
-- **Zero-runtime JavaScript sandbox**: Pre-request transformations and response assertions (`pb.test`, `pb.expect`, `pb.environment`) run directly in pure Go via Goja, requiring no Node.js runtime.
-- **Dual-runtime binary**: Runs as a native desktop application via Wails v2 (macOS, Windows, Linux) or as a standalone web server with an embedded React 19 interface.
-- **Multi-protocol engine**: Full support for REST, GraphQL, gRPC (with Server Reflection), and real-time streaming (WebSocket, Server-Sent Events).
-- **Network timing diagnostics**: Microsecond-accurate latency breakdown for DNS Lookup, TCP Connect, TLS Handshake, TTFB, and Content Transfer.
+- **Separate secret files**: Private environment values are stored in `*.secret.env.json`, which workspace initialization adds to `.gitignore`.
+- **Rust backend**: The API server and CLI are Rust applications built with Axum and Tokio; the desktop shell uses Tauri 2.
+- **Local-first workspace**: Collections and environments remain readable JSON files in a directory you control.
+- **HTTP and GraphQL workflows**: Send HTTP requests, inspect responses, manage cookies, and introspect GraphQL schemas.
+- **Streaming workflows**: Connect to WebSocket and Server-Sent Events endpoints from the request editor.
+
+The Rust backend migration is ongoing. The Rust server runs pre-request and post-response scripts for regular request execution and collection runs. The CLI supports workspace setup and inspection, import/export, docs generation, and serving the local UI.
 
 ---
 
-## Objective Comparison with Other Tools
+## Migration Status
 
-All performance figures below are empirically measured on Linux x86_64 using stripped production binaries (`-trimpath -ldflags="-s -w"`). Reproduction script available at [`scripts/measure.sh`](./scripts/measure.sh).
+The Rust workspace contains the shared workspace core, Axum server, CLI, and Tauri desktop shell. The CLI supports `version`, `workspace init`, `workspace scan`, `import`, `export`, `docs`, and `serve`. Rust implementations exist for HTTP, GraphQL introspection, WebSocket/SSE, workspace files, history, cookies, import/export, generated docs, and mock APIs.
 
-| Feature / Metric | PebblePost | Postman (Desktop v11) | Bruno (Desktop v1.38) | Insomnia (v10) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Cold Startup Time** | **6.93 ms** (CLI) / **21.96 ms** (Server) | ~2,400 ms | ~1,100 ms | ~2,100 ms |
-| **Idle Memory (RSS)** | **21.68 MB** (Server) | ~420 MB | ~170 MB | ~380 MB |
-| **Executable Size** | **26.82 MB** (CLI) / **28.93 MB** (Server + UI) | ~180 MB (installer) | ~95 MB (installer) | ~160 MB (installer) |
-| **Runtime Architecture** | Standalone static Go binary | Electron / Chromium / Node.js | Electron / Chromium / Node.js | Electron / Chromium / Node.js |
-| **Cloud Account Required** | **No** (100% offline & local) | Yes (for full features) | No | Yes (for full features) |
-| **Collection Storage Format** | Individual `*.pebble.json` files | Monolithic JSON dump | Individual `*.bru` files | Monolithic JSON dump |
-| **Secret Isolation** | Built-in `*.secret.env.json` | Cloud or single file | Git-ignored file | Cloud or single file |
-| **Headless Server Mode** | **Yes** (Docker / web server) | Newman CLI only | Bruno CLI only | Inso CLI only |
-| **Cryptographic Signatures**| **Yes** (Minisign + Ed25519) | Vendor auto-updater | None | Vendor auto-updater |
+Parity work remains: persistent stream-script hooks, several CLI automation commands, and cross-platform comparison of the updater and secret backends. Update checks, settings, signature verification, archive extraction, and binary replacement now have Rust implementations. The frontend still exposes some unfinished features, and the legacy Go source has not yet been removed.
 
 ---
 
 ## Installation
 
-### 1. Homebrew (macOS & Linux)
-```bash
-brew install lovanbang999/tap/pebblepost
-```
-
-### 2. Arch Linux (AUR)
-```bash
-yay -S pebblepost-bin
-# or build from source:
-yay -S pebblepost
-```
-
-### 3. Windows (winget)
-```powershell
-winget install lovanbang999.pebblepost
-```
-
-### 4. Docker Container (Web Server)
-Multi-stage minimal Alpine container with non-root security context (`UID 10001`):
+### Build from source
 
 ```bash
-docker run -d \
-  --name pebblepost \
-  -p 8080:8080 \
+cd web && npm ci && npm run build
+cd ..
+cargo build --release --package pebblepost-cli --package pebblepost-server
+```
+
+### Docker
+
+```bash
+docker build -t pebblepost .
+docker run -d --name pebblepost -p 8080:8080 \
   -e PEBBLEPOST_TOKEN="your-secure-token" \
-  -v $(pwd)/data:/data \
-  lovanbang999/pebblepost:latest
+  -v "$(pwd)/data:/data" pebblepost
 ```
 
-*Note: Access the web UI at `http://localhost:8080?token=your-secure-token`.*
-
-### 5. Pre-built Binaries & Signatures
-Download release archives from [GitHub Releases](https://github.com/lovanbang999/pebblepost/releases). Verify integrity using [Minisign](https://jedisct1.github.io/minisign/):
-
-```bash
-# Verify checksums file
-minisign -Vm checksums.txt -p docs/minisign.pub
-
-# Verify binary sha256
-sha256sum -c checksums.txt --ignore-missing
-```
+Open `http://localhost:8080?token=your-secure-token` to authenticate the browser UI.
 
 ---
 
 ## Quick Start
 
 ### Native Desktop Studio
-Launch the desktop application for your platform:
+Install Node.js and the platform webview build dependencies, then run:
 ```bash
-# On Linux
-./pebblepost
-
-# On macOS
-open PebblePost.app
-
-# On Windows
-.\PebblePost.exe
+cargo tauri dev --manifest-path apps/pebblepost-desktop/src-tauri/Cargo.toml
 ```
 
 ### Standalone Web Server
-Start the embedded HTTP server:
+Start the Rust HTTP server:
 ```bash
-# Run server on localhost (no token required on loopback)
-pebblepost-server --port 8080
+# Build the UI once, then run the server on localhost (loopback needs no token)
+cd web && npm ci && npm run build
+cd ..
+cargo run -p pebblepost-cli -- serve --host 127.0.0.1 --port 8080
 
 # Expose server on network interface (requires PEBBLEPOST_TOKEN)
 export PEBBLEPOST_TOKEN="secret-bearer-token"
-pebblepost-server --host 0.0.0.0 --port 8080 --token $PEBBLEPOST_TOKEN
+pebblepost serve --host 0.0.0.0 --port 8080 --token "$PEBBLEPOST_TOKEN"
 ```
-Open **http://localhost:8080** in any modern web browser.
+Open **http://localhost:8080** in a browser. To expose the server on a network interface, set `PEBBLEPOST_TOKEN` and pass `--token`.
 
 ---
 
@@ -188,103 +151,41 @@ my-workspace/
 
 ## CLI Reference
 
-The `pebblepost` CLI provides automation capabilities for CI/CD pipelines and documentation generation.
-
-### 1. Test Runner (`pebblepost run`)
-Execute entire collections or specific subfolders:
+The Rust CLI provides version reporting, workspace setup and inspection, collection import/export, documentation generation, and the local server.
 
 ```bash
-# Run all requests in a collection
-pebblepost run ./collections -e dev
-
-# Run a specific subfolder with bail-on-failure
-pebblepost run ./collections --folder auth --bail
-
-# Data-driven testing with CSV or JSON iteration parameters
-pebblepost run ./collections --data ./users.csv --iterations 10 --delay 200
-
-# Generate JUnit XML or JSON reports for CI pipelines
-pebblepost run ./collections -e staging --report junit --output ./test-results.xml
+pebblepost version
+pebblepost workspace init ./my-workspace --name "My Workspace"
+pebblepost workspace scan ./my-workspace
+pebblepost import ./postman-collection.json --workspace ./my-workspace
+pebblepost export collections --format postman --workspace ./my-workspace
+pebblepost docs collections --format md --workspace ./my-workspace
+pebblepost serve --host 127.0.0.1 --port 8080
 ```
 
-| Flag | Description | Default |
-| :--- | :--- | :--- |
-| `-e, --env <name>` | Environment name (`dev`, `staging`, `prod`) | `""` |
-| `--folder <subpath>`| Subfolder filter within collection | `""` |
-| `--data <file>` | Path to CSV or JSON data file for iterations | `""` |
-| `-n, --iterations <n>`| Number of iteration passes | `1` |
-| `--delay <ms>` | Delay between request executions in milliseconds | `0` |
-| `--bail` | Stop execution immediately upon first failed test | `false` |
-| `--report <format>`| Report output: `human`, `json`, `junit` | `human` |
-| `--output <file>` | Destination file for report output | `stdout` |
-| `--dry-run` | Validate and list execution plan without firing requests| `false` |
-
-### 2. Documentation Generator (`pebblepost docs`)
-Generate self-contained API documentation or OpenAPI specifications:
-
-```bash
-# Generate Markdown documentation
-pebblepost docs ./collections --format md --out ./docs/api.md
-
-# Generate responsive HTML documentation
-pebblepost docs ./collections --format html --out ./dist/docs.html
-
-# Export OpenAPI 3.0 specification from collection
-pebblepost docs ./collections --format openapi --out ./openapi.yaml
-```
+Imports accept Postman, OpenAPI JSON, HAR, Insomnia, Bruno JSON, and cURL input. Exports currently support Postman and OpenAPI JSON. Documentation supports Markdown, HTML, and OpenAPI output.
 
 ---
 
 ## Scripting & Test Assertions
 
-PebblePost embeds an ECMAScript runtime powered by [Goja](https://github.com/dop251/goja):
+### Request scripts
 
-```javascript
-// Pre-request: Inject authentication signatures
-const ts = Math.floor(Date.now() / 1000);
-pb.request.headers.set('X-Request-Timestamp', ts.toString());
-pb.request.headers.set('X-Signature', pb.crypto.sha256('secret' + ts));
-
-// Post-response: Validate assertions
-pb.test("Status code is 200 OK", function() {
-  pb.expect(pb.response.status).to.eql(200);
-});
-
-pb.test("Response time under 250ms", function() {
-  pb.expect(pb.response.duration).to.be.below(250);
-});
-
-// Extract token into active environment
-const body = pb.response.json();
-if (body?.access_token) {
-  pb.environment.set("ACCESS_TOKEN", body.access_token);
-}
-```
+Request and folder `preRequest` and `postResponse` scripts execute in the Rust server's bounded JavaScript runtime. See [docs/scripting.md](docs/scripting.md) for script ordering, supported `pb.*` APIs, trust behavior, and current limitations.
 
 ---
 
-## Multi-Protocol Support
+## Protocol Support
 
-- **REST / HTTP**: Full HTTP/1.1 and HTTP/2 execution with TLS certificate management, proxy support, and detailed network timeline (`httptrace`).
-- **GraphQL**: Query and variable editing with automatic syntax highlighting and schema queries.
-- **gRPC**: Unary, Client-Streaming, Server-Streaming, and Bidirectional streaming calls using Protobuf descriptors or Server Reflection.
-- **WebSocket & SSE**: Real-time event streams with message inspection, filtering, and connection lifecycle monitors.
+- **HTTP/GraphQL**: HTTP request execution and GraphQL schema introspection.
+- **WebSocket/SSE**: Persistent streaming requests, WebSocket send, and message event logs.
+- **gRPC**: Reflection, proto-based service inspection, unary calls, and streaming endpoints are implemented in the Rust server.
 
 ---
 
 ## Performance & Benchmarks
 
-PebblePost is engineered for instant execution and minimal resource consumption compared to Electron-based alternatives:
-
-| Metric | PebblePost CLI | PebblePost Server | Postman (v11) | Bruno (v1.38) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Cold Startup Time** | **< 10 ms** | **22.45 ms** | ~2,400 ms | ~1,100 ms |
-| **Idle Memory (RSS)** | Ephemeral (~16.7 MB peak) | **19.56 MB** | ~420 MB | ~170 MB |
-| **Executable Size** | **29.1 MB** *(with web UI)* | **29.1 MB** *(with web UI)* | ~180 MB installer | ~95 MB installer |
-| **Runtime Architecture** | Standalone static ELF | Standalone static ELF | Electron / Chromium | Electron / Chromium |
-| **CGO / Dependencies** | None (`CGO_ENABLED=0`) | None (`CGO_ENABLED=0`) | Node.js + Chromium | Node.js + Chromium |
-
-*Measurements conducted on Linux x86_64, Go 1.25.1 (`-trimpath -ldflags="-s -w"`). See [docs/benchmarks.md](./docs/benchmarks.md) for full reproduction commands and methodology.*
+Rust performance measurements have not been published yet.
 
 ---
 

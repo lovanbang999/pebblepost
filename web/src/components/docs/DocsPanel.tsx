@@ -40,7 +40,7 @@ interface DocRequestItem {
   examples?: ExampleResponse[]
   snippets: {
     curl: string
-    go: string
+    rust: string
     node: string
     python: string
     csharp: string
@@ -84,7 +84,7 @@ export function DocsPanel({ currentTab }: DocsPanelProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('preview')
   const [rawContent, setRawContent] = useState<string>('')
   const [loadingRaw, setLoadingRaw] = useState(false)
-  const [selectedLanguage, setSelectedLanguage] = useState<'curl' | 'go' | 'node' | 'python' | 'csharp'>('curl')
+  const [selectedLanguage, setSelectedLanguage] = useState<'curl' | 'rust' | 'node' | 'python' | 'csharp'>('curl')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [expandedExamples, setExpandedExamples] = useState<Record<string, boolean>>({})
 
@@ -580,7 +580,7 @@ export function DocsPanel({ currentTab }: DocsPanelProps) {
                         Client Code Samples
                       </h4>
                       <div className="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-900 p-0.5 rounded-md text-[11px]">
-                        {(['curl', 'go', 'node', 'python', 'csharp'] as const).map((lang) => (
+                        {(['curl', 'rust', 'node', 'python', 'csharp'] as const).map((lang) => (
                           <button
                             key={lang}
                             onClick={() => setSelectedLanguage(lang)}
@@ -593,6 +593,8 @@ export function DocsPanel({ currentTab }: DocsPanelProps) {
                           >
                             {lang === 'curl'
                               ? 'cURL'
+                              : lang === 'rust'
+                              ? 'Rust'
                               : lang === 'node'
                               ? 'Node.js'
                               : lang === 'csharp'

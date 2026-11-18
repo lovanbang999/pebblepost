@@ -1,53 +1,40 @@
-# Multi-stage Dockerfile for PebblePost Web Server
-# Stage 1: Build Frontend Assets
-FROM node:22-alpine AS frontend-builder
+# Build the React/Vite frontend.
+FROM node:22-bookworm-slim AS frontend-builder
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: Compile Static Go Binary
-FROM golang:alpine AS backend-builder
+# Compile the Rust Axum server.
+FROM rust:1-bookworm AS backend-builder
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+COPY apps/ ./apps/
+RUN cargo build --release --package pebblepost-server
 
-COPY . .
-# Copy compiled frontend into embed destination
-COPY --from=frontend-builder /app/web/dist ./web/dist
+# Keep glibc compatibility with the Rust build and run as an unprivileged user.
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl dumb-init \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 pebble \
+    && useradd --system --uid 10001 --gid pebble --home-dir /nonexistent pebble \
+    && mkdir -p /data /app/web/dist \
+    && chown -R pebble:pebble /data /app
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
-    -ldflags="-s -w -X main.version=0.2.0 -X main.builtBy=docker" \
-    -o /app/bin/pebblepost-server ./cmd/server
+COPY --from=backend-builder --chown=pebble:pebble /app/target/release/pebblepost-server /usr/local/bin/pebblepost-server
+COPY --from=frontend-builder --chown=pebble:pebble /app/web/dist/ /app/web/dist/
 
-# Stage 3: Lightweight, Secure Production Runtime
-FROM alpine:3.21 AS runtime
-
-# Install basic runtime utilities for security and healthchecks
-RUN apk add --no-cache ca-certificates dumb-init curl
-
-# Create non-root user and group
-RUN addgroup -g 10001 -S pebble && \
-    adduser -u 10001 -S pebble -G pebble
-
-# Create persistent data directory with permissions
-RUN mkdir -p /data && chown -R pebble:pebble /data
-
-COPY --from=backend-builder --chown=pebble:pebble /app/bin/pebblepost-server /usr/local/bin/pebblepost-server
-
-# Default environment variables
 ENV PEBBLEPOST_HOST="0.0.0.0" \
     PORT="8080" \
-    PEBBLEPOST_DATA_DIR="/data"
+    PEBBLEPOST_DATA_DIR="/data" \
+    PEBBLEPOST_FRONTEND_DIR="/app/web/dist"
 
-# Healthcheck monitoring server readiness
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://127.0.0.1:8080/api/health || exit 1
 
 EXPOSE 8080
 VOLUME ["/data"]
-
 USER pebble:pebble
-
 ENTRYPOINT ["dumb-init", "--", "pebblepost-server"]

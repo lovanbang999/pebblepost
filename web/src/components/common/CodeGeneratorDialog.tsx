@@ -11,7 +11,7 @@ interface Props {
 
 const LANG_COLORS: Record<string, string> = {
   curl:   'text-amber-400',
-  go:     'text-sky-400',
+  rust:   'text-orange-400',
   node:   'text-emerald-400',
   python:  'text-violet-400',
   csharp: 'text-rose-400',
@@ -101,7 +101,7 @@ export function CodeGeneratorDialog({ request }: Props) {
 
                 {/*
                   Fixed height code area — h-56 (224px) keeps dialog within
-                  Wails window. overflow-y-auto for internal scrolling only.
+                  Desktop window. overflow-y-auto for internal scrolling only.
                 */}
                 <pre className="h-56 text-xs font-mono text-zinc-200 p-4 overflow-auto whitespace-pre leading-relaxed">
                   <code>{code}</code>
