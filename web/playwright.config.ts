@@ -21,7 +21,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: '../bin/pebblepost serve --host 127.0.0.1 --port 8999 --token smoke-token-test-123 --data-dir ../tmp-smoke-data',
+    command: '../target/release/pebblepost serve --host 127.0.0.1 --port 8999 --token smoke-token-test-123 --data-dir ../tmp-smoke-data --frontend-dir dist',
     url: 'http://127.0.0.1:8999/api/health',
     reuseExistingServer: false,
     timeout: 15000,

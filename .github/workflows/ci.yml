@@ -85,8 +85,6 @@ jobs:
           cd web && npm ci && npm run build
           cd ..
           cargo build --release --package pebblepost-cli
-          mkdir -p bin
-          cp target/release/pebblepost bin/pebblepost
       - name: Install Playwright Chromium
         run: cd web && npx playwright install --with-deps chromium
       - name: Run Playwright checks

@@ -29,13 +29,37 @@ pub fn extract(extractor: &Value, response_body: &str) -> ExtractionResult {
 
 /// Extract a value from a response body, header, or cookie. `response_headers`
 /// accepts the same object shape returned by the HTTP execution API.
-pub fn extract_with_response(extractor: &Value, response_body: &str, response_headers: Option<&Value>) -> ExtractionResult {
-    let extractor_id = extractor.get("id").and_then(Value::as_str).unwrap_or_default().to_owned();
-    let name = extractor.get("name").and_then(Value::as_str).unwrap_or_default().to_owned();
-    let path = extractor.get("path").and_then(Value::as_str).unwrap_or_default().to_owned();
-    let extractor_type = extractor.get("type").and_then(Value::as_str).unwrap_or("jsonpath").to_ascii_lowercase();
-    let scope = extractor.get("scope").and_then(Value::as_str)
-        .filter(|scope| !scope.is_empty()).unwrap_or("runtime").to_owned();
+pub fn extract_with_response(
+    extractor: &Value,
+    response_body: &str,
+    response_headers: Option<&Value>,
+) -> ExtractionResult {
+    let extractor_id = extractor
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let name = extractor
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let path = extractor
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let extractor_type = extractor
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("jsonpath")
+        .to_ascii_lowercase();
+    let scope = extractor
+        .get("scope")
+        .and_then(Value::as_str)
+        .filter(|scope| !scope.is_empty())
+        .unwrap_or("runtime")
+        .to_owned();
     let mut result = ExtractionResult {
         extractor_id,
         name: name.clone(),
@@ -56,7 +80,9 @@ pub fn extract_with_response(extractor: &Value, response_body: &str, response_he
             let root = match serde_json::from_str::<Value>(body) {
                 Ok(root) => root,
                 Err(error) => {
-                    result.warning = Some(format!("Extractor {name:?}: response body is not valid JSON: {error}"));
+                    result.warning = Some(format!(
+                        "Extractor {name:?}: response body is not valid JSON: {error}"
+                    ));
                     return result;
                 }
             };
@@ -65,64 +91,109 @@ pub fn extract_with_response(extractor: &Value, response_body: &str, response_he
                     result.value = format_extracted_value(&value);
                     result.success = true;
                 }
-                Ok(None) => result.warning = Some(format!("Extractor {name:?}: JSONPath {path:?} not found in response")),
-                Err(error) => result.warning = Some(format!("Extractor {name:?}: invalid JSONPath {path:?}: {error}")),
-            }
-        }
-        "regex" | "regexp" => {
-            match regex::Regex::new(&path) {
-                Ok(regex) => {
-                    if let Some(captures) = regex.captures(response_body) {
-                        let group = extractor.get("captureGroup").or_else(|| extractor.get("group"));
-                        let capture = match group {
-                            Some(Value::Number(number)) => number.as_u64().and_then(|index| captures.get(index as usize)),
-                            Some(Value::String(name)) => captures.name(name),
-                            _ => captures.get(1).or_else(|| captures.get(0)),
-                        };
-                        if let Some(capture) = capture {
-                            result.value = capture.as_str().to_owned();
-                            result.success = true;
-                        } else {
-                            result.warning = Some(format!("Extractor {name:?}: regex capture group was not found"));
-                        }
-                    } else {
-                        result.warning = Some(format!("Extractor {name:?}: regex {path:?} did not match response"));
-                    }
+                Ok(None) => {
+                    result.warning = Some(format!(
+                        "Extractor {name:?}: JSONPath {path:?} not found in response"
+                    ))
                 }
-                Err(error) => result.warning = Some(format!("Extractor {name:?}: invalid regex {path:?}: {error}")),
+                Err(error) => {
+                    result.warning = Some(format!(
+                        "Extractor {name:?}: invalid JSONPath {path:?}: {error}"
+                    ))
+                }
             }
         }
-        "header" | "response-header" => {
-            match response_header(response_headers, &path) {
-                Some(value) => { result.value = value; result.success = true; }
-                None => result.warning = Some(format!("Extractor {name:?}: response header {path:?} was not found")),
+        "regex" | "regexp" => match regex::Regex::new(&path) {
+            Ok(regex) => {
+                if let Some(captures) = regex.captures(response_body) {
+                    let group = extractor
+                        .get("captureGroup")
+                        .or_else(|| extractor.get("group"));
+                    let capture = match group {
+                        Some(Value::Number(number)) => number
+                            .as_u64()
+                            .and_then(|index| captures.get(index as usize)),
+                        Some(Value::String(name)) => captures.name(name),
+                        _ => captures.get(1).or_else(|| captures.get(0)),
+                    };
+                    if let Some(capture) = capture {
+                        result.value = capture.as_str().to_owned();
+                        result.success = true;
+                    } else {
+                        result.warning = Some(format!(
+                            "Extractor {name:?}: regex capture group was not found"
+                        ));
+                    }
+                } else {
+                    result.warning = Some(format!(
+                        "Extractor {name:?}: regex {path:?} did not match response"
+                    ));
+                }
             }
-        }
-        "cookie" | "response-cookie" => {
-            match response_cookie(response_headers, &path) {
-                Some(value) => { result.value = value; result.success = true; }
-                None => result.warning = Some(format!("Extractor {name:?}: response cookie {path:?} was not found")),
+            Err(error) => {
+                result.warning = Some(format!(
+                    "Extractor {name:?}: invalid regex {path:?}: {error}"
+                ))
             }
+        },
+        "header" | "response-header" => match response_header(response_headers, &path) {
+            Some(value) => {
+                result.value = value;
+                result.success = true;
+            }
+            None => {
+                result.warning = Some(format!(
+                    "Extractor {name:?}: response header {path:?} was not found"
+                ))
+            }
+        },
+        "cookie" | "response-cookie" => match response_cookie(response_headers, &path) {
+            Some(value) => {
+                result.value = value;
+                result.success = true;
+            }
+            None => {
+                result.warning = Some(format!(
+                    "Extractor {name:?}: response cookie {path:?} was not found"
+                ))
+            }
+        },
+        unsupported => {
+            result.warning = Some(format!(
+                "Extractor {name:?}: unsupported extractor type {unsupported:?}"
+            ))
         }
-        unsupported => result.warning = Some(format!("Extractor {name:?}: unsupported extractor type {unsupported:?}")),
     }
     result
 }
 
-pub fn extract_all(extractors: &[Value], response_body: &str) -> (Vec<ExtractionResult>, HashMap<String, String>, Vec<String>) {
+pub fn extract_all(
+    extractors: &[Value],
+    response_body: &str,
+) -> (Vec<ExtractionResult>, HashMap<String, String>, Vec<String>) {
     extract_all_with_response(extractors, response_body, None)
 }
 
-pub fn extract_all_with_response(extractors: &[Value], response_body: &str, response_headers: Option<&Value>) -> (Vec<ExtractionResult>, HashMap<String, String>, Vec<String>) {
+pub fn extract_all_with_response(
+    extractors: &[Value],
+    response_body: &str,
+    response_headers: Option<&Value>,
+) -> (Vec<ExtractionResult>, HashMap<String, String>, Vec<String>) {
     let mut results = Vec::new();
     let mut extracted = HashMap::new();
     let mut warnings = Vec::new();
-    for extractor in extractors.iter().filter(|item| item.get("enabled").and_then(Value::as_bool).unwrap_or(false)) {
+    for extractor in extractors.iter().filter(|item| {
+        item.get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }) {
         let result = extract_with_response(extractor, response_body, response_headers);
         if result.success {
             extracted.insert(result.name.clone(), result.value.clone());
         }
-        if let Some(warning) = result.warning.as_ref() { warnings.push(warning.clone()); }
+        if let Some(warning) = result.warning.as_ref() {
+            warnings.push(warning.clone());
+        }
         results.push(result);
     }
     (results, extracted, warnings)
@@ -130,26 +201,37 @@ pub fn extract_all_with_response(extractors: &[Value], response_body: &str, resp
 
 fn response_header(headers: Option<&Value>, requested_name: &str) -> Option<String> {
     let headers = headers?.as_object()?;
-    headers.iter().find(|(name, _)| name.eq_ignore_ascii_case(requested_name))
+    headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(requested_name))
         .and_then(|(_, value)| match value {
             Value::Array(values) => values.first(),
             value => Some(value),
         })
-        .and_then(|value| value.as_str().map(str::to_owned).or_else(|| (!value.is_null()).then(|| value.to_string())))
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| (!value.is_null()).then(|| value.to_string()))
+        })
 }
 
 fn response_cookie(headers: Option<&Value>, cookie_name: &str) -> Option<String> {
     let headers = headers?.as_object()?;
     for (name, header_value) in headers {
-        if !name.eq_ignore_ascii_case("set-cookie") && !name.eq_ignore_ascii_case("cookie") { continue; }
+        if !name.eq_ignore_ascii_case("set-cookie") && !name.eq_ignore_ascii_case("cookie") {
+            continue;
+        }
         let values: Vec<&Value> = match header_value {
             Value::Array(values) => values.iter().collect(),
             value => vec![value],
         };
         for value in values.into_iter().filter_map(Value::as_str) {
             for pair in value.split(';') {
-                if let Some((name, value)) = pair.trim().split_once('=') {
-                    if name.trim() == cookie_name { return Some(value.trim().to_owned()); }
+                if let Some((name, value)) = pair.trim().split_once('=')
+                    && name.trim() == cookie_name
+                {
+                    return Some(value.trim().to_owned());
                 }
             }
         }
@@ -165,13 +247,21 @@ pub fn evaluate_json_path(root: &Value, path: &str) -> Result<Option<Value>, Str
         for value in current {
             match &segment {
                 Segment::Key(key) => {
-                    if let Some(value) = value.get(key) { next.push(value.clone()); }
+                    if let Some(value) = value.get(key) {
+                        next.push(value.clone());
+                    }
                 }
                 Segment::Index(index) => {
                     if let Some(values) = value.as_array() {
-                        let resolved = if *index < 0 { values.len() as isize + index } else { *index };
-                        if resolved >= 0 {
-                            if let Some(value) = values.get(resolved as usize) { next.push(value.clone()); }
+                        let resolved = if *index < 0 {
+                            values.len() as isize + index
+                        } else {
+                            *index
+                        };
+                        if resolved >= 0
+                            && let Some(value) = values.get(resolved as usize)
+                        {
+                            next.push(value.clone());
                         }
                     }
                 }
@@ -182,7 +272,9 @@ pub fn evaluate_json_path(root: &Value, path: &str) -> Result<Option<Value>, Str
                 },
             }
         }
-        if next.is_empty() { return Ok(None); }
+        if next.is_empty() {
+            return Ok(None);
+        }
         current = next;
     }
     match current.len() {
@@ -194,9 +286,14 @@ pub fn evaluate_json_path(root: &Value, path: &str) -> Result<Option<Value>, Str
 
 fn parse_json_path(path: &str) -> Result<Vec<Segment>, String> {
     let mut path = path.trim();
-    if path.is_empty() || path == "$" { return Ok(Vec::new()); }
-    if let Some(rest) = path.strip_prefix("$.") { path = rest; }
-    else if let Some(rest) = path.strip_prefix('$') { path = rest; }
+    if path.is_empty() || path == "$" {
+        return Ok(Vec::new());
+    }
+    if let Some(rest) = path.strip_prefix("$.") {
+        path = rest;
+    } else if let Some(rest) = path.strip_prefix('$') {
+        path = rest;
+    }
 
     let chars = path.chars().collect::<Vec<_>>();
     let mut segments = Vec::new();
@@ -205,11 +302,15 @@ fn parse_json_path(path: &str) -> Result<Vec<Segment>, String> {
     while index < chars.len() {
         match chars[index] {
             '.' => {
-                if !buffer.is_empty() { segments.push(Segment::Key(std::mem::take(&mut buffer))); }
+                if !buffer.is_empty() {
+                    segments.push(Segment::Key(std::mem::take(&mut buffer)));
+                }
                 index += 1;
             }
             '[' => {
-                if !buffer.is_empty() { segments.push(Segment::Key(std::mem::take(&mut buffer))); }
+                if !buffer.is_empty() {
+                    segments.push(Segment::Key(std::mem::take(&mut buffer)));
+                }
                 index += 1;
                 let start = index;
                 let mut quoted = false;
@@ -217,7 +318,9 @@ fn parse_json_path(path: &str) -> Result<Vec<Segment>, String> {
                 while index < chars.len() {
                     let ch = chars[index];
                     if quoted {
-                        if ch == quote { quoted = false; }
+                        if ch == quote {
+                            quoted = false;
+                        }
                     } else if ch == '\'' || ch == '"' {
                         quoted = true;
                         quote = ch;
@@ -226,11 +329,22 @@ fn parse_json_path(path: &str) -> Result<Vec<Segment>, String> {
                     }
                     index += 1;
                 }
-                if index == chars.len() { return Err(format!("unclosed bracket in JSONPath {path:?}")); }
-                let inner = chars[start..index].iter().collect::<String>().trim().to_owned();
-                let unquoted = if inner.len() >= 2 && ((inner.starts_with('\'') && inner.ends_with('\'')) || (inner.starts_with('"') && inner.ends_with('"'))) {
+                if index == chars.len() {
+                    return Err(format!("unclosed bracket in JSONPath {path:?}"));
+                }
+                let inner = chars[start..index]
+                    .iter()
+                    .collect::<String>()
+                    .trim()
+                    .to_owned();
+                let unquoted = if inner.len() >= 2
+                    && ((inner.starts_with('\'') && inner.ends_with('\''))
+                        || (inner.starts_with('"') && inner.ends_with('"')))
+                {
                     inner[1..inner.len() - 1].to_owned()
-                } else { inner.clone() };
+                } else {
+                    inner.clone()
+                };
                 if unquoted == "*" {
                     segments.push(Segment::Wildcard);
                 } else if let Ok(array_index) = unquoted.parse::<isize>() {
@@ -246,7 +360,9 @@ fn parse_json_path(path: &str) -> Result<Vec<Segment>, String> {
             }
         }
     }
-    if !buffer.is_empty() { segments.push(Segment::Key(buffer)); }
+    if !buffer.is_empty() {
+        segments.push(Segment::Key(buffer));
+    }
     Ok(segments)
 }
 
@@ -255,11 +371,19 @@ fn format_extracted_value(value: &Value) -> String {
         Value::Null => String::new(),
         Value::String(value) => value.clone(),
         Value::Number(number) => {
-            if let Some(integer) = number.as_i64() { integer.to_string() }
-            else if let Some(integer) = number.as_u64() { integer.to_string() }
-            else if let Some(float) = number.as_f64() {
-                if float.is_finite() && float.fract() == 0.0 { format!("{float:.0}") } else { number.to_string() }
-            } else { number.to_string() }
+            if let Some(integer) = number.as_i64() {
+                integer.to_string()
+            } else if let Some(integer) = number.as_u64() {
+                integer.to_string()
+            } else if let Some(float) = number.as_f64() {
+                if float.is_finite() && float.fract() == 0.0 {
+                    format!("{float:.0}")
+                } else {
+                    number.to_string()
+                }
+            } else {
+                number.to_string()
+            }
         }
         Value::Bool(value) => value.to_string(),
         Value::Array(_) | Value::Object(_) => value.to_string(),
@@ -284,7 +408,8 @@ mod tests {
             serde_json::json!({ "id": "cookie", "name": "SESSION", "type": "cookie", "path": "session_id", "enabled": true }),
         ];
 
-        let (results, variables, warnings) = extract_all_with_response(&extractors, response_body, Some(&headers));
+        let (results, variables, warnings) =
+            extract_all_with_response(&extractors, response_body, Some(&headers));
         assert_eq!(results.len(), 4);
         assert!(warnings.is_empty());
         assert_eq!(variables["TOKEN"], "abc-123");
@@ -295,13 +420,19 @@ mod tests {
 
     #[test]
     fn regex_can_select_a_named_capture_and_reports_invalid_patterns() {
-        let named = extract(&serde_json::json!({
-            "name": "ID", "type": "regex", "path": r"id=(?P<value>\d+)", "group": "value"
-        }), "id=42");
+        let named = extract(
+            &serde_json::json!({
+                "name": "ID", "type": "regex", "path": r"id=(?P<value>\d+)", "group": "value"
+            }),
+            "id=42",
+        );
         assert!(named.success);
         assert_eq!(named.value, "42");
 
-        let invalid = extract(&serde_json::json!({ "name": "BAD", "type": "regex", "path": "[", "enabled": true }), "text");
+        let invalid = extract(
+            &serde_json::json!({ "name": "BAD", "type": "regex", "path": "[", "enabled": true }),
+            "text",
+        );
         assert!(!invalid.success);
         assert!(invalid.warning.unwrap().contains("invalid regex"));
     }

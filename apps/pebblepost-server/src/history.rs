@@ -21,7 +21,9 @@ impl HistoryStore {
         }
         let path = directory.join("history.db");
         let connection = Connection::open(&path).map_err(database_error)?;
-        connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(database_error)?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(database_error)?;
         connection.execute_batch(
             "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS history (
@@ -46,26 +48,56 @@ impl HistoryStore {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
             let wal = directory.join("history.db-wal");
-            if wal.exists() { fs::set_permissions(wal, fs::Permissions::from_mode(0o600))?; }
+            if wal.exists() {
+                fs::set_permissions(wal, fs::Permissions::from_mode(0o600))?;
+            }
         }
-        Ok(Self { connection: Mutex::new(connection) })
+        Ok(Self {
+            connection: Mutex::new(connection),
+        })
     }
 
-    pub async fn record(&self, workspace: &str, request: &Value, result: &Value, secrets: &[String]) -> Result<(), String> {
-        if workspace.is_empty() { return Ok(()); }
-        let mut body = result.get("body").and_then(Value::as_str).unwrap_or("").to_owned();
+    pub async fn record(
+        &self,
+        workspace: &str,
+        request: &Value,
+        result: &Value,
+        secrets: &[String],
+    ) -> Result<(), String> {
+        if workspace.is_empty() {
+            return Ok(());
+        }
+        let mut body = result
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         if body.len() > 100 * 1024 {
             let mut end = 100 * 1024;
-            while !body.is_char_boundary(end) { end -= 1; }
+            while !body.is_char_boundary(end) {
+                end -= 1;
+            }
             body.truncate(end);
             body.push_str("\n…[truncated]");
         }
         body = mask(body, secrets);
 
-        let mut headers = result.pointer("/sentRequest/headers").cloned().unwrap_or_else(|| json!({}));
+        let mut headers = result
+            .pointer("/sentRequest/headers")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         if let Some(values) = headers.as_object_mut() {
-            for key in ["authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token"] {
-                if let Some(value) = values.get_mut(key) { *value = json!(["[REDACTED]"]); }
+            for key in [
+                "authorization",
+                "proxy-authorization",
+                "cookie",
+                "set-cookie",
+                "x-api-key",
+                "x-auth-token",
+            ] {
+                if let Some(value) = values.get_mut(key) {
+                    *value = json!(["[REDACTED]"]);
+                }
             }
         }
         let safe_request = json!({
@@ -77,7 +109,10 @@ impl HistoryStore {
         let mut response_headers = result.get("headers").cloned().unwrap_or_else(|| json!({}));
         if let Some(values) = response_headers.as_object_mut() {
             for (key, value) in values {
-                if matches!(key.to_ascii_lowercase().as_str(), "set-cookie" | "cookie" | "authorization" | "proxy-authorization") {
+                if matches!(
+                    key.to_ascii_lowercase().as_str(),
+                    "set-cookie" | "cookie" | "authorization" | "proxy-authorization"
+                ) {
                     *value = json!(["[REDACTED]"]);
                 } else {
                     mask_value(value, secrets);
@@ -85,7 +120,9 @@ impl HistoryStore {
             }
         }
         let response_headers = response_headers.to_string();
-        let executed_at = result.get("executedAt").and_then(Value::as_str)
+        let executed_at = result
+            .get("executedAt")
+            .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
@@ -113,6 +150,7 @@ impl HistoryStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn list(
         &self,
         workspace: &str,
@@ -143,24 +181,46 @@ impl HistoryStore {
             }))
         }).map_err(|error| error.to_string())?;
         let mut entries = Vec::new();
-        for row in rows { entries.push(row.map_err(|error| error.to_string())?); }
-        let since = since.and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        for row in rows {
+            entries.push(row.map_err(|error| error.to_string())?);
+        }
+        let since = since
+            .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
             .map(|value| value.with_timezone(&chrono::Utc));
-        let filtered: Vec<Value> = entries.into_iter().filter(|entry| {
-            status.filter(|status| *status > 0).is_none_or(|status| entry.get("statusCode").and_then(Value::as_i64) == Some(status))
-                && method.is_none_or(|method| entry.get("method").and_then(Value::as_str).is_some_and(|value| value.eq_ignore_ascii_case(method)))
-                && search.is_none_or(|search| {
+        let filtered: Vec<Value> = entries
+            .into_iter()
+            .filter(|entry| {
+                status.filter(|status| *status > 0).is_none_or(|status| {
+                    entry.get("statusCode").and_then(Value::as_i64) == Some(status)
+                }) && method.is_none_or(|method| {
+                    entry
+                        .get("method")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| value.eq_ignore_ascii_case(method))
+                }) && search.is_none_or(|search| {
                     let needle = search.to_lowercase();
-                    entry.get("requestName").and_then(Value::as_str).unwrap_or("").to_lowercase().contains(&needle)
-                        || entry.get("url").and_then(Value::as_str).unwrap_or("").to_lowercase().contains(&needle)
-                })
-                && since.as_ref().is_none_or(|since| {
-                    entry.get("executedAt").and_then(Value::as_str)
+                    entry
+                        .get("requestName")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&needle)
+                        || entry
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&needle)
+                }) && since.as_ref().is_none_or(|since| {
+                    entry
+                        .get("executedAt")
+                        .and_then(Value::as_str)
                         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
                         .map(|value| value.with_timezone(&chrono::Utc))
-                        .is_some_and(|executed_at| executed_at >= since.clone())
+                        .is_some_and(|executed_at| executed_at >= *since)
                 })
-        }).collect();
+            })
+            .collect();
         let total = filtered.len();
         // Match the Go store's defaults. Each workspace is capped at 500 rows,
         // so a larger page cannot return an unbounded result set.
@@ -198,12 +258,20 @@ impl HistoryStore {
     }
 
     pub async fn delete(&self, id: i64) -> Result<(), String> {
-        self.connection.lock().await.execute("DELETE FROM history WHERE id = ?1", [id]).map_err(|error| error.to_string())?;
+        self.connection
+            .lock()
+            .await
+            .execute("DELETE FROM history WHERE id = ?1", [id])
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 
     pub async fn clear(&self, workspace: &str) -> Result<(), String> {
-        self.connection.lock().await.execute("DELETE FROM history WHERE workspace_path = ?1", [workspace]).map_err(|error| error.to_string())?;
+        self.connection
+            .lock()
+            .await
+            .execute("DELETE FROM history WHERE workspace_path = ?1", [workspace])
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }
@@ -215,8 +283,12 @@ fn mask(text: String, secrets: &[String]) -> String {
 fn mask_value(value: &mut Value, secrets: &[String]) {
     match value {
         Value::String(text) => *text = mask(std::mem::take(text), secrets),
-        Value::Array(values) => values.iter_mut().for_each(|value| mask_value(value, secrets)),
-        Value::Object(values) => values.values_mut().for_each(|value| mask_value(value, secrets)),
+        Value::Array(values) => values
+            .iter_mut()
+            .for_each(|value| mask_value(value, secrets)),
+        Value::Object(values) => values
+            .values_mut()
+            .for_each(|value| mask_value(value, secrets)),
         _ => {}
     }
 }
