@@ -16,6 +16,7 @@ A local-first, Git-friendly API client for HTTP, GraphQL introspection, WebSocke
 - [Quick Start](#quick-start)
 - [Workspace & File Format](#workspace--file-format)
 - [CLI Reference](#cli-reference)
+- [MCP Server](#mcp-server)
 - [Scripting & Test Assertions](#scripting--test-assertions)
 - [Protocol Support](#protocol-support)
 - [Security & Code Signing](#security--code-signing)
@@ -36,6 +37,8 @@ PebblePost provides an alternative:
 - **Streaming workflows**: Connect to WebSocket and Server-Sent Events endpoints from the request editor.
 
 The Rust backend migration is ongoing. The Rust server runs pre-request and post-response scripts for regular request execution and collection runs. The CLI supports workspace setup and inspection, import/export, docs generation, and serving the local UI.
+
+PebblePost also includes a Rust MCP server for connecting compatible AI clients to one local workspace. See [docs/mcp.md](docs/mcp.md) for setup and the available tools.
 
 ---
 
@@ -164,6 +167,12 @@ pebblepost serve --host 127.0.0.1 --port 8080
 ```
 
 Imports accept Postman, OpenAPI JSON, HAR, Insomnia, Bruno JSON, and cURL input. Exports currently support Postman and OpenAPI JSON. Documentation supports Markdown, HTML, and OpenAPI output.
+
+---
+
+## MCP Server
+
+Build the stdio MCP server with `make build-mcp`, then configure an MCP client with the binary path and the workspace to expose. The server provides workspace, request, execution, OpenAPI sync, and local mock tools. See [docs/mcp.md](docs/mcp.md) for client configuration examples and security details.
 
 ---
 

@@ -134,6 +134,26 @@ impl LocalMock {
             .unwrap_or_default()
     }
 
+    pub fn set_override(&self, route_id: &str, value: Value) -> Result<(), String> {
+        let runtime = self
+            .manager
+            .runtime
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(service) = runtime.service.as_ref().filter(|_| runtime.running) else {
+            return Err("Mock server is not running".into());
+        };
+        if !service.routes.iter().any(|route| route.id == route_id) {
+            return Err(format!("Mock route {route_id:?} was not found"));
+        }
+        service
+            .overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(route_id.to_owned(), value);
+        Ok(())
+    }
+
     pub async fn stop(&self) {
         let _lifecycle = self.manager.lifecycle.lock().await;
         stop_runtime(&self.manager).await;

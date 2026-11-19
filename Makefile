@@ -43,6 +43,14 @@ build-cli: ## Build the PebblePost CLI
 build-server: ## Build the Axum web server
 	cargo build --release --package pebblepost-server
 
+.PHONY: build-mcp
+build-mcp: ## Build the PebblePost MCP server
+	cargo build --release --package pebblepost-mcp
+
+.PHONY: run-mcp
+run-mcp: ## Run the MCP server for the current workspace over stdio
+	cargo run --package pebblepost-mcp -- --workspace .
+
 .PHONY: build-desktop
 build-desktop: ## Package the Tauri desktop application
 	cargo tauri build --manifest-path apps/pebblepost-desktop/src-tauri/Cargo.toml

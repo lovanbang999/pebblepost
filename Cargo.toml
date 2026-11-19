@@ -4,6 +4,7 @@ members = [
     "crates/pebblepost-core",
     "apps/pebblepost-server",
     "apps/pebblepost-cli",
+    "apps/pebblepost-mcp",
     "apps/pebblepost-desktop/src-tauri",
 ]
 
